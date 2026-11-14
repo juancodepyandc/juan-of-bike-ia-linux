@@ -50,9 +50,24 @@ RECIPES = {
         'selection': 'held-out workflows and zero-regression gate'},
     'learning': {
         'trainer': 'structured_oracle_dpo',
-        'data': 'progressive exercises with cross-checks and misconception replay',
-        'reward_stack': ['exact result', 'verification field', 'difficulty progression'],
-        'selection': 'held-out skills and zero-regression gate'}}
+        'data': 'progressive exercises with cross-checks, FQ-Ada-BKT knowledge tracing and misconception replay',
+        'reward_stack': ['exact result', 'SymPy/Z3 step-wise equivalence', 'difficulty progression'],
+        'selection': 'held-out skills and zero-regression gate'},
+    'business': {
+        'trainer': 'live_market_waterfall_dpo',
+        'data': 'live Yahoo Finance 30d OHLCV, Binance Spot, ECB Frankfurter, 8-step financial waterfall & AGI archetype synthesis',
+        'reward_stack': ['walk-forward OOS Sortino', '8-step waterfall completeness', 'IndependentRiskManager non-LLM gate'],
+        'selection': 'chronological 60/20/20 out-of-sample validation and fat-tail Monte-Carlo'},
+    'drawing': {
+        'trainer': 'active_linework_controlnet_surrogate_es',
+        'data': 'multi-view Character Forge sheets, anatomical linework and ControlNet fidelity briefs',
+        'reward_stack': ['linework precision', 'multi-view anatomical consistency', 'CLIP style alignment'],
+        'selection': 'coordinate search with multi-view consistency gate'},
+    'simulator': {
+        'trainer': 'symplectic_conservation_oracle_dpo',
+        'data': 'Lagrangian mechanics, SPH fluids, stoichiometry and Kirchhoff circuit invariants',
+        'reward_stack': ['energy/momentum conservation', 'SymPy/Z3 invariant proof', 'zero numerical divergence'],
+        'selection': 'held-out physical systems and zero-regression gate'}}
 
 
 def apply(c):
@@ -60,8 +75,8 @@ def apply(c):
              regression_tolerance=0.0,eval_tasks=24,eval_seeds=[41,137,271,911],
              auto_min_tasks=8,max_hours=24,training_start=c.get('training_start','best'),
              reference_policy='parent',coordinate_search=True,
-             failure_replay_tasks=6,
-             train_learning_rate=.00002,early_stopping_patience=5,
+             failure_replay_tasks=8,
+             train_learning_rate=.00002,early_stopping_patience=12,
              kaggle_parallel_trials=True,minimum_preference_pairs=8,
              minimum_validation_pairs=2,minimum_training_pairs=2,
              # Kaggle's dual T4 is the largest accelerator available to this
@@ -76,27 +91,30 @@ def apply(c):
              # Activation checkpoints may be offloaded to host RAM. This is
              # slower but keeps the T4×2 job recoverable instead of failing on
              # a transient peak while preserving the full model and objective.
-             offload_saved_tensors=True, local_step_timeout_seconds=1200,
-             local_preparation_seconds=3600,
+             offload_saved_tensors=True,
+             # Priorité absolue à la qualité et à la profondeur sur la vitesse :
+             # aucune étape locale profonde (rollouts multi-graines, rendus 8K/16K,
+             # preuves formelles Z3/SymPy) ne doit être interrompue prématurément.
+             local_step_timeout_seconds=7200,
+             local_preparation_seconds=28800,
+             all_regime_styles=True,
              optimization_recipe=RECIPES.get(c['module'], RECIPES['3d']))
     if c['module'] in TEXT_MODULES:
-        c.update(train_tasks=12,rollouts_per_task=3,oracle_teaching=True,sft_weight=.5,
-                 training_context_length=6144)
-        c['generation'].update(max_new_tokens=1536)
+        c.update(train_tasks=12,rollouts_per_task=4,oracle_teaching=True,sft_weight=.15,
+                 anchor_penalty=.35,train_learning_rate=.000008,early_stopping_patience=4,
+                 kaggle_epochs=12,local_epochs=8,
+                 minimum_preference_pairs=4,
+                 training_context_length=8192)
+        c['generation'].update(max_new_tokens=2048)
     elif c['module']=='3d':
-        # 27/09: le chien de garde de `control.py` tue l'etape au-dela de
-        # `local_step_timeout_seconds`, mais une SEULE reference FLUX.2 a un
-        # `poll_history(timeout_s=1800)`: le seuil etait donc PLUS COURT que
-        # le travail le plus long qu'il surveille. Un rendu lent et sain
-        # recevait donc SIGINT. On passe le seuil au-dessus du pire cas
-        # unitaire, et on laisse le vrai garde-fou (`max_hours`, reserve
-        # disque, `stop_signal`) continuer de boire.
-        c.update(train_tasks=12,rollouts_per_task=3,minimum_preference_pairs=8,
-                 auto_refill=True,sft_weight=.05,
-                 local_step_timeout_seconds=2400,
-                 local_preparation_seconds=max(3600, 60*180))
+        c.update(train_tasks=12,rollouts_per_task=4,minimum_preference_pairs=8,
+                 auto_refill=True,sft_weight=.008,anchor_penalty=.35,
+                 train_learning_rate=.000012,early_stopping_patience=12,
+                 offload_saved_tensors=False,
+                 local_step_timeout_seconds=7200,
+                 local_preparation_seconds=28800)
     else:
-        c.update(train_tasks=12,local_epochs=1,directions=2)
+        c.update(train_tasks=12,local_epochs=2,directions=4)
     if c['module']=='audio':c['quality_metrics']={'wer':'lower','clipping_fraction':'lower'}
     if c['module']=='3d':c['quality_metrics']={
         'nonmanifold_edge_fraction':'lower','degenerate_face_fraction':'lower',

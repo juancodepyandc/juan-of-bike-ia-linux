@@ -447,48 +447,34 @@ def verifier_coherence(glb: str) -> dict:
                 "defauts": defauts, "votes": len(votes)}
 
 
-def porte_structure(glb: str) -> dict:
-    """Porte pour le fichier ANIME (rigged): repare (trous, orientation,
-    gouttieres) puis verifie la coherence structurelle — jamais une
-    comparaison de pose a une photo fixe (methode invalide pour un mouvement,
-    cf. verifier_coherence)."""
+def porte_structure(glb: str, *, repair_geometry: bool = False, preserve_native: bool = True) -> dict:
+    """Porte pour le fichier ANIME (rigged): verifie la coherence structurelle
+    sans rebouchage destructeur des ourlets/manches ni ecrasement de la pose
+    initiale synchronisee pour F3D."""
     reparations = []
-    print("PORTE: audit des trous (anime)...", flush=True)
-    t0 = audit_trous(glb)
-    if t0.get("bords_ouverts", 0) > 200:
-        repair = reparer_trous_sans_perte(glb, t0)
-        if repair.get("ok"):
-            t1 = repair['after']
-            reparations.append("trous: %s -> %s bords ouverts"
-                               % (t0.get("bords_ouverts"), t1.get("bords_ouverts")))
-        else:
-            reparations.append('rebouchage refuse: ' + str(repair.get('error')))
-            if not repair.get('original_preserved'):
-                return {'parfait': False, 'score': 0, 'reparations': reparations,
-                        'defauts': ['Restauration impossible; original sauvegarde: ' + str(repair.get('retained_backup'))]}
-    print("PORTE: orientation espace brut (anime)...", flush=True)
-    o = orienter_face_viewer(glb)
-    if o.get("ok") and o.get("yaw"):
-        reparations.append("orientation: yaw %s applique (buffers)" % o["yaw"])
-    try:
-        from texture_despeckle_atlas import despeckle_glb as _dspk_atlas
-        dsp, _verdict = _reparation_texture_sure(
-            glb, lambda _e, _s: _dspk_atlas(_e, _s), "despeckle_atlas")
-        if dsp.get("ok") and dsp.get("islands_purged"):
-            reparations.append("%d ilot(s) parasite(s) — %s"
-                               % (dsp["islands_purged"], _verdict))
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        from atlas_dilate import dilater
-        d = dilater(glb)
-        if d.get("ok"):
-            reparations.append("gouttieres atlas dilatees")
-    except Exception:  # noqa: BLE001
-        pass
+    if not preserve_native and repair_geometry:
+        print("PORTE: audit des trous (anime)...", flush=True)
+        t0 = audit_trous(glb)
+        if t0.get("bords_ouverts", 0) > 200:
+            repair = reparer_trous_sans_perte(glb, t0)
+            if repair.get("ok"):
+                t1 = repair['after']
+                reparations.append("trous: %s -> %s bords ouverts"
+                                   % (t0.get("bords_ouverts"), t1.get("bords_ouverts")))
+            else:
+                reparations.append('rebouchage refuse: ' + str(repair.get('error')))
+                if not repair.get('original_preserved'):
+                    return {'parfait': False, 'score': 0, 'reparations': reparations,
+                            'defauts': ['Restauration impossible; original sauvegarde: ' + str(repair.get('retained_backup'))]}
+        print("PORTE: orientation espace brut (anime)...", flush=True)
+        o = orienter_face_viewer(glb)
+        if o.get("ok") and o.get("yaw"):
+            reparations.append("orientation: yaw %s applique (buffers)" % o["yaw"])
+    else:
+        reparations.append("Contrôle non destructif (animé) : géométrie, UV et pose F3D frame-0 conservés")
     try:
         _run = Path(glb).parent
-        if _run.name in ("modele", "mouvement", "models", "travail"):
+        if _run.name in ("modele", "mouvement", "models", "travail", "work"):
             _run = _run.parent
         verdict_preuves = preuves(glb, str(_run), Path(glb).stem[-40:])
         reparations.append("preuves ecrites: journal/verifications (%s)"
@@ -743,10 +729,16 @@ def porte(glb: str, reference: str | None, contexte: str = "", *, repair_geometr
             pass
     else:
         reparations.append("Contrôle non destructif : géométrie, orientation et atlas natifs conservés")
+    try:
+        from pbr_cartography import inject_gltf_optical_extensions, resolve_pbr_optical_profile
+        if contexte:
+            inject_gltf_optical_extensions(glb, resolve_pbr_optical_profile(contexte))
+    except Exception:  # noqa: BLE001
+        pass
     # PREUVES DANS LE RUN (jamais dans un dossier temporaire)
     try:
         _run = Path(glb).parent
-        if _run.name in ("modele", "mouvement", "models", "travail"):
+        if _run.name in ("modele", "mouvement", "models", "travail", "work"):
             _run = _run.parent
         verdict_preuves = preuves(glb, str(_run), Path(glb).stem[-40:])
         reparations.append("preuves ecrites: journal/verifications (%s)"

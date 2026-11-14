@@ -220,32 +220,90 @@ def list_generated_files():
 
 @asset_bp.route("/api/image/persist", methods=["POST"])
 def persist_generated_image():
-    """Sauvegarde un rendu d'image dans la structure output/image/<context>/<session>/<intent_slug>.png."""
+    """Sauvegarde un rendu d'image dans output/image/creations/ ou output/image/modifications/."""
+    import json
+    import shutil
+    from urllib.parse import quote
     data = request.get_json(silent=True) or {}
-    filename = data.get("filename")
-    context = data.get("context", "ui")
-    session_id = data.get("sessionId", "general")
-    intent_mode = data.get("mode", "creation")
-    prompt = data.get("prompt", "")
+    raw_filename = os.path.basename(str(data.get("filename", "")))
+    data_url = str(data.get("data_url", "")).strip()
+    if not raw_filename and data_url.startswith("data:image/"):
+        raw_filename = "creation.png"
+    if not raw_filename or not raw_filename.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
+        return jsonify({"ok": False, "error": "Nom de fichier image invalide."}), 400
 
-    safe_context = "tunnel" if context == "tunnel" else "cli" if context == "cli" else "ui"
-    safe_session = re.sub(r'[^a-zA-Z0-9_.-]+', '_', session_id or "session")
-    mode_slug = re.sub(r'[^a-zA-Z0-9]+', '_', intent_mode.lower())[:15] or "creation"
-    prompt_slug = re.sub(r'[^a-zA-Z0-9]+', '_', prompt.lower())[:35].strip('_') or "image"
-    ts = int(data.get("timestamp") or time.time() * 1000)
-
-    target_dir = os.path.join(WORKSPACE, "output", "image", safe_context, safe_session)
+    mode_raw = str(data.get("mode", "creation")).strip().lower()
+    is_mod = bool(data.get("is_modification")) or (mode_raw not in {"", "creation", "new", "text2img"})
+    folder_name = "modifications" if is_mod else "creations"
+    prompt_text = str(data.get("prompt", "")).strip()
+    slug = re.sub(r"[^a-z0-9]+", "_", prompt_text.lower()).strip("_")[:42] or ("modification" if is_mod else "creation")
+    ts_str = time.strftime("%Y-%m-%d_%H%M%S")
+    target_dir = os.path.join(WORKSPACE, "output", "image", folder_name)
     os.makedirs(target_dir, exist_ok=True)
+    ext = os.path.splitext(raw_filename)[1].lower() or ".png"
+    dest_name = f"{ts_str}_{slug}{ext}"
+    dest_path = os.path.join(target_dir, dest_name)
 
-    out_filename = f"{mode_slug}_{prompt_slug}_{ts}.png"
-    out_path = os.path.join(target_dir, out_filename)
+    copied = False
+    candidates = [
+        os.path.join(COMFYUI_PATH or "", "output", raw_filename),
+        os.path.join(os.path.dirname(WORKSPACE), "modele", "comfyui", "comfyui", "output", raw_filename),
+        os.path.join(os.path.dirname(WORKSPACE), "modele", "comfyui", "output", raw_filename),
+    ]
+    for cand in candidates:
+        if cand and os.path.isfile(cand):
+            shutil.copy2(cand, dest_path)
+            copied = True
+            break
 
-    if filename:
-        comfy_path = os.path.join(COMFYUI_PATH or "", "output", filename)
-        if os.path.isfile(comfy_path):
-            import shutil
-            shutil.copy2(comfy_path, out_path)
-            rel = os.path.relpath(out_path, WORKSPACE).replace("\\", "/")
-            return jsonify({"ok": True, "path": rel, "filename": out_filename})
+    if not copied and data_url.startswith("data:image/") and "," in data_url:
+        try:
+            import base64
+            with open(dest_path, "wb") as f:
+                f.write(base64.b64decode(data_url.split(",", 1)[1]))
+            copied = True
+        except Exception:
+            pass
+
+    if not copied:
+        try:
+            import urllib.request
+            comfy_url = os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188").rstrip("/")
+            with urllib.request.urlopen(f"{comfy_url}/view?filename={quote(raw_filename)}&type=output", timeout=8) as resp:
+                if resp.status == 200:
+                    with open(dest_path, "wb") as f:
+                        f.write(resp.read())
+                    copied = True
+        except Exception:
+            pass
+
+    if copied:
+        try:
+            meta_path = os.path.splitext(dest_path)[0] + ".json"
+            with open(meta_path, "w", encoding="utf-8") as mf:
+                json.dump({
+                    "filename": dest_name,
+                    "source_filename": raw_filename,
+                    "prompt": prompt_text,
+                    "mode": mode_raw or "creation",
+                    "folder": folder_name,
+                    "is_modification": is_mod,
+                    "session_id": str(data.get("sessionId", "general")),
+                    "context": str(data.get("context", "ui")),
+                    "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                }, mf, ensure_ascii=False, indent=2)
+        except OSError:
+            pass
+        saved_rel = f"output/image/{folder_name}/{dest_name}"
+        return jsonify({
+            "ok": True,
+            "copied": True,
+            "folder": folder_name,
+            "path": saved_rel,
+            "saved_rel": saved_rel,
+            "saved_path": dest_path,
+            "filename": dest_name,
+        })
 
     return jsonify({"ok": False, "error": "Fichier source introuvable"}), 404
+

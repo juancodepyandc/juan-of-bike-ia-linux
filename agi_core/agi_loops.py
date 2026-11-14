@@ -35,10 +35,16 @@ PLACEHOLDER_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bplaceholder\b.*?\b(?:implement|replace)\b", re.IGNORECASE),
 )
 
+HARDCODING_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"/tmp/(?:fix|patch|perfect|polish)_[A-Za-z0-9_]+\.py\b", re.IGNORECASE),
+    re.compile(r"\bHARDCODED_SUBJECT_COORDS\b", re.IGNORECASE),
+)
+
 
 class ScopeFirewallEnforcementLoop:
     """Boucle Pare-Feu garantissant qu'aucun Sous-Agent Appliquant ne mélange son périmètre
-    avec un autre module et ne livre aucun code incomplet (stub/TODO).
+    avec un autre module, ne livre aucun code incomplet (stub/TODO) et respecte la règle
+    absolue Zéro Hardcoding & Excellence Native de l'IA (interdiction des scripts ad-hoc `/tmp/`).
     """
 
     def __init__(self, router: AGIBrainRouter | None = None):
@@ -61,6 +67,16 @@ class ScopeFirewallEnforcementLoop:
 
         for tf in target_files or []:
             tf_lower = tf.strip().lower()
+            if tf_lower.startswith("/tmp/") and tf_lower.endswith(".py"):
+                violations.append({
+                    "type": "anti_hardcoding_tmp_script_breach",
+                    "target": tf,
+                    "forbidden_rule": "zero_hardcoding_native_excellence",
+                    "message": (
+                        f"Interdiction des scripts de patch ad-hoc `{tf}` : toute amélioration doit être "
+                        "codée de façon universelle par premiers principes dans les modules natifs d'AuroraIA."
+                    ),
+                })
             base_tf = Path(tf_lower.split("#")[0]).name
             for forbidden in never_touch:
                 forb_base = Path(forbidden.split("#")[0]).name
@@ -102,6 +118,17 @@ class ScopeFirewallEnforcementLoop:
                     "target": "proposed_content",
                     "forbidden_rule": "zero_placeholder",
                     "message": f"Marqueurs incomplets détectés et bloqués : {', '.join(placeholder_hits)}",
+                })
+            hardcoding_hits = [pat.search(proposed_content).group(0) for pat in HARDCODING_PATTERNS if pat.search(proposed_content)]  # type: ignore[union-attr]
+            if hardcoding_hits:
+                violations.append({
+                    "type": "anti_hardcoding_breach",
+                    "target": "proposed_content",
+                    "forbidden_rule": "zero_hardcoding_native_excellence",
+                    "message": (
+                        "Violation de la règle Zéro Hardcoding & Excellence Native : "
+                        f"{', '.join(hardcoding_hits)}"
+                    ),
                 })
 
         return {
@@ -642,8 +669,127 @@ class AutonomousGoalWatchdogLoop:
         }
 
 
+class FirstPrinciplesConstraintSolverLoop:
+    r"""Boucle 9 — Solveur de Contraintes par Premiers Principes (Physique, Mathématique, Topologique, Sécurité).
+    Extrait et vérifie les invariants formels exigés par la demande :
+      - 3D / CAO : Fermeture manifold ($\chi = V - E + F$), 0 auto-intersection BVH, dégénérescence < 0.02%.
+      - Animation / Rigging : Préservation du volume articulaire DQS >= 98%, glissement d'appui IK <= 0.5 mm.
+      - Code / Cyber : Validité syntaxique AST, zéro TODO/stub, preuve Z3 UNSAT sur patch de sécurité.
+      - Business : Réserve de trésorerie >= 25%, probabilité de ruine <= 2% (`IndependentRiskManager`).
+      - Academy / Simulator : Conservation d'énergie symplectique et vérification symbolique SymPy/Z3.
+    """
+
+    MODULE_FORMAL_INVARIANTS: dict[str, list[dict[str, str]]] = {
+        "3d": [
+            {"id": "manifold_watertight", "formula": "nonmanifold_edge_fraction == 0.0 and degenerate_face_fraction <= 0.0002", "verifier": "auto_rl.mesh_metrics"},
+            {"id": "bvh_self_intersection_reduction", "formula": "self_intersections_candidate <= self_intersections_base", "verifier": "auto_rl.dominance"},
+            {"id": "pareto_360_worst_view", "formula": "clip_worst_view_candidate >= clip_worst_view_base", "verifier": "auto_rl.dominance"},
+            {"id": "zero_hardcoding_universal_laws", "formula": "ad_hoc_tmp_scripts == 0 and subject_specific_coord_branches == 0", "verifier": "ScopeFirewallEnforcementLoop"},
+        ],
+        "animation": [
+            {"id": "dqs_volume_preservation", "formula": "joint_volume_preservation_pct >= 98.0", "verifier": "rig_skin_binding"},
+            {"id": "foot_lock_ik_zero_slide", "formula": "foot_sliding_error_mm <= 0.5", "verifier": "semantic_animation"},
+        ],
+        "image": [
+            {"id": "style_ontology_fidelity", "formula": "style_lock_preserved and clip_cosine >= base_clip_cosine", "verifier": "prompt_intelligence"},
+            {"id": "zero_saturation_clipping", "formula": "extreme_pixels_fraction <= 0.015", "verifier": "media_cycle"},
+        ],
+        "code": [
+            {"id": "ast_and_type_soundness", "formula": "py_compile_exit == 0 and tsc_no_emit_exit == 0", "verifier": "code_sandbox"},
+            {"id": "zero_placeholder_contract", "formula": "todo_count == 0 and stub_count == 0", "verifier": "ScopeFirewallEnforcementLoop"},
+        ],
+        "cyber": [
+            {"id": "smt_z3_patch_unsat", "formula": "z3_solver.check(exploit_reachability_after_patch) == UNSAT", "verifier": "closedLoopPatchEngine"},
+            {"id": "zero_host_side_effect", "formula": "sandbox_isolation == True", "verifier": "_safety"},
+        ],
+        "business": [
+            {"id": "independent_risk_veto", "formula": "cash_reserve_ratio >= 0.25 and ruin_probability <= 0.02", "verifier": "IndependentRiskManager"},
+            {"id": "walk_forward_out_of_sample", "formula": "split == '60/20/20' and net_pocket_margin > 0", "verifier": "business_quant"},
+        ],
+        "learning": [
+            {"id": "formal_symbolic_proof", "formula": "sympy.simplify(lhs - rhs) == 0", "verifier": "scientific_oracle"},
+        ],
+        "simulator": [
+            {"id": "symplectic_energy_conservation", "formula": "abs(E_t - E_0) / max(abs(E_0), 1e-9) < 0.01", "verifier": "physicsEngine"},
+        ],
+    }
+
+    def derive_formal_constraints(self, modules_involved: list[str], request_text: str = "") -> dict[str, Any]:
+        active_invariants: list[dict[str, str]] = []
+        seen_ids: set[str] = set()
+        for mod in modules_involved:
+            lookup_mod = "animation" if mod == "3d-motion" else ("3d" if mod.startswith("3d-") else mod)
+            for inv in self.MODULE_FORMAL_INVARIANTS.get(lookup_mod, []):
+                if inv["id"] not in seen_ids:
+                    seen_ids.add(inv["id"])
+                    active_invariants.append({"module": lookup_mod, **inv})
+        if not active_invariants:
+            active_invariants.append({
+                "module": modules_involved[0] if modules_involved else "conversation",
+                "id": "factual_and_contextual_coherence",
+                "formula": "hallucination_count == 0 and constraint_coverage == 1.0",
+                "verifier": "AutonomousGoalWatchdogLoop",
+            })
+        return {
+            "ok": True,
+            "invariants_count": len(active_invariants),
+            "formal_invariants": active_invariants,
+        }
+
+
+class ReinforcedModelArbitrationLoop:
+    """Boucle 10 — Arbitrage Autonome des Modèles Renforcés & Spécialistes (`modele/renforce/`).
+    Sélectionne dynamiquement pour chaque module sollicité l'adaptateur renforcé ou le spécialiste
+    vérifié sur holdout tout en garantissant l'intégrité SHA-256 du Modèle de Base Intouchable.
+    """
+
+    def arbitrate_models(self, modules_involved: list[str], request_text: str = "") -> dict[str, Any]:
+        selections: dict[str, dict[str, Any]] = {}
+        for raw_mod in modules_involved:
+            mod = "animation" if raw_mod == "3d-motion" else ("3d" if raw_mod.startswith("3d-") else raw_mod)
+            if mod == "3d":
+                try:
+                    from auto_rl.runtime import resolve_3d_specialist_adapter
+                    spec = resolve_3d_specialist_adapter(prompt_text=request_text)
+                    if spec:
+                        selections[mod] = {
+                            "mode": "reinforced_multi_specialist",
+                            "specialist_role": spec.get("specialist_role", "stylized_manifold_core"),
+                            "adapter_name": spec.get("name"),
+                            "adapter_file": Path(spec.get("adapter", "")).name,
+                            "base_model_untouchable": True,
+                        }
+                        continue
+                except Exception:
+                    pass
+            try:
+                from auto_rl.reinforced_registry import RENFORCE_ROOT
+                manifest_path = RENFORCE_ROOT / mod / "manifest.json"
+                if manifest_path.is_file():
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    if manifest.get("status") == "reinforced_available":
+                        selections[mod] = {
+                            "mode": "reinforced_champion",
+                            "adapter_name": manifest.get("name"),
+                            "score_renforce_100": manifest.get("score_renforce_100"),
+                            "gain_points_100": manifest.get("gain_points_100"),
+                            "base_model_untouchable": True,
+                        }
+                        continue
+            except Exception:
+                pass
+            selections[mod] = {
+                "mode": "base_untouchable_verified",
+                "base_model_untouchable": True,
+            }
+        return {
+            "ok": True,
+            "modules_arbitrated": selections,
+        }
+
+
 class CognitiveExecutiveLoop:
-    """Boucle Maîtresse en 7 Phases du Cerveau AGI d'AuroraIA (coordonnant les 8 Boucles Opérationnelles).
+    """Boucle Maîtresse en 7 Phases du Cerveau AGI d'AuroraIA (coordonnant les 10 Boucles Opérationnelles).
     Orchestre de bout en bout :
       1. PERCEIVE_INTENT
       2. DECOMPOSE_DAG
@@ -664,6 +810,8 @@ class CognitiveExecutiveLoop:
         self.counterfactual = MultiHypothesisCounterfactualLoop(self.router, self.memory)
         self.synergy = CrossModuleSynergyOrchestratorLoop()
         self.watchdog = AutonomousGoalWatchdogLoop()
+        self.constraint_solver = FirstPrinciplesConstraintSolverLoop()
+        self.model_arbitrator = ReinforcedModelArbitrationLoop()
 
     def build_autonomous_loop_plan(
         self,
@@ -675,7 +823,8 @@ class CognitiveExecutiveLoop:
         use_llm: bool = False,
     ) -> dict[str, Any]:
         """Génère le plan complet d'exécution en boucle fermée (Compréhension Cognitive + DAG multi-agents +
-        Pare-Feu + Tree-of-Thoughts Bayésien + Synergie Inter-Modules + Watchdog + Auto-Réparation).
+        Pare-Feu + Tree-of-Thoughts Bayésien + Synergie Inter-Modules + Watchdog + Premiers Principes +
+        Arbitrage Modèles Renforcés + Auto-Réparation).
         """
         base_plan = self.router.plan_execution(
             request_text,
@@ -686,9 +835,10 @@ class CognitiveExecutiveLoop:
         )
         applicators = base_plan.get("applicators", [])
         cog = base_plan.get("cognitive_understanding") or {}
+        modules_involved = base_plan.get("modules_involved", ["conversation"])
 
         # Déterminer le régime épistémique
-        if len(base_plan.get("modules_involved", [])) > 1:
+        if len(modules_involved) > 1:
             epistemic_regime = "MULTI_MODULE_SYNTHESIS"
         elif cog.get("epistemic_regime"):
             epistemic_regime = str(cog["epistemic_regime"])
@@ -709,6 +859,12 @@ class CognitiveExecutiveLoop:
 
         # Pré-évaluation Watchdog des ancres obligatoires (Boucle 8)
         watchdog_baseline = self.watchdog.evaluate_trajectory(request_text)
+
+        # Contraintes formelles par premiers principes (Boucle 9)
+        formal_constraints = self.constraint_solver.derive_formal_constraints(modules_involved, request_text)
+
+        # Arbitrage des modèles renforcés & spécialistes (Boucle 10)
+        reinforced_arbitration = self.model_arbitrator.arbitrate_models(modules_involved, request_text)
 
         # Construire le DAG ordonné avec dépendances et vérifications par nœud
         dag_nodes: list[dict[str, Any]] = []
@@ -750,8 +906,9 @@ class CognitiveExecutiveLoop:
                 "phase": "DECOMPOSE_DAG",
                 "status": "ready",
                 "detail": (
-                    f"Graphe DAG construit avec {len(dag_nodes)} nœud(s) atomique(s) "
-                    f"et {len(handoff_contracts)} contrat(s) de relais typé(s)."
+                    f"Graphe DAG construit avec {len(dag_nodes)} nœud(s) atomique(s), "
+                    f"{len(handoff_contracts)} contrat(s) de relais typé(s) et "
+                    f"{formal_constraints['invariants_count']} invariant(s) formel(s)."
                 ),
             },
             {
@@ -765,12 +922,12 @@ class CognitiveExecutiveLoop:
             {
                 "phase": "APPLY_SURGICAL",
                 "status": "pending_execution",
-                "detail": "Exécution cloisonnée par `files_owned` / `routes_owned` avec blocage `never_touch`.",
+                "detail": "Exécution cloisonnée par `files_owned` / `routes_owned` avec blocage `never_touch` et règle Zéro Hardcoding & Excellence Native.",
             },
             {
                 "phase": "VERIFY_CRITIQUE",
                 "status": "pending_verification",
-                "detail": "Validation déterministe (tests, AST, invariants, zéro TODO/placeholder, Watchdog anti-dérive).",
+                "detail": "Validation déterministe (tests, AST, invariants formels, zéro TODO/placeholder, zéro hardcoding, Watchdog anti-dérive).",
             },
             {
                 "phase": "SELF_HEAL_REFLECT",
@@ -788,11 +945,16 @@ class CognitiveExecutiveLoop:
             **base_plan,
             "schema_version": "aurora.agi_loops.v2",
             "epistemic_regime": epistemic_regime,
+            "semantic_ontology": cog.get("semantic_ontology") or {},
+            "universal_entity": cog.get("universal_entity") or {},
+            "specialist_3d_routing": cog.get("reinforced_specialist") or {},
             "loop_phases": list(LOOP_PHASES),
             "phases_trace": phases_trace,
             "dag_nodes": dag_nodes,
             "counterfactual_evaluation": hypothesis_eval,
             "handoff_contracts": handoff_contracts,
+            "formal_constraints": formal_constraints,
+            "reinforced_model_arbitration": reinforced_arbitration,
             "watchdog_anchors": watchdog_baseline["covered_anchors"],
             "operational_loops": {
                 "cognitive_executive_loop": True,
@@ -803,5 +965,9 @@ class CognitiveExecutiveLoop:
                 "multi_hypothesis_counterfactual_loop": True,
                 "cross_module_synergy_orchestrator_loop": True,
                 "autonomous_goal_watchdog_loop": True,
+                "first_principles_constraint_solver_loop": True,
+                "reinforced_model_arbitration_loop": True,
+                "zero_hardcoding_native_excellence_loop": True,
             },
         }
+

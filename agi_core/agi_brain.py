@@ -202,7 +202,7 @@ FEATURE_KEYWORDS_INDEX: dict[str, tuple[str, ...]] = {
     "conversation-vision-multimodal": ("image jointe", "vision", "ocr", "qwen-vl", "capture écran"),
     # Code
     "code-architecture-planner": ("architecture", "arborescence", "plan code", "multi-fichiers", "contrat typescript"),
-    "code-design-architect": ("motion design", "ui", "ux", "animation", "shader", "webgl", "design", "css", "glassmorphism", "60fps"),
+    "code-design-architect": ("motion design", "ui", "ux", "animation ui", "animation css", "shader", "webgl", "design", "css", "glassmorphism", "60fps"),
     "code-backend-performance": ("backend", "sql", "index", "performance", "complexité", "concurrence", "api", "latence serveur"),
     "code-fidelity-auditor": ("fidélité", "audit code", "todo", "placeholder", "stub", "score code"),
     "code-sandbox-runner": ("sandbox", "preview", "iframe", "babel", "compilation live", "exécution code"),
@@ -357,6 +357,26 @@ class AGIBrainRouter:
 
         return round(score, 2)
 
+    @staticmethod
+    def _applicator_causal_stage(agent_name: str) -> int:
+        """Retourne le rang causal d'un appliquant dans une chaîne multi-agents :
+        10 = Routeur / Planificateur / Directeur de Prompt / Recherche
+        20 = Générateur / Architecte / Solveur / Créateur primaire
+        30 = Post-processeur / Rigging / Cinématique / Patch / Upscale
+        40 = Auditeur / Vérificateur / Rescuer / Risk-Manager / Critique
+        50 = Packager / Viewer / Livraison / Registre
+        """
+        n = (agent_name or "").lower()
+        if any(k in n for k in ("-router", "-planner", "-director", "-interpreter", "-research", "-prober")):
+            return 10
+        if any(k in n for k in ("-postprocessor", "-rigger", "-kinematics", "-patcher", "-upscale", "-lipsync", "-tuner", "-texture")):
+            return 30
+        if any(k in n for k in ("-rescuer", "-auditor", "-verifier", "-critic", "-risk", "-validator", "-evaluator")):
+            return 40
+        if any(k in n for k in ("-packager", "-viewer", "-organizer", "-delivery", "-registry")):
+            return 50
+        return 20
+
     def analyze_cognitive_intent(
         self,
         request_text: str,
@@ -364,14 +384,46 @@ class AGIBrainRouter:
         *,
         use_llm: bool = False,
     ) -> dict[str, Any]:
-        """Analyse cognitive profonde de l'intention : comprend le but réel, le régime épistémique,
-        les contraintes implicites et construit une chaîne de raisonnement causale (avec synthèse
-        LLM locale optionnelle si Ollama est actif).
+        """Analyse cognitive profonde de l'intention : comprend le but réel, l'ontologie sémantique,
+        l'entité universelle éventuelle, l'adaptateur renforcé spécialiste actif, le régime épistémique,
+        les contraintes implicites et construit une chaîne de raisonnement causale.
         """
         query = (request_text or "").strip()
         q_low = query.lower()
         modules = list(dict.fromkeys(a.get("module") or "conversation" for a in selected_applicators))
+        primary_mod = modules[0] if modules else "conversation"
         features = list(dict.fromkeys(a.get("feature") or a.get("applicator_agent") for a in selected_applicators))
+
+        # 0. Fusion avec le Moteur d'Intelligence Sémantique & Ontologique Universel
+        semantic_ontology: dict[str, Any] = {}
+        universal_entity: dict[str, Any] | None = None
+        reinforced_specialist: dict[str, Any] | None = None
+        try:
+            from agi_core.prompt_intelligence import (
+                infer_semantic_ontology,
+                resolve_universal_entity_knowledge,
+            )
+            semantic_ontology = infer_semantic_ontology(query, primary_mod)
+            universal_entity = resolve_universal_entity_knowledge(query, use_llm=use_llm)
+        except Exception:
+            pass
+
+        if "3d" in modules:
+            try:
+                from auto_rl.runtime import resolve_3d_specialist_adapter
+                spec_rec = resolve_3d_specialist_adapter(prompt_text=query)
+                if spec_rec:
+                    reinforced_specialist = {
+                        "module": "3d",
+                        "specialist_role": spec_rec.get("specialist_role", "core"),
+                        "selected_run_id": spec_rec.get("selected_run_id"),
+                        "specialist_domain": spec_rec.get("specialist_domain"),
+                        "reason": spec_rec.get("reason"),
+                        "adapter_name": spec_rec.get("name"),
+                        "adapter_file": Path(spec_rec.get("adapter", "")).name,
+                    }
+            except Exception:
+                pass
 
         # 1. Détermination du régime épistémique
         exploratory_signals = (
@@ -392,8 +444,8 @@ class AGIBrainRouter:
             epistemic_regime = "KNOWN_CANONICAL"
             regime_label = "Résolution Directe & Vérification Formelle"
 
-        # 2. Extraction des contraintes implicites (ce qu'un simple script précodé oublierait)
-        implicit_constraints: list[str] = []
+        # 2. Extraction des contraintes implicites (fusionnées avec l'ontologie sémantique)
+        implicit_constraints: list[str] = list(semantic_ontology.get("implicit_invariants") or [])
         if any(m in modules for m in ("code", "cli", "bridge")):
             implicit_constraints.append("Préserver 100 % des contrats existants, de l'état de session et de la parité Natif / Web / CLI.")
         if any(w in q_low for w in ("ui", "interface", "cli", "graphisme", "barre", "panel", "modal", "animation", "design")):
@@ -406,12 +458,23 @@ class AGIBrainRouter:
             implicit_constraints.append("Mesure empirique hors-échantillon (holdout / Walk-Forward) et respect strict des garde-fous de risque.")
         if not implicit_constraints:
             implicit_constraints.append("Compréhension contextuelle complète sans réponse générique ni supposition non vérifiée.")
+        implicit_constraints = list(dict.fromkeys(implicit_constraints))
 
         # 3. Synthèse d'intention et hypothèse causale
         primary_goal = query if len(query) <= 180 else query[:177] + "..."
+        entity_note = (
+            f" | Entité résolue : {universal_entity.get('canonical_name')} ({universal_entity.get('medium_or_style', 'canon')})"
+            if universal_entity and universal_entity.get("canonical_name")
+            else ""
+        )
+        specialist_note = (
+            f" | Spécialiste 3D : {reinforced_specialist['adapter_file']} ({reinforced_specialist['specialist_role']})"
+            if reinforced_specialist
+            else ""
+        )
         intent_synthesis = (
             f"Compréhension de l'objectif : « {primary_goal} » — Mobilisation coordonnée de "
-            f"{', '.join(modules)} autour des capacités {', '.join(str(f) for f in features[:3])}."
+            f"{', '.join(modules)} autour des capacités {', '.join(str(f) for f in features[:3])}{entity_note}{specialist_note}."
         )
         causal_reasoning = (
             f"Régime {epistemic_regime} ({regime_label}) : au lieu d'appliquer une réponse précodée, "
@@ -420,33 +483,33 @@ class AGIBrainRouter:
             f"d'exécution avant validation finale."
         )
 
-        # 4. Raisonnement neuronal en direct via LLM local si demandé et disponible
+        # 4. Raisonnement neuronal en direct via le Conseil Flagship local si demandé et disponible
         llm_insight = None
         if use_llm and query:
             try:
-                import urllib.request
-                payload = json.dumps({
-                    "model": "qwen2.5-coder:7b",
-                    "prompt": (
-                        "Tu es le Cerveau AGI d'AuroraIA. En 2 phrases denses et précises en français, "
-                        "explique la compréhension profonde (intention réelle, piège à éviter, stratégie) "
-                        f"pour cette demande : {query}"
-                    ),
-                    "stream": False,
-                    "options": {"temperature": 0.2, "num_predict": 140},
-                }).encode("utf-8")
-                req = urllib.request.Request(
-                    "http://127.0.0.1:11434/api/generate",
-                    data=payload,
-                    headers={"Content-Type": "application/json"},
-                    method="POST",
+                from .flagship_council import ollama_flagship_chat
+                chat_res = ollama_flagship_chat(
+                    [
+                        {
+                            "role": "system",
+                            "content": (
+                                "Tu es le Cerveau AGI d'AuroraIA. Explique avec une précision chirurgicale en français "
+                                "la compréhension profonde (intention réelle, pièges techniques à éviter, invariants et stratégie complète) "
+                                "pour la demande de l'utilisateur."
+                            ),
+                        },
+                        {"role": "user", "content": query},
+                    ],
+                    module=modules[0] if modules else "general",
+                    temperature=0.2,
+                    num_ctx=32768,
+                    num_predict=4096,
+                    timeout_sec=120.0,
                 )
-                with urllib.request.urlopen(req, timeout=2.5) as resp:
-                    data = json.loads(resp.read().decode("utf-8"))
-                    resp_text = (data.get("response") or "").strip()
-                    if resp_text:
-                        llm_insight = resp_text
-                        causal_reasoning = resp_text
+                resp_text = (chat_res.get("content") or "").strip()
+                if resp_text:
+                    llm_insight = resp_text
+                    causal_reasoning = resp_text
             except Exception:
                 llm_insight = None
 
@@ -456,6 +519,9 @@ class AGIBrainRouter:
             "intent_synthesis": intent_synthesis,
             "causal_reasoning": causal_reasoning,
             "implicit_constraints": implicit_constraints,
+            "semantic_ontology": semantic_ontology,
+            "universal_entity": universal_entity,
+            "reinforced_specialist": reinforced_specialist,
             "llm_live_reasoning": llm_insight is not None,
         }
 
@@ -475,6 +541,12 @@ class AGIBrainRouter:
         query = (request_text or "").strip()
         query_lower = query.lower()
         norm_module = (active_module or "").strip().lower() or None
+        if norm_module is None and query:
+            try:
+                from agi_core.mission_routing import mission_module
+                norm_module = mission_module({"request": query})
+            except Exception:
+                norm_module = None
 
         scored: list[tuple[float, str, dict[str, Any]]] = []
         for name, info in self.catalog.items():
@@ -501,6 +573,7 @@ class AGIBrainRouter:
             selected_applicators.append({
                 "applicator_agent": name,
                 "score": sc,
+                "causal_stage": self._applicator_causal_stage(name),
                 "module": info.get("module"),
                 "feature": feat,
                 "master_agent": master_name,
@@ -516,6 +589,16 @@ class AGIBrainRouter:
                 "agent_md_path": info.get("agent_md_path", ""),
             })
 
+        # Si plusieurs appliquants du même module coexistent, garder le n°1 (ancre principale)
+        # en tête et ordonner les suivants selon leur étape causale (génération -> post-process -> audit -> export)
+        if len(selected_applicators) > 2:
+            anchor = selected_applicators[0]
+            tail = sorted(
+                selected_applicators[1:],
+                key=lambda a: (int(a.get("causal_stage", 20)), -float(a.get("score", 0.0))),
+            )
+            selected_applicators = [anchor] + tail
+
         # Fallback si la requête est très générale : utiliser le Maître du module actif (ou conversation-lead)
         if not selected_applicators:
             fallback_mod = norm_module or "conversation"
@@ -528,6 +611,7 @@ class AGIBrainRouter:
             selected_applicators.append({
                 "applicator_agent": first_sub,
                 "score": 10.0,
+                "causal_stage": self._applicator_causal_stage(first_sub),
                 "module": fallback_mod,
                 "feature": sub_info.get("feature", fallback_mod),
                 "master_agent": master_name,

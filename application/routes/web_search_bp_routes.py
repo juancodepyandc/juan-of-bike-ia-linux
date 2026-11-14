@@ -450,16 +450,19 @@ def _ollama_extract_brand_profile(brand: str, wiki_extract: str) -> "dict | None
         schema_lines.append(f"Extrait Wikipedia: {wiki_extract[:1500]}")
     prompt = "\n".join(schema_lines)
     try:
+        from agi_core.flagship_council import resolve_installed_flagship_model
+        chosen_model = resolve_installed_flagship_model(None, module="code")
         r = requests.post(
             "http://127.0.0.1:11434/api/generate",
             json={
-                "model": "qwen2.5:7b",
+                "model": chosen_model,
                 "prompt": prompt,
                 "stream": False,
-                "options": {"temperature": 0.1, "num_predict": 600, "num_ctx": 4096},
+                "think": False,
+                "options": {"temperature": 0.1, "num_predict": 4096, "num_ctx": 16384},
                 "format": "json",
             },
-            timeout=45,
+            timeout=120,
         )
         if r.status_code != 200:
             return None

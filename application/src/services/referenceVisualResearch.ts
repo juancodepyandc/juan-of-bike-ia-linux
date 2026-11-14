@@ -98,6 +98,48 @@ function base64ToBytes(base64: string) {
 
 const WIKIPEDIA_LANGUAGES = ['fr', 'en'] as const
 
+const NON_RASTER_EXT_RE = /\.(?:pdf|djvu|svg|ogv|webm|ogg|mp4|tif|tiff|doc|docx|zip|html|htm|php)(?:$|[?#])/i
+
+export function isRasterImageUrl(url: string | undefined | null): url is string {
+  if (!url || typeof url !== 'string') return false
+  const trimmed = url.trim()
+  if (!/^https?:\/\//i.test(trimmed)) return false
+  if (NON_RASTER_EXT_RE.test(trimmed)) return false
+  return true
+}
+
+export async function validateRasterImageBlob(blob: Blob | null | undefined, minEdge = 64): Promise<Blob | null> {
+  if (!blob || blob.size < 64) return null
+  const mime = (blob.type || '').toLowerCase()
+  if (mime.includes('pdf') || mime.includes('html') || mime.includes('svg') || mime.includes('xml') || mime.includes('video') || mime.includes('audio')) {
+    return null
+  }
+  try {
+    const headerBuf = await blob.slice(0, 24).arrayBuffer()
+    const headerStr = new TextDecoder('ascii', { fatal: false }).decode(new Uint8Array(headerBuf)).trimStart()
+    if (
+      headerStr.startsWith('%PDF-') ||
+      headerStr.startsWith('<!DOC') ||
+      headerStr.startsWith('<html') ||
+      headerStr.startsWith('<HTML') ||
+      headerStr.startsWith('<?xml') ||
+      headerStr.startsWith('<svg')
+    ) {
+      return null
+    }
+    if (typeof createImageBitmap === 'function') {
+      const bmp = await createImageBitmap(blob)
+      const w = bmp.width
+      const h = bmp.height
+      bmp.close()
+      if (w < minEdge || h < minEdge) return null
+    }
+    return blob
+  } catch {
+    return null
+  }
+}
+
 async function blobToBase64(blob: Blob) {
   const bytes = new Uint8Array(await blob.arrayBuffer())
   return bytesToBase64(bytes)
@@ -110,7 +152,7 @@ async function searchWebVisuals(query: string) {
     const parsed = extractJson<{ ok?: boolean; candidates?: ReferenceVisualCandidate[] }>(output)
     if (!parsed?.ok || !Array.isArray(parsed.candidates)) return []
     return parsed.candidates
-      .filter((candidate) => candidate?.imageUrl && candidate?.pageUrl)
+      .filter((candidate) => isRasterImageUrl(candidate?.imageUrl) && candidate?.pageUrl)
       .map((candidate) => ({
         ...candidate,
         width: Number(candidate.width || 0),
@@ -123,10 +165,13 @@ async function searchWebVisuals(query: string) {
 }
 
 async function downloadCandidateBlob(url: string) {
+  if (!isRasterImageUrl(url)) return null
   try {
     const imageResponse = await fetch(url, { signal: AbortSignal.timeout(6000) })
     if (imageResponse.ok) {
-      return await imageResponse.blob()
+      const rawBlob = await imageResponse.blob()
+      const valid = await validateRasterImageBlob(rawBlob)
+      if (valid) return valid
     }
   } catch {}
 
@@ -135,7 +180,8 @@ async function downloadCandidateBlob(url: string) {
     const output = await runPythonScript(`${workspacePath}/python-services/reference_visual_search.py`, ['--download-url', url])
     const parsed = extractJson<{ ok?: boolean; base64?: string; contentType?: string }>(output)
     if (!parsed?.ok || !parsed.base64) return null
-    return new Blob([base64ToBytes(parsed.base64)], { type: parsed.contentType || 'application/octet-stream' })
+    const fallbackBlob = new Blob([base64ToBytes(parsed.base64)], { type: parsed.contentType || 'image/png' })
+    return await validateRasterImageBlob(fallbackBlob)
   } catch {
     return null
   }
@@ -180,10 +226,16 @@ async function searchCommons(query: string) {
     return Object.values(payload.query?.pages || {})
       .map((page) => {
         const info = page.imageinfo?.[0]
-        if (!info?.url || !info.descriptionurl) return null
+        if (!info?.descriptionurl) return null
+        const imageUrl = isRasterImageUrl(info.thumburl)
+          ? info.thumburl
+          : isRasterImageUrl(info.url)
+            ? info.url
+            : null
+        if (!imageUrl) return null
         return {
           title: page.title,
-          imageUrl: info.thumburl || info.url,
+          imageUrl,
           pageUrl: info.descriptionurl,
           width: info.thumbwidth || info.width || 0,
           height: info.thumbheight || info.height || 0,
@@ -258,10 +310,20 @@ async function searchWikipediaVisuals(query: string) {
             }
           }
 
-          const imageUrl = summary.originalimage?.source || summary.thumbnail?.source
+          const useOriginal = isRasterImageUrl(summary.originalimage?.source)
+          const useThumb = isRasterImageUrl(summary.thumbnail?.source)
+          const imageUrl = useOriginal
+            ? summary.originalimage!.source!
+            : useThumb
+              ? summary.thumbnail!.source!
+              : undefined
           const pageUrl = summary.content_urls?.desktop?.page
-          const width = summary.originalimage?.width || summary.thumbnail?.width || 0
-          const height = summary.originalimage?.height || summary.thumbnail?.height || 0
+          const width = useOriginal
+            ? (summary.originalimage?.width || summary.thumbnail?.width || 0)
+            : (summary.thumbnail?.width || summary.originalimage?.width || 0)
+          const height = useOriginal
+            ? (summary.originalimage?.height || summary.thumbnail?.height || 0)
+            : (summary.thumbnail?.height || summary.originalimage?.height || 0)
           const dedupeKey = `${pageUrl || ''}::${imageUrl || ''}`
 
           if (!imageUrl || !pageUrl || width < 320 || height < 320 || seen.has(dedupeKey)) {

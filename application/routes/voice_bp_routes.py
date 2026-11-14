@@ -49,6 +49,19 @@ def voice_tts():
         if not text.strip():
             return jsonify({"ok": False, "error": "Texte vide"}), 400
 
+        phonetic_meta = {}
+        tts_text = text
+        try:
+            _py_svc = os.path.join(WORKSPACE, "python-services")
+            if _py_svc not in sys.path:
+                sys.path.insert(0, _py_svc)
+            from voice_cloning_service import normalize_french_phonetics
+            if str(lang).lower().startswith("fr"):
+                phonetic_meta = normalize_french_phonetics(text) or {}
+                tts_text = phonetic_meta.get("normalized_text") or text
+        except Exception:
+            phonetic_meta = {}
+
         # Un fichier PAR SYNTHESE, sous un projet. L ancienne version ecrivait
         # toujours `output/voix/tts_out.wav` : a la racine du module — hors
         # contrat — et surtout, chaque synthese EFFACAIT la precedente. Rien
@@ -57,7 +70,7 @@ def voice_tts():
         output_path = os.path.join(voice_dir, f"tts_{int(time.time() * 1000)}_{uuid.uuid4().hex}.wav")
         script = os.path.join(WORKSPACE, "python-services", "voice_service.py")
 
-        cmd = [sys.executable, script, "--mode", "tts", "--text", text, "--output", output_path, "--lang", lang]
+        cmd = [sys.executable, script, "--mode", "tts", "--text", tts_text, "--output", output_path, "--lang", lang]
         if voice_persona:
             cmd += ["--voice", voice_persona]
         # Timeout adaptatif: 120s sans avatar, 180s avec SadTalker
@@ -108,6 +121,7 @@ def voice_tts():
                 "file": pathlib.Path(output_path).relative_to(pathlib.Path(WORKSPACE)/"output/voix").as_posix(),
             }),
             "phonemes": phonemes,
+            "phonetic_normalization": phonetic_meta,
             "engine": engine,
             "voice": voice_name,
         }
@@ -889,13 +903,9 @@ def ent_analyze_dom():
         # Use existing Ollama proxy. Pick first available model (priorité aux
         # 7-8B rapides, fallback aux plus gros si rien trouvé).
         try:
-            tags_r = requests.get("http://127.0.0.1:11434/api/tags", timeout=8)
-            models = [m["name"] for m in (tags_r.json().get("models") or [])]
-            preferred = ["llama3.2:3b", "qwen2.5:7b", "qwen3:14b", "qwen2.5-coder:7b"]
-            picked = next((p for p in preferred if p in models), None)
-            if picked is None and models:
-                picked = models[0]
-            if picked is None:
+            from agi_core.flagship_council import resolve_installed_flagship_model
+            picked = resolve_installed_flagship_model(None, module="voice")
+            if not picked:
                 return jsonify({"ok": False, "error": "Aucun modèle Ollama installé", "items": []}), 200
         except Exception as e:
             return jsonify({"ok": False, "error": f"Ollama tags fail: {str(e)[:120]}", "items": []}), 200
@@ -908,8 +918,8 @@ def ent_analyze_dom():
                     {"role": "user", "content": user},
                 ],
                 "stream": False,
-                "options": {"temperature": 0.2},
-            }, timeout=120)
+                "options": {"temperature": 0.2, "num_ctx": 32768, "num_predict": 8192},
+            }, timeout=300)
             if r.status_code != 200:
                 return jsonify({"ok": False, "error": f"Ollama HTTP {r.status_code}", "items": []}), 200
             response_data = r.json()
@@ -983,3 +993,366 @@ def voice_personas():
         {"id": "phantom-sharp", "label": "Phantom · tranchante","module": "cyber",      "edge_voice_fr": "fr-FR-AlainNeural",   "edge_voice_en": "en-US-EricNeural"},
     ]
     return jsonify({"ok": True, "personas": personas, "default": "lyra-soft"})
+
+
+# =====================================================================
+#  Routes v3 Premiers Principes : Clonage Zero-Shot, 4-Stems, Oracle Formel & 3D
+# =====================================================================
+
+@voice_bp.route("/api/voice/clone-profile", methods=["POST"])
+def voice_clone_profile_v3():
+    """Extrait le profil acoustique Zero-Shot (F0, formants F1-F3, jitter, shimmer, HNR)
+    et synthétise optionnellement une parole clonée avec prosodie et visèmes Rhubarb."""
+    try:
+        _py_svc = os.path.join(WORKSPACE, "python-services")
+        if _py_svc not in sys.path:
+            sys.path.insert(0, _py_svc)
+        from voice_cloning_service import (
+            extract_speaker_acoustic_profile,
+            synthesize_cloned_speech,
+            normalize_french_phonetics,
+            extract_rhubarb_visemes,
+        )
+        data = request.get_json(silent=True) or {}
+        ref_path = data.get("reference_audio") or data.get("audio_path") or ""
+        text = (data.get("text") or "").strip()
+        profile = extract_speaker_acoustic_profile(ref_path if ref_path and os.path.isfile(ref_path) else None)
+        out = {"ok": True, "acoustic_profile": profile}
+        if text:
+            voice_dir = sortie_module("voix", data.get("projet") or "clonage_v3")
+            out_wav = os.path.join(voice_dir, f"clone_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}.wav")
+            synth = synthesize_cloned_speech(text, profile, output_wav=out_wav)
+            visemes = extract_rhubarb_visemes(out_wav, text=text)
+            out["synthesis"] = synth
+            out["phonetics_fr"] = normalize_french_phonetics(text)
+            out["visemes"] = visemes
+        return jsonify(out)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@voice_bp.route("/api/voice/music-stems", methods=["POST"])
+def voice_music_stems_v3():
+    """Synthétise une production musicale 4-Stems (drums, bass, harmony, lead) masterisée à -14 LUFS."""
+    try:
+        _py_svc = os.path.join(WORKSPACE, "python-services")
+        if _py_svc not in sys.path:
+            sys.path.insert(0, _py_svc)
+        from voice_cloning_service import generate_music_stems
+        data = request.get_json(silent=True) or {}
+        bpm = float(data.get("bpm", 120.0))
+        key_note = str(data.get("key", "A"))
+        mode = str(data.get("scale", data.get("mode", "minor")))
+        duration_s = float(data.get("duration_sec", 4.0))
+        voice_dir = sortie_module("voix", data.get("projet") or "musique_stems_v3")
+        res = generate_music_stems(
+            output_dir=voice_dir,
+            bpm=bpm,
+            root_note=key_note,
+            scale=mode,
+            duration_sec=min(30.0, max(1.0, duration_s)),
+        )
+        return jsonify({"ok": True, **res})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@voice_bp.route("/api/learning/formal-oracle", methods=["POST"])
+def learning_formal_oracle_v3():
+    """Oracle formel SymPy + Z3 v3 : anneau polynomial Q[x_1..x_n], SOS, diagnostic d'erreur,
+    mise à jour bayésienne FQ-Ada-BKT et génération d'exercices isomorphes."""
+    try:
+        _py_svc = os.path.join(WORKSPACE, "python-services")
+        if _py_svc not in sys.path:
+            sys.path.insert(0, _py_svc)
+        import scientific_oracle as so
+        data = request.get_json(silent=True) or {}
+        action = str(data.get("action") or "full").lower()
+        out = {"ok": True, "action": action}
+        if action in {"prove", "full"} and data.get("lhs") and data.get("rhs"):
+            out["polynomial_proof"] = so.prove_polynomial_identity_sos(str(data["lhs"]), str(data["rhs"]))
+        if action in {"diagnose", "full"} and data.get("expected") and data.get("student_answer"):
+            out["diagnosis"] = so.diagnose_student_misconception(str(data["expected"]), str(data["student_answer"]))
+        if action in {"bkt", "full"} and "p_mastery" in data:
+            out["bkt"] = so.update_bkt_mastery(
+                float(data.get("p_mastery", 0.5)),
+                correct=bool(data.get("correct", True)),
+                difficulty=int(data.get("difficulty", 3)),
+                response_time_sec=float(data.get("response_time_sec", 10.0)),
+                hints_used=int(data.get("hints_used", 0)),
+            )
+        if action in {"exercise", "full"}:
+            out["isomorphic_exercise"] = so.generate_isomorphic_exercise(
+                topic=str(data.get("topic") or "quadratic"),
+                p_mastery=float(data.get("p_mastery", 0.5)),
+                seed=int(data.get("seed", int(time.time()) % 10000)),
+            )
+        return jsonify(out)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@voice_bp.route("/api/3d/universal-style", methods=["POST"])
+def three_d_universal_style_v3():
+    """Synthèse de profil optique PBR par premiers principes (Fresnel Schlick, GGX Anisotrope, SSS dipolaire, Cauchy)."""
+    try:
+        _py_svc = os.path.join(WORKSPACE, "python-services")
+        if _py_svc not in sys.path:
+            sys.path.insert(0, _py_svc)
+        from universal_style_engine import synthesize_universal_style_profile
+        data = request.get_json(silent=True) or {}
+        prompt = str(data.get("prompt") or data.get("style") or "photoréaliste").strip()
+        profile = synthesize_universal_style_profile(prompt)
+        return jsonify({"ok": True, "profile": profile})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@voice_bp.route("/api/3d/semantic-animation", methods=["POST"])
+def three_d_semantic_animation_v3():
+    """Synthèse cinématique multi-morphologies (biped, quadruped, winged, serpentine, arachnid, mechanical) + Foot-Lock IK."""
+    try:
+        _py_svc = os.path.join(WORKSPACE, "python-services")
+        if _py_svc not in sys.path:
+            sys.path.insert(0, _py_svc)
+        from semantic_animation import build_semantic_animation_clip
+        data = request.get_json(silent=True) or {}
+        prompt = str(data.get("prompt") or "marche fluide").strip()
+        duration = float(data.get("duration", 2.5))
+        fps = int(data.get("fps", 30))
+        clip = build_semantic_animation_clip(prompt, duration=duration, fps=fps)
+        return jsonify({"ok": True, "clip": clip})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@voice_bp.route("/api/3d/sketch-to-3d-cad", methods=["POST"])
+def sketch_to_3d_cad_v3():
+    """Passerelle universelle Croquis -> Reconnaissance topologique -> Plan SVG + 4-Vues Orthographiques + GLB/STL 3D étanche."""
+    try:
+        _py_svc = os.path.join(WORKSPACE, "python-services")
+        if _py_svc not in sys.path:
+            sys.path.insert(0, _py_svc)
+        from sketch_to_3d_cad_bridge import convert_sketch_to_3d_and_image_blueprint
+        data = request.get_json(silent=True) or {}
+        sketch_input = data.get("sketch") or data.get("image_path") or data
+        prompt_hint = str(data.get("prompt") or data.get("prompt_hint") or "").strip()
+        scale_mm = float(data.get("scale_mm", 120.0))
+        out_dir = sortie_module("3d", data.get("projet") or "sketch_to_3d_v3")
+        report = convert_sketch_to_3d_and_image_blueprint(
+            sketch_input=sketch_input,
+            output_dir=out_dir,
+            prompt_hint=prompt_hint,
+            scale_mm=scale_mm,
+        )
+        return jsonify(report)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@voice_bp.route("/api/3d/architectural-project", methods=["POST"])
+def three_d_architectural_project_v3():
+    """Constructeur 3D d'architecture et d'ingénierie structurelle multi-pièces (Euler-Bernoulli, flambement d'Euler, von Mises, Manifold64)."""
+    try:
+        _py_svc = os.path.join(WORKSPACE, "python-services")
+        if _py_svc not in sys.path:
+            sys.path.insert(0, _py_svc)
+        from architectural_engineering_builder import build_architectural_engineering_project
+        data = request.get_json(silent=True) or {}
+        prompt = str(data.get("prompt") or "Bâtiment architectural multi-étages").strip()
+        spec = data.get("spec") if isinstance(data.get("spec"), dict) else {}
+        out_dir = sortie_module("3d", data.get("projet") or "architecture_engineering_v3")
+        report = build_architectural_engineering_project(prompt=prompt, output_dir=out_dir, spec=spec)
+        return jsonify(report)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@voice_bp.route("/api/code/mega-project-architect", methods=["POST"])
+def code_mega_project_architect_v3():
+    """Architecte déterministe de méga-projets, OS complets et reproduction de design au pixel près sans hallucination."""
+    try:
+        _repo_root = os.path.dirname(WORKSPACE)
+        if _repo_root not in sys.path:
+            sys.path.insert(0, _repo_root)
+        from agi_core.mega_project_architect import (
+            build_mega_project_blueprint,
+            verify_cross_file_symbol_and_contract_graph,
+            compute_design_reproduction_fidelity,
+        )
+        data = request.get_json(silent=True) or {}
+        prompt = str(data.get("prompt") or "Système d'exploitation complet WebOS").strip()
+        domain_hint = str(data.get("domain_hint") or "auto").strip()
+        out = build_mega_project_blueprint(prompt=prompt, domain_hint=domain_hint)
+        if isinstance(data.get("files"), dict):
+            out["cross_file_symbol_audit"] = verify_cross_file_symbol_and_contract_graph(data["files"])
+        if isinstance(data.get("design_spec"), dict):
+            out["design_fidelity_audit"] = compute_design_reproduction_fidelity(data["design_spec"])
+        return jsonify(out)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@voice_bp.route("/api/agi/strategy-status", methods=["GET", "POST"])
+def agi_strategy_status_v3():
+    """Retourne la stratégie SOTA Modèles Renforcés + Triade de Sous-Agents + Oracles Zéro-Hallucination sur les 13 modules."""
+    try:
+        _repo_root = os.path.dirname(WORKSPACE)
+        if _repo_root not in sys.path:
+            sys.path.insert(0, _repo_root)
+        from agi_core.model_strategy_engine import ModelAndSubAgentStrategyEngine
+        engine = ModelAndSubAgentStrategyEngine(_repo_root)
+        if request.method == "POST":
+            data = request.get_json(silent=True) or {}
+            return jsonify(
+                engine.build_execution_strategy_plan(
+                    request_text=str(data.get("prompt") or ""),
+                    module=data.get("module"),
+                )
+            )
+        return jsonify(engine.audit_all_modules_strategy_readiness())
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@voice_bp.route("/api/training/colab-bridge/status", methods=["GET"])
+def colab_bridge_status_v3():
+    """Retourne l'état du pont bidirectionnel Google Colab A100 / L4 et la commande 1-ligne."""
+    try:
+        _repo_root = os.path.dirname(WORKSPACE)
+        if _repo_root not in sys.path:
+            sys.path.insert(0, _repo_root)
+        from auto_rl.colab_live_bridge import get_colab_bridge_status
+        return jsonify(get_colab_bridge_status())
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@voice_bp.route("/api/training/colab-bridge/bootstrap.py", methods=["GET"])
+def colab_bridge_bootstrap_script_v3():
+    """Sert le script d'entraînement autonome exécutable en 1 ligne sur Google Colab A100 / L4."""
+    from flask import Response
+    _repo_root = os.path.dirname(WORKSPACE)
+    if _repo_root not in sys.path:
+        sys.path.insert(0, _repo_root)
+    from auto_rl.colab_live_bridge import generate_colab_bootstrap_script
+    script = generate_colab_bootstrap_script()
+    return Response(script, mimetype="text/x-python")
+
+
+@voice_bp.route("/api/training/colab-bridge/register", methods=["POST"])
+def colab_bridge_register_v3():
+    _repo_root = os.path.dirname(WORKSPACE)
+    if _repo_root not in sys.path:
+        sys.path.insert(0, _repo_root)
+    from auto_rl.colab_live_bridge import register_colab_worker
+    return jsonify(register_colab_worker(request.get_json(silent=True) or {}))
+
+
+@voice_bp.route("/api/training/colab-bridge/claim-job", methods=["POST"])
+def colab_bridge_claim_job_v3():
+    _repo_root = os.path.dirname(WORKSPACE)
+    if _repo_root not in sys.path:
+        sys.path.insert(0, _repo_root)
+    from auto_rl.colab_live_bridge import claim_next_colab_job
+    return jsonify(claim_next_colab_job(request.get_json(silent=True) or {}))
+
+
+@voice_bp.route("/api/training/colab-bridge/submit-weights", methods=["POST"])
+def colab_bridge_submit_weights_v3():
+    _repo_root = os.path.dirname(WORKSPACE)
+    if _repo_root not in sys.path:
+        sys.path.insert(0, _repo_root)
+    from auto_rl.colab_live_bridge import receive_colab_trained_weights
+    return jsonify(receive_colab_trained_weights(request.get_json(silent=True) or {}))
+
+
+@voice_bp.route("/api/training/colab-bridge/enqueue-command", methods=["POST"])
+def colab_bridge_enqueue_command_v3():
+    _repo_root = os.path.dirname(WORKSPACE)
+    if _repo_root not in sys.path:
+        sys.path.insert(0, _repo_root)
+    from auto_rl.colab_live_bridge import enqueue_remote_colab_command
+    data = request.get_json(silent=True) or {}
+    return jsonify(
+        enqueue_remote_colab_command(
+            python_code=str(data.get("python_code") or ""),
+            description=str(data.get("description") or "Remote H100 command"),
+        )
+    )
+
+
+@voice_bp.route("/api/training/colab-bridge/command-result", methods=["POST"])
+def colab_bridge_command_result_v3():
+    _repo_root = os.path.dirname(WORKSPACE)
+    if _repo_root not in sys.path:
+        sys.path.insert(0, _repo_root)
+    from auto_rl.colab_live_bridge import receive_colab_command_result
+    return jsonify(receive_colab_command_result(request.get_json(silent=True) or {}))
+
+
+@voice_bp.route("/api/training/colab-bridge/progress", methods=["POST"])
+def colab_bridge_progress_v3():
+    _repo_root = os.path.dirname(WORKSPACE)
+    if _repo_root not in sys.path:
+        sys.path.insert(0, _repo_root)
+    from auto_rl.colab_live_bridge import update_colab_live_progress
+    return jsonify(update_colab_live_progress(request.get_json(silent=True) or {}))
+
+
+@voice_bp.route("/api/training/colab-bridge/full-dataset/<module>.jsonl", methods=["GET"])
+def colab_bridge_full_dataset_v3(module: str):
+    """Sert 100 % des entrées du dataset multi-régimes du module sans aucune troncature."""
+    from flask import Response
+    _repo_root = os.path.dirname(WORKSPACE)
+    if _repo_root not in sys.path:
+        sys.path.insert(0, _repo_root)
+    from auto_rl.colab_live_bridge import get_full_dataset_jsonl_text
+    text = get_full_dataset_jsonl_text(module)
+    return Response(text, mimetype="application/x-ndjson; charset=utf-8")
+
+
+@voice_bp.route("/api/precision/nanometer-oracle", methods=["GET", "POST"])
+def nanometer_precision_oracle_v1():
+    """Oracle sub-nanométrique (1 nm), femtométrique (10^-15 m) et 100 décimales exactes (10^-100)."""
+    _py_services = os.path.join(WORKSPACE, "python-services")
+    if _py_services not in sys.path:
+        sys.path.insert(0, _py_services)
+    from nanometer_precision_oracle import (
+        audit_and_refine_subnanometer_surface,
+        compute_spectral_thin_film_pbr_1nm,
+        solve_structural_mechanics_100dps,
+    )
+    data = request.get_json(silent=True) or {}
+    return jsonify({
+        "ok": True,
+        "structural_100dps": solve_structural_mechanics_100dps(
+            span_mm=str(data.get("span_mm") or "160.0"),
+            beam_width_mm=str(data.get("beam_width_mm") or "6.5"),
+            beam_height_mm=str(data.get("beam_height_mm") or "9.5"),
+        ),
+        "spectral_1nm": compute_spectral_thin_film_pbr_1nm(
+            film_thickness_nm=float(data.get("film_thickness_nm") or 285.0),
+            incidence_deg=float(data.get("incidence_deg") or 22.5),
+        ),
+        "subnanometer_surface": audit_and_refine_subnanometer_surface(
+            radius_mm=float(data.get("radius_mm") or 50.0),
+        ),
+    })
+
+
+@voice_bp.route("/api/precision/pixel-perfect-oracle", methods=["GET", "POST"])
+def pixel_perfect_oracle_v1():
+    """Oracle Pixel-Perfect (Alignement de phase sub-pixel 0.0004 px, MTF50, Zéro Halo, Pull-Push UV)."""
+    _py_services = os.path.join(WORKSPACE, "python-services")
+    if _py_services not in sys.path:
+        sys.path.insert(0, _py_services)
+    from pixel_perfect_optical_engine import generate_pixel_perfect_master_showcase
+    return jsonify(generate_pixel_perfect_master_showcase())
+
+
+
+
+
+
+

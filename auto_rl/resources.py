@@ -27,6 +27,27 @@ def configure_torch_memory():
     os.environ.setdefault('TORCH_CUDNN_V8_API_LRU_CACHE_LIMIT', '0')
 
 
+def evict_ollama_vram(ollama_url='http://127.0.0.1:11434'):
+    """Evict resident Ollama models (keep_alive=0) so local training has the full 16 GiB RTX 5070 Ti."""
+    try:
+        with urllib.request.urlopen(f'{ollama_url}/api/ps', timeout=5) as resp:
+            models = json.loads(resp.read().decode('utf-8')).get('models', [])
+        for m in models:
+            name = m.get('name') or m.get('model')
+            if not name:
+                continue
+            req = urllib.request.Request(
+                f'{ollama_url}/api/generate',
+                data=json.dumps({'model': name, 'keep_alive': 0}).encode('utf-8'),
+                headers={'Content-Type': 'application/json'},
+                method='POST',
+            )
+            with urllib.request.urlopen(req, timeout=15) as rr:
+                rr.read()
+    except (OSError, ValueError):
+        pass
+
+
 def suspend_inference_service(state=STATE):
     """Release the resident Aurora LLM before a local training cycle.
 
@@ -37,6 +58,7 @@ def suspend_inference_service(state=STATE):
     state = Path(state).resolve()
     if state != STATE.resolve():
         return False
+    evict_ollama_vram()
     try:
         probe = subprocess.run(['systemctl', '--user', 'is-active', '--quiet', INFERENCE_SERVICE],
                                timeout=8)
@@ -79,12 +101,22 @@ def reclaim_comfy_ram(state=STATE):
     """Free host RAM as well as VRAM before a non-Comfy model is loaded."""
     if Path(state).resolve() != STATE.resolve():
         return
-    if not release_idle_comfy():
+    evict_ollama_vram()
+    freed = False
+    for _ in range(120):
+        if release_idle_comfy():
+            freed = True
+            break
+        time.sleep(5)
+    if not freed:
         raise RuntimeError('ComfyUI est occupé ; attente de sa fin requise pour libérer la RAM')
     # /free unloads GPU weights but Python/native allocators may retain 15+ GiB
     # of host RAM. Restart only the idle service after rechecking its queue.
-    probe = subprocess.run(['systemctl','--user','show','aurora-comfyui.service',
-                            '--property=MainPID','--value'], capture_output=True,text=True,timeout=8)
+    try:
+        probe = subprocess.run(['systemctl','--user','show','aurora-comfyui.service',
+                                '--property=MainPID','--value'], capture_output=True,text=True,timeout=8)
+    except (OSError, subprocess.TimeoutExpired):
+        return
     pid = probe.stdout.strip()
     if not pid.isdigit() or pid == '0':
         return
@@ -93,11 +125,8 @@ def reclaim_comfy_ram(state=STATE):
                    if line.startswith('VmRSS:'))
     except (OSError, StopIteration):
         return
-    # A few MiB is normal for a healthy idle service.  Restart only when the
-    # native/allocator cache has grown into the multi-GiB range that can starve
-    # the local trainer (the previous 2 MiB threshold restarted ComfyUI on
-    # every cycle, even when it was already clean).
-    if rss < 2*1024*1024*1024:
+    # VmRSS in /proc/<pid>/status is reported in kB (2 GiB = 2 * 1024 * 1024 kB).
+    if rss < 2 * 1024 * 1024:
         return
     with urllib.request.urlopen('http://127.0.0.1:8188/queue',timeout=5) as response:
         queue=json.load(response)

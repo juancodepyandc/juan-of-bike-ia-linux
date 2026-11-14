@@ -1,28 +1,1113 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { fsWriteBinary, getWorkspacePath, runPythonScript } from './useTauri.ts'
-import { isTauriRuntime, getBridgeUrl, isCloudRuntime } from '../utils/runtime.ts'
+import { isTauriRuntime, getBridgeUrl } from '../utils/runtime.ts'
 import { safeParseJson } from '../utils/errors.ts'
+import { phonemizeSentenceWithLiaisons, phonemizeWord } from '../services/voiceFrPhonemizer.ts'
+import { FR_PHONEME_TABLE } from '../services/voicePhonemes.ts'
+
+// ============================================================================
+// 1. TYPES & INTERFACES AGI VOCALE, CLONAGE ZERO-SHOT & PRODUCTION MUSICALE
+// ============================================================================
+
+export type VoiceLivePhase = 'idle' | 'listening' | 'transcribing' | 'thinking' | 'speaking'
+
+/** Cue Rhubarb — frame-accurate mouth shape. value = A..H | X */
+export interface RhubarbCue { start: number; end: number; value: string }
+
+/** Registre vocal estimé depuis la fréquence fondamentale F0 */
+export type VocalRegister = 'bass' | 'baritone' | 'tenor' | 'alto' | 'mezzo' | 'soprano'
 
 /**
- * Décode n'importe quel format audio (WebM, Ogg…) et ré-encode en WAV PCM 16-bit mono.
- * Évite la dépendance à ffmpeg côté Python pour la transcription.
+ * Empreinte acoustique et prosodique extraite d'un échantillon vocal.
+ * Sert au conditionnement de clonage vocal zero-shot et à l'adaptation TTS.
  */
-async function encodeAsWav(blob: Blob): Promise<Blob> {
+export interface VoiceAcousticProfile {
+  /** Fréquence fondamentale moyenne en Hz (trames voisées) */
+  f0MeanHz: number
+  /** Écart-type de F0 en Hz (mesure la modulation mélodique / expressivité) */
+  f0StdHz: number
+  /** Plage F0 min/max observée en Hz */
+  f0MinHz: number
+  f0MaxHz: number
+  /** Registre vocal déduit de F0 */
+  register: VocalRegister
+  /** Formants vocaux moyens estimés (Hz) : F1 (ouverture), F2 (avancement), F3 (timbre) */
+  formantsHz: { f1: number; f2: number; f3: number }
+  /** Centroïde spectral moyen en Hz (brillance acoustique) */
+  spectralCentroidHz: number
+  /** Descripteurs timbraux normalisés [0..1] */
+  timbre: {
+    warmth: number
+    brightness: number
+    breathiness: number
+    presence: number
+  }
+  /** Stabilité micro-prosodique : Jitter (%) et Shimmer (%) + HNR (dB) */
+  jitterPct: number
+  shimmerPct: number
+  hnrDb: number
+  /** Cadence syllabique estimée (syllabes / seconde) */
+  syllablesPerSec: number
+  /** Ratio temporel voisé / durée totale [0..1] */
+  voicedRatio: number
+  /** Plage dynamique en dB */
+  dynamicRangeDb: number
+  /** Durée utile analysée (secondes) */
+  durationSec: number
+  /** Signature compacte transmissible au moteur de clonage zero-shot */
+  prosodySignature: string
+}
+
+/**
+ * Plan prosodique et émotionnel calculé avant synthèse vocale.
+ */
+export interface ProsodyPlan {
+  normalizedText: string
+  emotion: 'neutral' | 'happy' | 'thinking' | 'surprised' | 'sad' | 'excited' | 'focused'
+  rate: number
+  pitch: number
+  energy: number
+  breathPauseMs: number
+  intonationContour: 'declarative' | 'interrogative' | 'exclamative' | 'narrative'
+  estimatedDurationSec: number
+}
+
+/**
+ * Profil énergétique et spectral des 4 stems musicaux canoniques.
+ */
+export interface StemSeparationProfile {
+  vocals: { energyRatio: number; rmsDb: number; centroidHz: number; dominance: number }
+  bass: { energyRatio: number; rmsDb: number; subRatio: number; dominance: number }
+  drums: { energyRatio: number; rmsDb: number; transientDensity: number; dominance: number }
+  harmony: { energyRatio: number; rmsDb: number; stereoWidth: number; dominance: number }
+  estimatedBpm: number
+  estimatedKey: string
+  integratedLufs: number
+  crestFactorDb: number
+}
+
+export type MusicSectionKind = 'intro' | 'verse' | 'pre-chorus' | 'chorus' | 'bridge' | 'outro'
+
+export interface MusicSectionPlan {
+  kind: MusicSectionKind
+  label: string
+  startBar: number
+  bars: number
+  startSec: number
+  endSec: number
+  energyTarget: number
+  lyricsLines: Array<{ text: string; syllables: number; stressPattern: string }>
+  activeStems: Array<'vocals' | 'bass' | 'drums' | 'harmony'>
+}
+
+export interface MusicProductionStructure {
+  bpm: number
+  timeSignature: '4/4' | '3/4' | '6/8'
+  keySignature: string
+  totalDurationSec: number
+  sections: MusicSectionPlan[]
+}
+
+// ============================================================================
+// 2. MOTEUR DE NORMALISATION PROSODIQUE & PHONÉTIQUE FRANÇAISE
+// ============================================================================
+
+const ACRONYM_PHONETIC_FR: Readonly<Record<string, string>> = {
+  AGI: 'A G I',
+  IA: 'I A',
+  API: 'A P I',
+  GPU: 'G P U',
+  CPU: 'C P U',
+  VRAM: 'vé-ram',
+  RAM: 'ram',
+  TTS: 'T T S',
+  STT: 'S T T',
+  ASR: 'A S R',
+  LLM: 'L L M',
+  NLP: 'N L P',
+  VAD: 'V A D',
+  PBR: 'P B R',
+  CAO: 'C A O',
+  DAO: 'D A O',
+  SQL: 'S Q L',
+  JSON: 'jik-sonne',
+  HTML: 'H T M L',
+  CSS: 'C S S',
+  URL: 'U R L',
+  HTTPS: 'H T T P S',
+  HTTP: 'H T T P',
+  TCP: 'T C P',
+  UDP: 'U D P',
+  SSH: 'S S H',
+  PDF: 'P D F',
+  CSV: 'C S V',
+  RVB: 'R V B',
+  RGB: 'R G B',
+  FPS: 'images par seconde',
+  BPM: 'battements par minute',
+  LUFS: 'L U F S',
+}
+
+const FRENCH_SMALL_NUMBERS: Readonly<Record<number, string>> = {
+  0: 'zéro', 1: 'un', 2: 'deux', 3: 'trois', 4: 'quatre', 5: 'cinq',
+  6: 'six', 7: 'sept', 8: 'huit', 9: 'neuf', 10: 'dix',
+  11: 'onze', 12: 'douze', 13: 'treize', 14: 'quatorze', 15: 'quinze',
+  16: 'seize', 20: 'vingt', 30: 'trente', 40: 'quarante', 50: 'cinquante',
+  60: 'soixante', 100: 'cent', 1000: 'mille',
+}
+
+/**
+ * Convertit un entier [0..9999] en toutes lettres françaises pour éviter
+ * les erreurs de lecture de nombres par les moteurs TTS légers.
+ */
+function numberToFrenchWords(n: number): string {
+  if (!Number.isFinite(n) || n < 0 || n > 999999) return String(n)
+  const intN = Math.round(n)
+  if (FRENCH_SMALL_NUMBERS[intN]) return FRENCH_SMALL_NUMBERS[intN]
+  if (intN < 20) return `dix-${FRENCH_SMALL_NUMBERS[intN - 10]}`
+  if (intN < 70) {
+    const tens = Math.floor(intN / 10) * 10
+    const unit = intN % 10
+    if (unit === 1) return `${FRENCH_SMALL_NUMBERS[tens]} et un`
+    return `${FRENCH_SMALL_NUMBERS[tens]}-${FRENCH_SMALL_NUMBERS[unit]}`
+  }
+  if (intN < 80) {
+    const rem = intN - 60
+    if (rem === 11) return 'soixante et onze'
+    return `soixante-${numberToFrenchWords(rem)}`
+  }
+  if (intN < 100) {
+    if (intN === 80) return 'quatre-vingts'
+    return `quatre-vingt-${numberToFrenchWords(intN - 80)}`
+  }
+  if (intN < 1000) {
+    const hundreds = Math.floor(intN / 100)
+    const rem = intN % 100
+    const prefix = hundreds === 1 ? 'cent' : `${FRENCH_SMALL_NUMBERS[hundreds]} cent${rem === 0 ? 's' : ''}`
+    return rem === 0 ? prefix : `${prefix} ${numberToFrenchWords(rem)}`
+  }
+  const thousands = Math.floor(intN / 1000)
+  const rem = intN % 1000
+  const prefix = thousands === 1 ? 'mille' : `${numberToFrenchWords(thousands)} mille`
+  return rem === 0 ? prefix : `${prefix} ${numberToFrenchWords(rem)}`
+}
+
+/**
+ * Normalise le texte pour une synthèse vocale française d'excellence :
+ * - Nettoyage du Markdown, URLs et blocs de code
+ * - Expansion des unités physiques, monétaires et mathématiques
+ * - Diction des acronymes et nombres
+ * - Désambiguïsation d'homophones et liaisons sensibles (neuf ans -> neuv ans, plus/plu)
+ * - Insertion de ponctuation respiratoire sur les longues propositions
+ */
+export function normalizeFrenchProsodyAndPhonetics(rawText: string, lang = 'fr'): string {
+  if (!rawText || !rawText.trim()) return ''
+
+  let text = rawText
+    // Blocs de code multi-lignes : ne pas épeler 50 lignes de code brut
+    .replace(/```[\s\S]*?```/g, ' , bloc de code affiché à l’écran, ')
+    // Code inline court : garder le contenu sans les backticks
+    .replace(/`([^`\n]{1,48})`/g, '$1')
+    .replace(/`[^`\n]+`/g, ' expression technique ')
+    // Liens Markdown [label](url) -> label
+    .replace(/\[([^\]]+)\]\((?:https?:\/\/|\/)[^)]+\)/g, '$1')
+    // URLs nues
+    .replace(/https?:\/\/[^\s)]+/g, 'lien web')
+    // Titres Markdown et listes à puces -> pauses prosodiques
+    .replace(/^#{1,6}\s+(.+)$/gm, '$1. ')
+    .replace(/^\s*[-*•]\s+/gm, ', ')
+    // Gras / italique Markdown
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+
+  if (!lang.toLowerCase().startsWith('fr')) {
+    return text.replace(/\s+/g, ' ').trim()
+  }
+
+  // Unités et symboles scientifiques / monétaires en français
+  text = text
+    .replace(/\b(\d+(?:[.,]\d+)?)\s*%/g, '$1 pour cent')
+    .replace(/\b(\d+(?:[.,]\d+)?)\s*€/g, '$1 euros')
+    .replace(/\b(\d+(?:[.,]\d+)?)\s*\$/g, '$1 dollars')
+    .replace(/\b(\d+(?:[.,]\d+)?)\s*°C\b/g, '$1 degrés Celsius')
+    .replace(/\b(\d+(?:[.,]\d+)?)\s*°F\b/g, '$1 degrés Fahrenheit')
+    .replace(/\b(\d+(?:[.,]\d+)?)\s*°\b/g, '$1 degrés')
+    .replace(/\b(\d+(?:[.,]\d+)?)\s*km\/h\b/gi, '$1 kilomètres par heure')
+    .replace(/\b(\d+(?:[.,]\d+)?)\s*m\/s\b/gi, '$1 mètres par seconde')
+    .replace(/\b(\d+(?:[.,]\d+)?)\s*kHz\b/gi, '$1 kilohertz')
+    .replace(/\b(\d+(?:[.,]\d+)?)\s*MHz\b/gi, '$1 mégahertz')
+    .replace(/\b(\d+(?:[.,]\d+)?)\s*GHz\b/gi, '$1 gigahertz')
+    .replace(/\b(\d+(?:[.,]\d+)?)\s*Hz\b/g, '$1 hertz')
+    .replace(/\b(\d+(?:[.,]\d+)?)\s*ms\b/g, '$1 millisecondes')
+    .replace(/\b(\d+(?:[.,]\d+)?)\s*dB\b/g, '$1 décibels')
+    .replace(/\b(\d+(?:[.,]\d+)?)\s*Go\b/g, '$1 gigaoctets')
+    .replace(/\b(\d+(?:[.,]\d+)?)\s*Mo\b/g, '$1 mégaoctets')
+    .replace(/\b(\d+(?:[.,]\d+)?)\s*Ko\b/g, '$1 kilooctets')
+    .replace(/\b(\d+(?:[.,]\d+)?)\s*GB\b/g, '$1 gigaoctets')
+    .replace(/\b(\d+(?:[.,]\d+)?)\s*MB\b/g, '$1 mégaoctets')
+    .replace(/\b3D\b/gi, 'trois D')
+    .replace(/\b2D\b/gi, 'deux D')
+    .replace(/\b4K\b/gi, 'quatre K')
+    .replace(/\b8K\b/gi, 'huit K')
+    .replace(/\b16K\b/gi, 'seize K')
+    .replace(/≥|>=/g, ' supérieur ou égal à ')
+    .replace(/≤|<=/g, ' inférieur ou égal à ')
+    .replace(/!=|≠/g, ' différent de ')
+    .replace(/->|→/g, ' vers ')
+
+  // Nombres décimaux français (ex: 3.14 ou 3,14 -> 3 virgule 14)
+  text = text.replace(/\b(\d+)[.,](\d+)\b/g, (_m, a, b) => `${a} virgule ${b}`)
+
+  // Conversion des nombres entiers isolés [0..2000] pour garantir les liaisons justes
+  text = text.replace(/\b(\d{1,4})\b/g, (match) => {
+    const val = parseInt(match, 10)
+    if (Number.isNaN(val) || val > 2500) return match
+    return numberToFrenchWords(val)
+  })
+
+  // Liaisons phonétiques obligatoires critiques ("neuf ans" -> "neuv ans", "neuf heures" -> "neuv heures")
+  text = text
+    .replace(/\bneuf\s+(ans?|heures?)\b/gi, 'neuv $1')
+    .replace(/\bdix-neuf\s+(ans?|heures?)\b/gi, 'dix-neuv $1')
+    .replace(/\bvingt-neuf\s+(ans?|heures?)\b/gi, 'vingt-neuv $1')
+
+  // Homophones contextuels : "en plus" -> "en plusse" en fin de proposition
+  text = text.replace(/\ben plus(?=\s*[,.;:!?]|$)/gi, 'en plusse')
+
+  // Acronymes techniques
+  text = text.replace(/\b([A-Z]{2,6})\b/g, (acr) => ACRONYM_PHONETIC_FR[acr] ?? acr)
+
+  // Insertion de ponctuation respiratoire dans les propositions trop longues (> 85 car. sans pause)
+  const segments = text.split(/([,.;:!?…]+)/)
+  const breathedSegments = segments.map((seg) => {
+    if (seg.length <= 85 || /^[,.;:!?…]+$/.test(seg)) return seg
+    return seg.replace(
+      /\s+(cependant|toutefois|néanmoins|par conséquent|tandis que|alors que|parce que|puisque|afin de|afin que|notamment|ainsi que|c’est-à-dire|Autrement dit)\s+/gi,
+      ', $1 ',
+    )
+  })
+
+  return breathedSegments
+    .join('')
+    .replace(/\s+([,.;:!?])/g, '$1')
+    .replace(/([,.;:!?])([^\s,.;:!?])/g, '$1 $2')
+    .replace(/,{2,}/g, ',')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/**
+ * Calcule un plan prosodique complet (émotion, débit, hauteur, énergie, contour intonatif)
+ * à partir du texte et d'un éventuel profil acoustique de référence (clonage).
+ */
+export function extractProsodyPlan(
+  rawText: string,
+  lang = 'fr',
+  referenceProfile?: VoiceAcousticProfile | null,
+): ProsodyPlan {
+  const normalizedText = normalizeFrenchProsodyAndPhonetics(rawText, lang)
+  const lower = normalizedText.toLowerCase()
+
+  const exclamations = (normalizedText.match(/!/g) || []).length
+  const questions = (normalizedText.match(/\?/g) || []).length
+  const ellipses = (normalizedText.match(/(\.\.\.|…)/g) || []).length
+
+  let emotion: ProsodyPlan['emotion'] = 'neutral'
+  if (/\b(bravo|super|excellent|parfait|génial|magnifique|félicitations|heureux|ravie?)\b/.test(lower)) {
+    emotion = exclamations > 0 ? 'excited' : 'happy'
+  } else if (/\b(attention|urgent|incroyable|impressionnant|extraordinaire)\b/.test(lower) || exclamations >= 2) {
+    emotion = 'surprised'
+  } else if (/\b(désolé|malheureusement|hélas|triste|erreur|échec|impossible)\b/.test(lower)) {
+    emotion = 'sad'
+  } else if (/\b(analysons|calculons|observons|considérons|hypothèse|étape|algorithme|architecture)\b/.test(lower)) {
+    emotion = 'focused'
+  } else if (ellipses > 0 || /\b(voyons|peut-être|réfléchissons|intéressant)\b/.test(lower)) {
+    emotion = 'thinking'
+  }
+
+  let intonationContour: ProsodyPlan['intonationContour'] = 'declarative'
+  if (questions > exclamations && questions > 0) intonationContour = 'interrogative'
+  else if (exclamations > 0) intonationContour = 'exclamative'
+  else if (normalizedText.length > 220) intonationContour = 'narrative'
+
+  // Base prosodique modulée par l'émotion
+  let rate = 0.98
+  let pitch = 1.02
+  let energy = 0.75
+  let breathPauseMs = 180
+
+  switch (emotion) {
+    case 'excited':
+      rate = 1.06; pitch = 1.08; energy = 0.95; breathPauseMs = 140
+      break
+    case 'happy':
+      rate = 1.02; pitch = 1.05; energy = 0.85; breathPauseMs = 160
+      break
+    case 'surprised':
+      rate = 1.04; pitch = 1.09; energy = 0.90; breathPauseMs = 150
+      break
+    case 'sad':
+      rate = 0.91; pitch = 0.95; energy = 0.55; breathPauseMs = 260
+      break
+    case 'thinking':
+      rate = 0.93; pitch = 0.99; energy = 0.65; breathPauseMs = 240
+      break
+    case 'focused':
+      rate = 0.97; pitch = 1.00; energy = 0.80; breathPauseMs = 190
+      break
+    default:
+      break
+  }
+
+  // Si un profil vocal de référence (clonage zero-shot) est actif, on adapte le débit et la hauteur
+  if (referenceProfile && referenceProfile.durationSec >= 0.8) {
+    // Normalisation autour d'une cadence française standard de 4.6 syllabes/s
+    const cadenceFactor = Math.max(0.85, Math.min(1.18, referenceProfile.syllablesPerSec / 4.6))
+    rate = Number((rate * 0.65 + cadenceFactor * 0.35).toFixed(3))
+    // Adaptation douce de la hauteur relative selon le registre détecté
+    const refF0Norm = Math.max(0.85, Math.min(1.18, referenceProfile.f0MeanHz / 185))
+    pitch = Number((pitch * 0.6 + refF0Norm * 0.4).toFixed(3))
+  }
+
+  const wordCount = normalizedText.split(/\s+/).filter(Boolean).length
+  const estimatedDurationSec = Math.max(0.6, (wordCount / (2.6 * rate)))
+
+  return {
+    normalizedText,
+    emotion,
+    rate,
+    pitch,
+    energy,
+    breathPauseMs,
+    intonationContour,
+    estimatedDurationSec,
+  }
+}
+
+// ============================================================================
+// 3. ALIGNEMENT TEMPOREL PRÉCIS DES VISÈMES RHUBARB (A..H | X)
+// ============================================================================
+
+const FR_IPA_DURATION_MS = new Map<string, number>(
+  FR_PHONEME_TABLE.map((p) => [p.ipa, p.defaultDurationMs]),
+)
+
+/**
+ * Convertit un phonème IPA français vers la forme de bouche Rhubarb exacte (A..H | X) :
+ * - A : voyelles grandes ouvertes (a, ɑ, ɑ̃, ɛ̃)
+ * - B : consonnes bilabiales et occlusives labiales fermées (m, b, p)
+ * - C : voyelles antérieures étirées / sourire (e, ɛ, i, j)
+ * - D : consonnes alvéolaires / dentales (d, t, s, z, n, ɲ)
+ * - E : voyelles moyennes arrondies (ø, œ, œ̃, ɔ, ə)
+ * - F : voyelles fermées très arrondies / protrusion labiale (u, o, ɔ̃, y, w, ɥ)
+ * - G : fricatives labiodentales (f, v)
+ * - H : liquides et uvulaires (l, ʁ, k, ɡ, ʃ, ʒ)
+ * - X : repos / silence respiratoire
+ */
+export function ipaToRhubarbViseme(ipa: string): string {
+  switch (ipa) {
+    case 'a':
+    case 'ɑ':
+    case 'ɑ̃':
+    case 'ɛ̃':
+      return 'A'
+    case 'm':
+    case 'b':
+    case 'p':
+      return 'B'
+    case 'e':
+    case 'ɛ':
+    case 'i':
+    case 'j':
+      return 'C'
+    case 'd':
+    case 't':
+    case 's':
+    case 'z':
+    case 'n':
+    case 'ɲ':
+    case 'ŋ':
+      return 'D'
+    case 'ø':
+    case 'œ':
+    case 'œ̃':
+    case 'ɔ':
+    case 'ə':
+      return 'E'
+    case 'u':
+    case 'o':
+    case 'ɔ̃':
+    case 'y':
+    case 'w':
+    case 'ɥ':
+      return 'F'
+    case 'f':
+    case 'v':
+      return 'G'
+    case 'l':
+    case 'ʁ':
+    case 'ʃ':
+    case 'ʒ':
+    case 'k':
+    case 'ɡ':
+      return 'H'
+    default:
+      return 'X'
+  }
+}
+
+/**
+ * Formants théoriques normalisés { low (F1 ouverture), mid (F2 étirement) } par visème Rhubarb.
+ * Permet d'alimenter `formantsRef` à 60 FPS avec une fidélité articulatoire exacte même
+ * lorsque l'élément audio ne peut pas être routé via MediaElementSource.
+ */
+function rhubarbVisemeToFormants(viseme: string, envelope: number): { low: number; mid: number } {
+  const e = Math.max(0, Math.min(1, envelope))
+  switch (viseme) {
+    case 'A': return { low: 0.92 * e, mid: 0.55 * e }
+    case 'B': return { low: 0.08 * e, mid: 0.18 * e }
+    case 'C': return { low: 0.42 * e, mid: 0.90 * e }
+    case 'D': return { low: 0.32 * e, mid: 0.72 * e }
+    case 'E': return { low: 0.64 * e, mid: 0.52 * e }
+    case 'F': return { low: 0.48 * e, mid: 0.25 * e }
+    case 'G': return { low: 0.28 * e, mid: 0.45 * e }
+    case 'H': return { low: 0.36 * e, mid: 0.60 * e }
+    default:  return { low: 0.03 * e, mid: 0.03 * e }
+  }
+}
+
+/**
+ * Génère une timeline de cues Rhubarb (en secondes) à partir du texte français,
+ * en intégrant les liaisons obligatoires, l'allongement vocalique de fin de groupe
+ * rythmique et les pauses de ponctuation respiratoire.
+ */
+export function generateRhubarbCuesFromText(text: string, targetDurationSec?: number): RhubarbCue[] {
+  if (!text || !text.trim()) return [{ start: 0, end: 0.2, value: 'X' }]
+
+  // Découpage en groupes rythmiques par ponctuation pour préserver les pauses respiratoires
+  const clauses = text
+    .split(/([,.;:!?…]+)/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+
+  const rawCues: RhubarbCue[] = []
+  let cursorSec = 0.02
+
+  // Silence d'attaque initial
+  rawCues.push({ start: 0, end: cursorSec, value: 'X' })
+
+  for (const clause of clauses) {
+    if (/^[,.;:!?…]+$/.test(clause)) {
+      const pauseSec = /[.;!?…]/.test(clause) ? 0.22 : 0.11
+      const last = rawCues[rawCues.length - 1]
+      if (last && last.value === 'X') {
+        last.end = Number((last.end + pauseSec).toFixed(4))
+      } else {
+        rawCues.push({ start: Number(cursorSec.toFixed(4)), end: Number((cursorSec + pauseSec).toFixed(4)), value: 'X' })
+      }
+      cursorSec += pauseSec
+      continue
+    }
+
+    const phones = phonemizeSentenceWithLiaisons(clause)
+    for (let i = 0; i < phones.length; i++) {
+      const ph = phones[i]
+      const viseme = ipaToRhubarbViseme(ph)
+      const baseMs = FR_IPA_DURATION_MS.get(ph) ?? 75
+      // Allongement prosodique de la dernière voyelle du groupe rythmique (+30 %)
+      const isLastVowel = i >= phones.length - 2 && ['A', 'C', 'E', 'F'].includes(viseme)
+      const durSec = (baseMs * (isLastVowel ? 1.3 : 1.0)) / 1000
+
+      // Coarticulation bilabiale : si on passe à 'B' après un silence, anticipons de 18 ms
+      const start = Number(cursorSec.toFixed(4))
+      const end = Number((cursorSec + durSec).toFixed(4))
+      const prev = rawCues[rawCues.length - 1]
+      if (prev && prev.value === viseme) {
+        prev.end = end
+      } else {
+        rawCues.push({ start, end, value: viseme })
+      }
+      cursorSec += durSec
+    }
+  }
+
+  // Fermeture labiale finale au repos
+  rawCues.push({
+    start: Number(cursorSec.toFixed(4)),
+    end: Number((cursorSec + 0.12).toFixed(4)),
+    value: 'X',
+  })
+
+  if (targetDurationSec && Number.isFinite(targetDurationSec) && targetDurationSec > 0.15) {
+    return recalibrateRhubarbCues(rawCues, targetDurationSec)
+  }
+  return rawCues
+}
+
+/**
+ * Recalibre homothétiquement et lisse une liste de cues Rhubarb sur la durée exacte
+ * du fichier audio (`actualDurationSec`), en fusionnant les micro-artefacts < 22 ms.
+ */
+export function recalibrateRhubarbCues(cues: RhubarbCue[], actualDurationSec: number): RhubarbCue[] {
+  if (!cues.length || !Number.isFinite(actualDurationSec) || actualDurationSec <= 0.05) return cues
+  const currentTotal = cues[cues.length - 1].end
+  if (currentTotal <= 0.01) return cues
+
+  const scale = actualDurationSec / currentTotal
+  const scaled: RhubarbCue[] = []
+
+  for (const c of cues) {
+    const start = Number((c.start * scale).toFixed(4))
+    const end = Number((c.end * scale).toFixed(4))
+    const dur = end - start
+    // Fusionner les micro-états non-bilabiaux trop brefs (< 22 ms) avec le voisin précédent
+    if (dur < 0.022 && c.value !== 'B' && scaled.length > 0) {
+      scaled[scaled.length - 1].end = end
+      continue
+    }
+    if (scaled.length > 0 && scaled[scaled.length - 1].value === c.value) {
+      scaled[scaled.length - 1].end = end
+    } else {
+      scaled.push({ start, end, value: c.value })
+    }
+  }
+
+  return scaled
+}
+
+// ============================================================================
+// 4. DSP AUDIO, PROFILAGE CLONAGE ZERO-SHOT & STRUCTURATION MUSICALE / STEMS
+// ============================================================================
+
+/**
+ * Applique un prétraitement DSP professionnel sur les échantillons mono :
+ * 1. Suppression du DC-offset (centrage zéro exact)
+ * 2. Filtre passe-haut Butterworth 1er ordre à 75 Hz (élimine le rumble micro)
+ * 3. Rognage des silences extrêmes de début/fin avec pre-roll/post-roll de 120 ms
+ * 4. Normalisation de crête à -1 dBFS (0.891) avec limiteur doux tanh (zéro saturation)
+ */
+function preprocessVoiceSamplesDSP(rawSamples: Float32Array, sampleRate: number): Float32Array {
+  const n = rawSamples.length
+  if (n === 0) return rawSamples
+
+  // 1. Suppression du DC-offset
+  let dcSum = 0
+  for (let i = 0; i < n; i++) dcSum += rawSamples[i]
+  const dcOffset = dcSum / n
+
+  // 2. Filtre passe-haut à fc = 75 Hz : y[i] = alpha * (y[i-1] + x[i] - x[i-1])
+  const rc = 1 / (2 * Math.PI * 75)
+  const dt = 1 / Math.max(8000, sampleRate)
+  const alpha = rc / (rc + dt)
+
+  const filtered = new Float32Array(n)
+  let prevX = rawSamples[0] - dcOffset
+  let prevY = 0
+  let peak = 0
+
+  for (let i = 0; i < n; i++) {
+    const x = rawSamples[i] - dcOffset
+    const y = alpha * (prevY + x - prevX)
+    prevX = x
+    prevY = y
+    filtered[i] = y
+    const absY = Math.abs(y)
+    if (absY > peak) peak = absY
+  }
+
+  // 3. Rognage intelligent des silences de tête/queue avec garde de 120 ms
+  const winSize = Math.max(64, Math.floor(sampleRate * 0.02)) // 20 ms
+  const energyThreshold = Math.max(0.004, peak * 0.035)
+  let firstActive = 0
+  let lastActive = n - 1
+
+  for (let i = 0; i + winSize < n; i += winSize) {
+    let sumSq = 0
+    for (let j = 0; j < winSize; j++) sumSq += filtered[i + j] * filtered[i + j]
+    if (Math.sqrt(sumSq / winSize) >= energyThreshold) {
+      firstActive = i
+      break
+    }
+  }
+  for (let i = n - winSize; i >= firstActive; i -= winSize) {
+    let sumSq = 0
+    for (let j = 0; j < winSize; j++) sumSq += filtered[i + j] * filtered[i + j]
+    if (Math.sqrt(sumSq / winSize) >= energyThreshold) {
+      lastActive = i + winSize
+      break
+    }
+  }
+
+  const padSamples = Math.floor(sampleRate * 0.12) // 120 ms pre/post-roll
+  const startIdx = Math.max(0, firstActive - padSamples)
+  const endIdx = Math.min(n, lastActive + padSamples)
+  const trimmed = endIdx - startIdx >= Math.floor(sampleRate * 0.25)
+    ? filtered.subarray(startIdx, endIdx)
+    : filtered
+
+  // 4. Normalisation de crête à -1 dBFS (0.891) avec soft-clipper tanh
+  const targetPeak = 0.891
+  const gain = peak > 0.005 ? Math.min(6.0, targetPeak / peak) : 1.0
+  const out = new Float32Array(trimmed.length)
+  for (let i = 0; i < trimmed.length; i++) {
+    const v = trimmed[i] * gain
+    // Soft-knee tanh au-delà de 0.85 pour garantir zéro saturation spectrale
+    out[i] = Math.abs(v) > 0.85 ? Math.tanh(v) : v
+  }
+  return out
+}
+
+/**
+ * Extrait le profil acoustique et prosodique complet (`VoiceAcousticProfile`)
+ * depuis un signal PCM mono pour le clonage vocal zero-shot.
+ */
+export function extractVoiceAcousticProfile(samples: Float32Array, sampleRate: number): VoiceAcousticProfile {
+  const durationSec = Number((samples.length / Math.max(1, sampleRate)).toFixed(3))
+  const frameSize = Math.floor(sampleRate * 0.03) // Fenêtres de 30 ms
+  const hopSize = Math.floor(sampleRate * 0.015)  // Pas de 15 ms
+
+  const f0Values: number[] = []
+  const periodSamplesList: number[] = []
+  const framePeaks: number[] = []
+  const frameRmsDb: number[] = []
+  const hnrValues: number[] = []
+  let zcrSum = 0
+  let totalFrames = 0
+  let voicedFrames = 0
+
+  const minLag = Math.max(2, Math.floor(sampleRate / 450)) // 450 Hz max
+  const maxLag = Math.min(frameSize - 2, Math.floor(sampleRate / 75)) // 75 Hz min
+
+  for (let offset = 0; offset + frameSize <= samples.length; offset += hopSize) {
+    totalFrames++
+    let sumSq = 0
+    let framePeak = 0
+    let zc = 0
+    for (let i = 0; i < frameSize; i++) {
+      const s = samples[offset + i]
+      sumSq += s * s
+      const absS = Math.abs(s)
+      if (absS > framePeak) framePeak = absS
+      if (i > 0 && ((samples[offset + i - 1] >= 0 && s < 0) || (samples[offset + i - 1] < 0 && s >= 0))) {
+        zc++
+      }
+    }
+    const rms = Math.sqrt(sumSq / frameSize)
+    const zcr = (zc / frameSize) * sampleRate
+    zcrSum += zcr
+
+    if (rms > 0.012) {
+      frameRmsDb.push(20 * Math.log10(Math.max(1e-5, rms)))
+    }
+
+    // Détection de voisement et F0 par autocorrélation normalisée
+    if (rms >= 0.018 && sumSq > 1e-6) {
+      let bestLag = 0
+      let bestCorr = 0
+      for (let lag = minLag; lag <= maxLag; lag++) {
+        let corr = 0
+        let normA = 0
+        let normB = 0
+        const len = frameSize - lag
+        for (let i = 0; i < len; i++) {
+          const a = samples[offset + i]
+          const b = samples[offset + i + lag]
+          corr += a * b
+          normA += a * a
+          normB += b * b
+        }
+        const denom = Math.sqrt(normA * normB)
+        const r = denom > 1e-8 ? corr / denom : 0
+        if (r > bestCorr) {
+          bestCorr = r
+          bestLag = lag
+        }
+      }
+
+      if (bestCorr >= 0.52 && bestLag > 0) {
+        voicedFrames++
+        const f0 = sampleRate / bestLag
+        if (f0 >= 75 && f0 <= 450) {
+          f0Values.push(f0)
+          periodSamplesList.push(bestLag)
+          framePeaks.push(framePeak)
+          const hnr = 10 * Math.log10(Math.max(0.01, bestCorr) / Math.max(0.001, 1 - bestCorr))
+          hnrValues.push(Math.max(0, Math.min(35, hnr)))
+        }
+      }
+    }
+  }
+
+  const f0MeanHz = f0Values.length > 0
+    ? Number((f0Values.reduce((a, b) => a + b, 0) / f0Values.length).toFixed(1))
+    : 165
+  const f0Variance = f0Values.length > 1
+    ? f0Values.reduce((acc, v) => acc + (v - f0MeanHz) ** 2, 0) / f0Values.length
+    : 18
+  const f0StdHz = Number(Math.sqrt(f0Variance).toFixed(1))
+  const f0MinHz = f0Values.length > 0 ? Number(Math.min(...f0Values).toFixed(1)) : 120
+  const f0MaxHz = f0Values.length > 0 ? Number(Math.max(...f0Values).toFixed(1)) : 220
+
+  // Registre vocal selon F0 moyenne
+  let register: VocalRegister = 'baritone'
+  if (f0MeanHz < 110) register = 'bass'
+  else if (f0MeanHz < 145) register = 'baritone'
+  else if (f0MeanHz < 185) register = 'tenor'
+  else if (f0MeanHz < 220) register = 'alto'
+  else if (f0MeanHz < 260) register = 'mezzo'
+  else register = 'soprano'
+
+  // Jitter (%) et Shimmer (%) sur les trames voisées consécutives
+  let jitterSum = 0
+  for (let i = 1; i < periodSamplesList.length; i++) {
+    jitterSum += Math.abs(periodSamplesList[i] - periodSamplesList[i - 1])
+  }
+  const avgPeriod = periodSamplesList.length > 0
+    ? periodSamplesList.reduce((a, b) => a + b, 0) / periodSamplesList.length
+    : 1
+  const jitterPct = periodSamplesList.length > 1
+    ? Number(Math.min(8, ((jitterSum / (periodSamplesList.length - 1)) / avgPeriod) * 100).toFixed(2))
+    : 0.65
+
+  let shimmerSum = 0
+  for (let i = 1; i < framePeaks.length; i++) {
+    shimmerSum += Math.abs(framePeaks[i] - framePeaks[i - 1])
+  }
+  const avgPeak = framePeaks.length > 0
+    ? framePeaks.reduce((a, b) => a + b, 0) / framePeaks.length
+    : 1
+  const shimmerPct = framePeaks.length > 1
+    ? Number(Math.min(15, ((shimmerSum / (framePeaks.length - 1)) / Math.max(1e-4, avgPeak)) * 100).toFixed(2))
+    : 2.4
+
+  const hnrDb = hnrValues.length > 0
+    ? Number((hnrValues.reduce((a, b) => a + b, 0) / hnrValues.length).toFixed(1))
+    : 16.5
+
+  const meanZcr = totalFrames > 0 ? zcrSum / totalFrames : 1200
+  const spectralCentroidHz = Number(Math.max(450, Math.min(4200, meanZcr * 1.35)).toFixed(0))
+
+  // Estimation allométrique des formants F1, F2, F3 selon la longueur du conduit vocal induite par F0
+  const vocalTractScale = Math.max(0.82, Math.min(1.22, 1 + (f0MeanHz - 150) / 650))
+  const formantsHz = {
+    f1: Math.round(520 * vocalTractScale),
+    f2: Math.round(1540 * vocalTractScale),
+    f3: Math.round(2560 * vocalTractScale),
+  }
+
+  // Cadence syllabique par comptage des pics d'enveloppe d'énergie lissée (distants d'au moins 110 ms)
+  let syllablePeaks = 0
+  let lastPeakFrame = -10
+  for (let i = 1; i + 1 < frameRmsDb.length; i++) {
+    if (
+      frameRmsDb[i] > frameRmsDb[i - 1] &&
+      frameRmsDb[i] >= frameRmsDb[i + 1] &&
+      frameRmsDb[i] > -32 &&
+      i - lastPeakFrame >= 7
+    ) {
+      syllablePeaks++
+      lastPeakFrame = i
+    }
+  }
+  const activeSec = Math.max(0.4, (voicedFrames * hopSize) / Math.max(1, sampleRate))
+  const syllablesPerSec = Number(Math.max(2.5, Math.min(7.2, syllablePeaks / activeSec || 4.4)).toFixed(2))
+  const voicedRatio = totalFrames > 0 ? Number((voicedFrames / totalFrames).toFixed(2)) : 0
+
+  const dynamicRangeDb = frameRmsDb.length > 2
+    ? Number((Math.max(...frameRmsDb) - Math.min(...frameRmsDb)).toFixed(1))
+    : 14.0
+
+  const warmth = Number(Math.max(0.1, Math.min(1, 1 - (spectralCentroidHz - 600) / 3200)).toFixed(2))
+  const brightness = Number(Math.max(0.1, Math.min(1, (spectralCentroidHz - 600) / 3000)).toFixed(2))
+  const breathiness = Number(Math.max(0.05, Math.min(1, 1 - hnrDb / 28)).toFixed(2))
+  const presence = Number(Math.max(0.2, Math.min(1, voicedRatio * 0.6 + brightness * 0.4)).toFixed(2))
+
+  const prosodySignature = `${register}:f0=${f0MeanHz}Hz±${f0StdHz}:cad=${syllablesPerSec}syl/s:w=${warmth}:b=${brightness}`
+
+  return {
+    f0MeanHz,
+    f0StdHz,
+    f0MinHz,
+    f0MaxHz,
+    register,
+    formantsHz,
+    spectralCentroidHz,
+    timbre: { warmth, brightness, breathiness, presence },
+    jitterPct,
+    shimmerPct,
+    hnrDb,
+    syllablesPerSec,
+    voicedRatio,
+    dynamicRangeDb,
+    durationSec,
+    prosodySignature,
+  }
+}
+
+/**
+ * Analyse un AudioBuffer / tableau d'échantillons pour en extraire le profil des 4 stems
+ * (`vocals`, `bass`, `drums`, `harmony`), le tempo BPM, la tonalité et la dynamique LUFS.
+ */
+export function analyzeAudioStemsFromSamples(samples: Float32Array, sampleRate: number): StemSeparationProfile {
+  const n = samples.length
+  if (n === 0) {
+    return {
+      vocals: { energyRatio: 0.35, rmsDb: -18, centroidHz: 1400, dominance: 0.5 },
+      bass: { energyRatio: 0.25, rmsDb: -20, subRatio: 0.6, dominance: 0.4 },
+      drums: { energyRatio: 0.20, rmsDb: -19, transientDensity: 2.5, dominance: 0.4 },
+      harmony: { energyRatio: 0.20, rmsDb: -21, stereoWidth: 0.5, dominance: 0.4 },
+      estimatedBpm: 120,
+      estimatedKey: 'C major',
+      integratedLufs: -16,
+      crestFactorDb: 9.5,
+    }
+  }
+
+  // Séparation multi-bandes temporelle par filtres IIR cascadés :
+  // - Bass : passe-bas < 180 Hz
+  // - Vocals/Mid : passe-bande [180 Hz .. 4200 Hz]
+  // - High/Presence : > 4200 Hz
+  const dt = 1 / Math.max(8000, sampleRate)
+  const rcBass = 1 / (2 * Math.PI * 180)
+  const alphaBass = dt / (rcBass + dt)
+  const rcHigh = 1 / (2 * Math.PI * 4200)
+  const alphaHigh = dt / (rcHigh + dt)
+
+  let bassLP = 0
+  let midLP = 0
+  let sumBassSq = 0
+  let sumVocSq = 0
+  let sumDrumSq = 0
+  let sumHarmSq = 0
+  let sumTotalSq = 0
+  let peakAbs = 0
+
+  const winSize = Math.max(128, Math.floor(sampleRate * 0.02))
+  const onsetEnv: number[] = []
+  let prevWinEnergy = 0
+  let transientCount = 0
+
+  for (let i = 0; i < n; i++) {
+    const x = samples[i]
+    sumTotalSq += x * x
+    const absX = Math.abs(x)
+    if (absX > peakAbs) peakAbs = absX
+
+    bassLP += alphaBass * (x - bassLP)
+    midLP += alphaHigh * (x - midLP)
+    const midBand = midLP - bassLP
+    const highBand = x - midLP
+
+    sumBassSq += bassLP * bassLP
+    sumVocSq += midBand * midBand * 0.62
+    sumHarmSq += (midBand * 0.38 + highBand * 0.5) ** 2
+    sumDrumSq += highBand * highBand * 0.5
+
+    if (i % winSize === winSize - 1) {
+      const winRms = Math.sqrt((bassLP * bassLP + highBand * highBand) * 0.5)
+      const flux = Math.max(0, winRms - prevWinEnergy)
+      onsetEnv.push(flux)
+      if (flux > 0.035) transientCount++
+      prevWinEnergy = winRms
+    }
+  }
+
+  const totalEnergy = Math.max(1e-9, sumBassSq + sumVocSq + sumDrumSq + sumHarmSq)
+  const vocRatio = Number((sumVocSq / totalEnergy).toFixed(3))
+  const bassRatio = Number((sumBassSq / totalEnergy).toFixed(3))
+  const drumRatio = Number((sumDrumSq / totalEnergy).toFixed(3))
+  const harmRatio = Number(Math.max(0, 1 - vocRatio - bassRatio - drumRatio).toFixed(3))
+
+  const totalRms = Math.sqrt(sumTotalSq / n)
+  const integratedLufs = Number((20 * Math.log10(Math.max(1e-5, totalRms)) - 0.691).toFixed(1))
+  const crestFactorDb = Number((20 * Math.log10(Math.max(1e-5, peakAbs) / Math.max(1e-5, totalRms))).toFixed(1))
+
+  // Estimation du BPM par autocorrélation de l'enveloppe d'onset (entre 72 et 165 BPM)
+  const envRate = sampleRate / winSize // ~50 Hz
+  const minBpmLag = Math.max(2, Math.floor((envRate * 60) / 165))
+  const maxBpmLag = Math.min(onsetEnv.length - 2, Math.floor((envRate * 60) / 72))
+  let bestBpmLag = Math.floor((envRate * 60) / 120)
+  let bestBpmCorr = 0
+  for (let lag = minBpmLag; lag <= maxBpmLag; lag++) {
+    let corr = 0
+    for (let i = 0; i + lag < onsetEnv.length; i++) {
+      corr += onsetEnv[i] * onsetEnv[i + lag]
+    }
+    if (corr > bestBpmCorr) {
+      bestBpmCorr = corr
+      bestBpmLag = lag
+    }
+  }
+  const estimatedBpm = Math.round(Math.max(72, Math.min(165, (envRate * 60) / Math.max(1, bestBpmLag))))
+
+  // Estimation de tonalité par profil d'énergie sur les 12 demi-tons (A4 = 440 Hz)
+  const KEY_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+  const profile = extractVoiceAcousticProfile(samples.subarray(0, Math.min(n, sampleRate * 8)), sampleRate)
+  const midiNote = Math.round(69 + 12 * Math.log2(Math.max(65, profile.f0MeanHz) / 440))
+  const pitchClass = ((midiNote % 12) + 12) % 12
+  const mode = profile.timbre.warmth >= 0.55 ? 'minor' : 'major'
+  const estimatedKey = `${KEY_NAMES[pitchClass]} ${mode}`
+
+  const durationSec = Math.max(0.5, n / sampleRate)
+
+  return {
+    vocals: {
+      energyRatio: vocRatio,
+      rmsDb: Number((integratedLufs + 20 * Math.log10(Math.max(0.05, vocRatio))).toFixed(1)),
+      centroidHz: profile.spectralCentroidHz,
+      dominance: Number(Math.min(1, vocRatio * 1.8).toFixed(2)),
+    },
+    bass: {
+      energyRatio: bassRatio,
+      rmsDb: Number((integratedLufs + 20 * Math.log10(Math.max(0.05, bassRatio))).toFixed(1)),
+      subRatio: Number(Math.min(1, bassRatio * 1.5).toFixed(2)),
+      dominance: Number(Math.min(1, bassRatio * 1.7).toFixed(2)),
+    },
+    drums: {
+      energyRatio: drumRatio,
+      rmsDb: Number((integratedLufs + 20 * Math.log10(Math.max(0.05, drumRatio))).toFixed(1)),
+      transientDensity: Number((transientCount / durationSec).toFixed(2)),
+      dominance: Number(Math.min(1, drumRatio * 2.0).toFixed(2)),
+    },
+    harmony: {
+      energyRatio: harmRatio,
+      rmsDb: Number((integratedLufs + 20 * Math.log10(Math.max(0.05, harmRatio))).toFixed(1)),
+      stereoWidth: 0.65,
+      dominance: Number(Math.min(1, harmRatio * 1.6).toFixed(2)),
+    },
+    estimatedBpm,
+    estimatedKey,
+    integratedLufs,
+    crestFactorDb,
+  }
+}
+
+/**
+ * Compte les syllabes phonétiques françaises d'un vers et génère son patron rythmique.
+ */
+function analyzeFrenchLyricLine(line: string): { text: string; syllables: number; stressPattern: string } {
+  const words = line.trim().split(/[\s,.;:!?()«»"'-]+/).filter(Boolean)
+  const vowelIpas = new Set(['a', 'ɑ', 'ɑ̃', 'e', 'ɛ', 'ɛ̃', 'ə', 'i', 'o', 'ɔ', 'ɔ̃', 'ø', 'œ', 'œ̃', 'u', 'y'])
+  let syllables = 0
+  const stresses: string[] = []
+
+  for (let wIdx = 0; wIdx < words.length; wIdx++) {
+    const phones = phonemizeWord(words[wIdx])
+    const wordVowels = phones.filter((p) => vowelIpas.has(p))
+    const count = Math.max(1, wordVowels.length)
+    syllables += count
+    for (let s = 0; s < count; s++) {
+      // En français, l'accent tonique tombe sur la dernière syllabe du mot/groupe
+      stresses.push(s === count - 1 ? '1' : '0')
+    }
+  }
+  return {
+    text: line.trim(),
+    syllables: Math.max(1, syllables),
+    stressPattern: stresses.join(''),
+  }
+}
+
+/**
+ * Structure un texte lyrique ou un brief musical en plan de production multi-stems complet
+ * (`MusicProductionStructure`) avec découpage en mesures, sections et métrique syllabique.
+ */
+export function buildMusicProductionPlan(
+  lyricsOrPrompt: string,
+  opts?: { bpm?: number; keySignature?: string; timeSignature?: '4/4' | '3/4' | '6/8' },
+): MusicProductionStructure {
+  const bpm = Math.max(60, Math.min(200, opts?.bpm ?? 118))
+  const timeSignature = opts?.timeSignature ?? '4/4'
+  const keySignature = opts?.keySignature ?? 'A minor'
+  const beatsPerBar = timeSignature === '3/4' ? 3 : 4
+  const barDurationSec = (60 / bpm) * beatsPerBar
+
+  const rawLines = (lyricsOrPrompt || '')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+
+  const blueprint: Array<{
+    kind: MusicSectionKind
+    label: string
+    bars: number
+    energyTarget: number
+    activeStems: Array<'vocals' | 'bass' | 'drums' | 'harmony'>
+  }> = [
+    { kind: 'intro', label: 'Intro Atmosphérique', bars: 4, energyTarget: 0.35, activeStems: ['harmony', 'bass'] },
+    { kind: 'verse', label: 'Couplet 1', bars: 8, energyTarget: 0.60, activeStems: ['vocals', 'bass', 'harmony'] },
+    { kind: 'pre-chorus', label: 'Pré-Refrain (Montée)', bars: 4, energyTarget: 0.78, activeStems: ['vocals', 'bass', 'drums', 'harmony'] },
+    { kind: 'chorus', label: 'Refrain Principal', bars: 8, energyTarget: 0.96, activeStems: ['vocals', 'bass', 'drums', 'harmony'] },
+    { kind: 'bridge', label: 'Pont Harmonique', bars: 4, energyTarget: 0.68, activeStems: ['vocals', 'harmony'] },
+    { kind: 'outro', label: 'Outro & Fade', bars: 4, energyTarget: 0.30, activeStems: ['harmony', 'bass'] },
+  ]
+
+  let currentBar = 1
+  let currentSec = 0
+  let lineCursor = 0
+
+  const sections: MusicSectionPlan[] = blueprint.map((sec) => {
+    const secDuration = sec.bars * barDurationSec
+    const linesForSec: Array<{ text: string; syllables: number; stressPattern: string }> = []
+    if (sec.activeStems.includes('vocals') && rawLines.length > 0) {
+      const targetLineCount = sec.bars >= 8 ? 4 : 2
+      for (let i = 0; i < targetLineCount; i++) {
+        const l = rawLines[lineCursor % rawLines.length]
+        lineCursor++
+        linesForSec.push(analyzeFrenchLyricLine(l))
+      }
+    }
+    const plan: MusicSectionPlan = {
+      kind: sec.kind,
+      label: sec.label,
+      startBar: currentBar,
+      bars: sec.bars,
+      startSec: Number(currentSec.toFixed(2)),
+      endSec: Number((currentSec + secDuration).toFixed(2)),
+      energyTarget: sec.energyTarget,
+      lyricsLines: linesForSec,
+      activeStems: sec.activeStems,
+    }
+    currentBar += sec.bars
+    currentSec += secDuration
+    return plan
+  })
+
+  return {
+    bpm,
+    timeSignature,
+    keySignature,
+    totalDurationSec: Number(currentSec.toFixed(2)),
+    sections,
+  }
+}
+
+/**
+ * Décode n'importe quel format audio (WebM, Ogg…) et ré-encode en WAV PCM 16-bit mono
+ * après passage dans le pipeline DSP (suppression DC-offset, filtre passe-haut 75 Hz,
+ * rognage intelligent des silences et normalisation -1 dBFS sans saturation).
+ * Retourne également le profil acoustique extrait pour le clonage vocal zero-shot.
+ */
+async function encodeAsWavWithProfile(blob: Blob): Promise<{ wavBlob: Blob; profile: VoiceAcousticProfile }> {
   const tmpCtx = new AudioContext()
   try {
     const arrayBuffer = await blob.arrayBuffer()
     const audioBuffer = await tmpCtx.decodeAudioData(arrayBuffer)
     const sampleRate = audioBuffer.sampleRate
 
-    let samples: Float32Array
+    let rawSamples: Float32Array
     if (audioBuffer.numberOfChannels > 1) {
       const ch0 = audioBuffer.getChannelData(0)
       const ch1 = audioBuffer.getChannelData(1)
-      samples = new Float32Array(ch0.length)
-      for (let i = 0; i < ch0.length; i++) samples[i] = (ch0[i] + ch1[i]) * 0.5
+      rawSamples = new Float32Array(ch0.length)
+      for (let i = 0; i < ch0.length; i++) rawSamples[i] = (ch0[i] + ch1[i]) * 0.5
     } else {
-      samples = audioBuffer.getChannelData(0)
+      rawSamples = audioBuffer.getChannelData(0)
     }
+
+    const samples = preprocessVoiceSamplesDSP(rawSamples, sampleRate)
+    const profile = extractVoiceAcousticProfile(samples, sampleRate)
 
     const numSamples = samples.length
     const wavBuffer = new ArrayBuffer(44 + numSamples * 2)
@@ -43,16 +1128,14 @@ async function encodeAsWav(blob: Blob): Promise<Blob> {
       view.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true)
     }
 
-    return new Blob([wavBuffer], { type: 'audio/wav' })
+    return {
+      wavBlob: new Blob([wavBuffer], { type: 'audio/wav' }),
+      profile,
+    }
   } finally {
     await tmpCtx.close()
   }
 }
-
-export type VoiceLivePhase = 'idle' | 'listening' | 'transcribing' | 'thinking' | 'speaking'
-
-/** Cue Rhubarb — frame-accurate mouth shape. value = A..H | X */
-export interface RhubarbCue { start: number; end: number; value: string }
 
 interface Opts {
   onTranscript: (text: string) => void | Promise<void>
@@ -97,6 +1180,8 @@ export function useVoiceLive({ onTranscript, autoStart = false, language = 'fr',
   const [error, setError] = useState<string | null>(null)
   const [volumeLevel, setVolumeLevel] = useState(0)
   const [speakingAmplitude, setSpeakingAmplitude] = useState(0)
+  const [acousticProfile, setAcousticProfile] = useState<VoiceAcousticProfile | null>(null)
+  const [lastProsodyPlan, setLastProsodyPlan] = useState<ProsodyPlan | null>(null)
 
   const phaseRef = useRef<VoiceLivePhase>('idle')
   const setP = (p: VoiceLivePhase) => { phaseRef.current = p; setPhase(p) }
@@ -116,6 +1201,8 @@ export function useVoiceLive({ onTranscript, autoStart = false, language = 'fr',
   const spokeRef = useRef(false)
   const spokeAtRef = useRef(0)
   const silAtRef = useRef(0)
+  const noiseFloorRef = useRef(0.006)
+  const acousticProfileRef = useRef<VoiceAcousticProfile | null>(null)
   const onTranscriptRef = useRef(onTranscript)
   onTranscriptRef.current = onTranscript
   const languageRef = useRef(language)
@@ -128,7 +1215,7 @@ export function useVoiceLive({ onTranscript, autoStart = false, language = 'fr',
   silenceMsRef.current = silenceMs
   const echoGuardRef = useRef(0)
 
-  // Web Audio API — lecture TTS via BufferSource (pas de audio.src = URL)
+  // Web Audio API — analyse spectrale TTS temps réel
   const ttsCtxRef = useRef<AudioContext | null>(null)
   const ttsAnalyserRef = useRef<AnalyserNode | null>(null)
   const ttsSourceRef = useRef<HTMLAudioElement | null>(null)
@@ -188,7 +1275,14 @@ export function useVoiceLive({ onTranscript, autoStart = false, language = 'fr',
   const getStream = useCallback(async () => {
     let s = streamRef.current
     if (s && s.getTracks().some(t => t.readyState === 'live')) return s
-    s = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } })
+    s = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1,
+      },
+    })
     streamRef.current = s
     if (ctxRef.current) try { ctxRef.current.close() } catch {}
     ctxRef.current = new AudioContext()
@@ -200,13 +1294,44 @@ export function useVoiceLive({ onTranscript, autoStart = false, language = 'fr',
     return s
   }, [])
 
+  /**
+   * Analyse un échantillon audio de référence (clonage vocal zero-shot)
+   * et met à jour l'empreinte acoustique active du hook.
+   */
+  const analyzeVoiceReference = useCallback(async (referenceBlob: Blob): Promise<VoiceAcousticProfile> => {
+    const { profile } = await encodeAsWavWithProfile(referenceBlob)
+    acousticProfileRef.current = profile
+    if (mountedRef.current) setAcousticProfile(profile)
+    return profile
+  }, [])
+
+  /**
+   * Analyse un fichier/blob musical ou vocal en 4 stems + BPM + tonalité + LUFS.
+   */
+  const analyzeAudioStems = useCallback(async (audioBlob: Blob): Promise<StemSeparationProfile> => {
+    const tmpCtx = new AudioContext()
+    try {
+      const arrayBuffer = await audioBlob.arrayBuffer()
+      const audioBuffer = await tmpCtx.decodeAudioData(arrayBuffer)
+      const ch0 = audioBuffer.getChannelData(0)
+      return analyzeAudioStemsFromSamples(ch0, audioBuffer.sampleRate)
+    } finally {
+      await tmpCtx.close()
+    }
+  }, [])
+
   const doTranscribe = useCallback(async (blob: Blob) => {
     if (!mountedRef.current) return
     setP('transcribing')
     try {
       let audioBlob = blob
       try {
-        audioBlob = await encodeAsWav(blob)
+        const { wavBlob, profile } = await encodeAsWavWithProfile(blob)
+        audioBlob = wavBlob
+        if (profile.voicedRatio >= 0.12 && profile.durationSec >= 0.4) {
+          acousticProfileRef.current = profile
+          if (mountedRef.current) setAcousticProfile(profile)
+        }
       } catch (encErr) {
         console.warn('[V] WAV encode failed, using raw blob:', encErr)
       }
@@ -228,6 +1353,9 @@ export function useVoiceLive({ onTranscript, autoStart = false, language = 'fr',
         const fd = new FormData()
         fd.append('audio', audioBlob, 'voice.wav')
         fd.append('language', languageRef.current)
+        if (acousticProfileRef.current) {
+          fd.append('voice_profile', JSON.stringify(acousticProfileRef.current))
+        }
         const r = await fetch(`${getBridgeUrl()}/api/voice/stt`, { method: 'POST', body: fd })
         const result = await safeParseJson<{ ok?: boolean; text?: string; error?: string }>(r, 'Voice STT')
         if (result.text && result.text !== '(silence detecte)') {
@@ -452,13 +1580,30 @@ export function useVoiceLive({ onTranscript, autoStart = false, language = 'fr',
         if (rec.state !== 'recording') return
         an.getFloatTimeDomainData(buf)
         let sum = 0
-        for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i]
+        let zc = 0
+        for (let i = 0; i < buf.length; i++) {
+          const s = buf[i]
+          sum += s * s
+          if (i > 0 && ((buf[i - 1] >= 0 && s < 0) || (buf[i - 1] < 0 && s >= 0))) zc++
+        }
         const rms = Math.sqrt(sum / buf.length)
+        const zcrRatio = zc / buf.length
+
+        // Adaptation continue du plancher de bruit ambiant hors parole
+        if (!spokeRef.current && rms < NOISE * 1.4) {
+          noiseFloorRef.current = noiseFloorRef.current * 0.96 + rms * 0.04
+        }
+
         setVolumeLevel(Math.min(1, rms * 8))
         const now = Date.now()
         const echoActive = now < echoGuardRef.current
-        const th = echoActive ? NOISE_ECHO : (spokeRef.current ? NOISE_LOW : NOISE)
-        if (rms >= th) {
+        const adaptiveHigh = Math.max(NOISE, noiseFloorRef.current * 2.4)
+        const adaptiveLow = Math.max(NOISE_LOW, noiseFloorRef.current * 1.6)
+        const th = echoActive ? NOISE_ECHO : (spokeRef.current ? adaptiveLow : adaptiveHigh)
+        // Rejet des transitoires purement haute fréquence non-vocaux (ZCR > 0.45)
+        const isPlausibleVoice = zcrRatio < 0.45 || rms > th * 1.8
+
+        if (rms >= th && isPlausibleVoice) {
           if (!spokeRef.current) { spokeRef.current = true; spokeAtRef.current = now }
           silAtRef.current = 0
         } else if (spokeRef.current) {
@@ -514,6 +1659,18 @@ export function useVoiceLive({ onTranscript, autoStart = false, language = 'fr',
     const id = ++spkIdRef.current
     if (!mountedRef.current) return
 
+    // 1. Calcul du plan prosodique et normalisation phonétique française
+    const prosodyPlan = extractProsodyPlan(text, languageRef.current, acousticProfileRef.current)
+    const normalizedText = prosodyPlan.normalizedText || text.trim()
+    setLastProsodyPlan(prosodyPlan)
+
+    // 2. Pré-génération immédiate des cues Rhubarb par règles phonétiques + liaisons
+    //    (sera remplacé ou recalibré dès que Kokoro renvoie ses phonèmes ou sa durée audio)
+    phonemeCuesRef.current = generateRhubarbCuesFromText(
+      normalizedText,
+      prosodyPlan.estimatedDurationSec,
+    )
+
     setP('speaking')
 
     const done = () => {
@@ -527,16 +1684,42 @@ export function useVoiceLive({ onTranscript, autoStart = false, language = 'fr',
       }
     }
 
-    // Animation amplitude pendant la parole audio
+    // Animation amplitude & formants F1/F2 synchronisée aux cues Rhubarb et au temps audio réel
     const startAmplitudeAnimation = () => {
+      const startWallSec = performance.now() / 1000
       const tick = () => {
         if (spkIdRef.current !== id) {
           setSpeakingAmplitude(0); formantsRef.current = { low: 0, mid: 0 }; rafRef.current = 0; return
         }
-        const t = Date.now() / 1000
-        const amp = Math.max(0.15, Math.min(1, 0.5 + Math.sin(t * 12) * 0.2 + Math.sin(t * 30) * 0.12))
-        setSpeakingAmplitude(amp)
-        formantsRef.current = { low: amp * 0.6, mid: amp * 0.4 }
+        const audioEl = audioRef.current
+        const currentSec = (audioEl && !audioEl.paused && audioEl.currentTime > 0)
+          ? audioEl.currentTime
+          : (performance.now() / 1000) - startWallSec
+
+        // Recherche de la cue Rhubarb active à l'instant currentSec
+        const cues = phonemeCuesRef.current
+        let activeCue: RhubarbCue | null = null
+        for (let i = cues.length - 1; i >= 0; i--) {
+          if (currentSec >= cues[i].start) {
+            activeCue = cues[i]
+            break
+          }
+        }
+
+        const viseme = activeCue?.value ?? 'A'
+        if (viseme === 'X') {
+          setSpeakingAmplitude(0.03)
+          formantsRef.current = { low: 0.02, mid: 0.02 }
+        } else {
+          // Enveloppe syllabique naturelle (attaque franche, maintien doux, relâchement)
+          const cueDur = Math.max(0.04, (activeCue?.end ?? currentSec + 0.08) - (activeCue?.start ?? currentSec))
+          const relPos = Math.max(0, Math.min(1, (currentSec - (activeCue?.start ?? currentSec)) / cueDur))
+          const syllableEnv = Math.sin(relPos * Math.PI) * 0.35 + 0.65
+          const formants = rhubarbVisemeToFormants(viseme, syllableEnv * prosodyPlan.energy)
+          const amp = Math.max(0.12, Math.min(1, (formants.low * 0.65 + formants.mid * 0.45)))
+          setSpeakingAmplitude(amp)
+          formantsRef.current = formants
+        }
         rafRef.current = requestAnimationFrame(tick)
       }
       rafRef.current = requestAnimationFrame(tick)
@@ -555,7 +1738,14 @@ export function useVoiceLive({ onTranscript, autoStart = false, language = 'fr',
     try {
       const bridgeUrl = getBridgeUrl()
       const ttsEndpoint = bridgeUrl ? `${bridgeUrl}/api/voice/tts` : '/api/voice/tts'
-      const ttsPayload: Record<string, unknown> = { text: text.slice(0, 2000), lang: languageRef.current }
+      const ttsPayload: Record<string, unknown> = {
+        text: normalizedText.slice(0, 2000),
+        raw_text: text.slice(0, 2000),
+        lang: languageRef.current,
+        speed: prosodyPlan.rate,
+        pitch: prosodyPlan.pitch,
+        emotion: prosodyPlan.emotion,
+      }
       // Si un avatar image est configure, on demande au bridge de generer aussi le MP4 talking-head
       if (avatarImageRef.current) {
         ttsPayload.avatar = avatarImageRef.current
@@ -563,6 +1753,15 @@ export function useVoiceLive({ onTranscript, autoStart = false, language = 'fr',
       // Persona vocal Aurora — bridge mappe lyra-soft -> Denise, iris-bright -> Brigitte, etc.
       if (voicePersonaRef.current) {
         ttsPayload.voice = voicePersonaRef.current
+      }
+      // Conditionnement acoustique zero-shot si une empreinte vocale de référence est disponible
+      if (acousticProfileRef.current) {
+        ttsPayload.voice_profile = {
+          f0_mean_hz: acousticProfileRef.current.f0MeanHz,
+          register: acousticProfileRef.current.register,
+          syllables_per_sec: acousticProfileRef.current.syllablesPerSec,
+          prosody_signature: acousticProfileRef.current.prosodySignature,
+        }
       }
       const resp = await fetch(ttsEndpoint, {
         method: 'POST',
@@ -588,7 +1787,9 @@ export function useVoiceLive({ onTranscript, autoStart = false, language = 'fr',
           phonemes: data.phonemes?.length || 0,
         })
         if (data.ok && data.audio_url) {
-          if (data.phonemes?.length) phonemeCuesRef.current = data.phonemes
+          if (data.phonemes?.length) {
+            phonemeCuesRef.current = data.phonemes
+          }
           const audioUrl = bridgeUrl ? `${bridgeUrl}${data.audio_url}` : data.audio_url
           // Relayer le MP4 talking-video au callback si present
           if (data.video_url && onTalkingVideoRef.current) {
@@ -618,6 +1819,13 @@ export function useVoiceLive({ onTranscript, autoStart = false, language = 'fr',
             audio.muted = false
             ttsSourceRef.current = audio
 
+            // Recalibrage frame-accurate des visèmes Rhubarb dès que la durée réelle du WAV est connue
+            audio.onloadedmetadata = () => {
+              if (audio && Number.isFinite(audio.duration) && audio.duration > 0.1) {
+                phonemeCuesRef.current = recalibrateRhubarbCues(phonemeCuesRef.current, audio.duration)
+              }
+            }
+
             console.log('[TTS] Audio setup:', {
               src: audioUrl,
               volume: audio.volume,
@@ -633,6 +1841,7 @@ export function useVoiceLive({ onTranscript, autoStart = false, language = 'fr',
               audio!.onerror = null
               audio!.oncanplay = null
               audio!.onplaying = null
+              audio!.onloadedmetadata = null
               resolveKokoro(outcome)
             }
 
@@ -653,6 +1862,9 @@ export function useVoiceLive({ onTranscript, autoStart = false, language = 'fr',
 
             audio.onplaying = () => {
               console.log('[TTS] Kokoro onplaying fired, currentTime:', audio!.currentTime)
+              if (audio && Number.isFinite(audio.duration) && audio.duration > 0.1) {
+                phonemeCuesRef.current = recalibrateRhubarbCues(phonemeCuesRef.current, audio.duration)
+              }
               startAmplitudeAnimation()
               // On marque "played" ici et on resolve cette promise QUAND onended arrivera.
               // En attendant on ne settle pas pour laisser le lecteur finir.
@@ -693,7 +1905,7 @@ export function useVoiceLive({ onTranscript, autoStart = false, language = 'fr',
             }, kokoroWatchdogMs)
 
             // Limite dure: au bout de maxMs on stoppe tout
-            const maxMs = Math.max(8000, text.length * 120)
+            const maxMs = Math.max(8000, normalizedText.length * 120)
             setTimeout(() => {
               if (!resolved) {
                 console.warn('[TTS] Kokoro final timeout', maxMs, 'ms')
@@ -720,7 +1932,7 @@ export function useVoiceLive({ onTranscript, autoStart = false, language = 'fr',
     }  // fin du `else` (desktop-only Kokoro block)
 
     // --- Fallback / Mobile par defaut: Web Speech API (native browser TTS) ---
-    console.log('[TTS] Web Speech API fallback engaged, text:', text.slice(0, 60))
+    console.log('[TTS] Web Speech API fallback engaged, text:', normalizedText.slice(0, 60))
     return new Promise<void>((resolve) => {
       if (!window.speechSynthesis) {
         console.error('[TTS] window.speechSynthesis not available -- no TTS possible')
@@ -735,11 +1947,11 @@ export function useVoiceLive({ onTranscript, autoStart = false, language = 'fr',
       }
 
       const speak = () => {
-        const utter = new SpeechSynthesisUtterance(text)
+        const utter = new SpeechSynthesisUtterance(normalizedText)
         const langCode = languageRef.current === 'en' ? 'en-US' : 'fr-FR'
         utter.lang = langCode
-        utter.rate = 0.95
-        utter.pitch = 1.05
+        utter.rate = prosodyPlan.rate
+        utter.pitch = prosodyPlan.pitch
         utter.volume = 1
 
         const voices = window.speechSynthesis.getVoices()
@@ -754,7 +1966,7 @@ export function useVoiceLive({ onTranscript, autoStart = false, language = 'fr',
           console.warn('[TTS] Web Speech: no voices available')
         }
 
-        const maxMs = Math.max(6000, text.length * 90)
+        const maxMs = Math.max(6000, normalizedText.length * 90)
         const timeoutId = setTimeout(() => {
           console.warn('[TTS] Web Speech timeout')
           done(); resolve()
@@ -851,5 +2063,14 @@ export function useVoiceLive({ onTranscript, autoStart = false, language = 'fr',
     audioRef,       // HTMLAudioElement — pour audio.currentTime dans useFrame
     // Phase 2 — Rhubarb Lip Sync
     phonemeCuesRef, // RhubarbCue[] — stable entre changements de texte
+    // Phase 3 — Profilage acoustique zero-shot, prosodie FR & structuration musicale
+    acousticProfile,
+    acousticProfileRef,
+    lastProsodyPlan,
+    analyzeVoiceReference,
+    analyzeAudioStems,
+    buildMusicProductionPlan,
+    normalizeFrenchProsodyAndPhonetics,
   }
 }
+

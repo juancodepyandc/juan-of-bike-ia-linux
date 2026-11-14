@@ -12,13 +12,13 @@ from duckduckgo_search import DDGS
 log = logging.getLogger(__name__)
 
 OLLAMA_API_URL = "http://localhost:11434/api/chat"
-VLM_MODEL = "qwen3-vl:8b"
+VLM_MODEL = "qwen3-vl:30b"
 
 def _encode_image(image_path: Path) -> str:
     with open(image_path, "rb") as image_file:
         return base64.b64encode(image_file.read()).decode("utf-8")
 
-def _ask_ollama(prompt: str, image_paths: list[Path] = None, system_prompt: str = None) -> str:
+def _ask_ollama(prompt: str, image_paths: list[Path] = None, system_prompt: str = None, model: str = None) -> str:
     messages = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
@@ -29,43 +29,31 @@ def _ask_ollama(prompt: str, image_paths: list[Path] = None, system_prompt: str 
     messages.append(user_msg)
 
     data = {
-        "model": VLM_MODEL,
+        "model": model or (VLM_MODEL if image_paths else "orcarouter/Qwen3.8-27B-Uncensored:latest"),
         "messages": messages,
         "stream": False,
-        "keep_alive": 0,
-        "options": {"temperature": 0.1}
+        "options": {"temperature": 0.1, "num_ctx": 32768, "num_predict": 4096}
     }
     
     req = urllib.request.Request(OLLAMA_API_URL, data=json.dumps(data).encode("utf-8"), headers={"Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=120) as response:
+        with urllib.request.urlopen(req, timeout=300) as response:
             result = json.loads(response.read().decode("utf-8"))
-            return result.get("message", {}).get("content", "").strip()
+            msg = result.get("message", {}) or {}
+            content = (msg.get("content") or "").strip()
+            if not content and msg.get("thinking"):
+                content = str(msg.get("thinking")).strip()
+            return content
     except Exception as e:
         log.error(f"Ollama API error: {e}")
         return ""
 
 def identify_character_in_prompt(prompt: str) -> str | None:
-    """Uses a fast model (or just logic) to extract the character name if present."""
+    """Uses flagship model to extract the character name if present."""
     sys_prompt = "Extract ONLY the name of the character/celebrity/IP from the user's prompt. If there is no specific known character (just generic 'a man', 'a warrior'), return 'NONE'. Do not include any other text."
-    
-    data = {
-        "model": "qwen2.5:7b", # lightweight fast model
-        "messages": [
-            {"role": "system", "content": sys_prompt},
-            {"role": "user", "content": prompt}
-        ],
-        "stream": False,
-        "options": {"temperature": 0.0}
-    }
-    req = urllib.request.Request(OLLAMA_API_URL, data=json.dumps(data).encode("utf-8"), headers={"Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=30) as response:
-            res = json.loads(response.read().decode("utf-8")).get("message", {}).get("content", "").strip()
-            if res and res.upper() not in ["NONE", "NO", "FALSE"]:
-                return res
-    except Exception as e:
-        log.error(f"Failed to identify character: {e}")
+    res = _ask_ollama(prompt, system_prompt=sys_prompt, model="orcarouter/Qwen3.8-27B-Uncensored:latest")
+    if res and res.upper() not in ["NONE", "NO", "FALSE"]:
+        return res
     return None
 
 def fetch_reference_images(query: str, save_dir: Path, max_images: int = 1) -> list[Path]:

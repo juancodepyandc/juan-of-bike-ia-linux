@@ -488,9 +488,10 @@ if bpy.ops.object.mode_set.poll() is not False:
     except Exception:
         pass
 
-# Parent mesh to rig with automatic weights
+# Parent all kept meshes to rig with automatic weights
 bpy.ops.object.select_all(action="DESELECT")
-mesh.select_set(True)
+for _m_sel in [o for o in bpy.context.scene.objects if o.type == "MESH" and o.name in orig_mesh_names]:
+    _m_sel.select_set(True)
 rig.select_set(True)
 bpy.context.view_layer.objects.active = rig
 try:
@@ -500,18 +501,116 @@ except Exception as e:
     sys.exit(7)
 
 
-def _skin_ok(m):
+def _skin_ok(m, min_ratio=0.98):
     if len(m.vertex_groups) < 4:
         return False
     vs = m.data.vertices
-    step = max(1, len(vs) // 2000)
+    if len(vs) == 0:
+        return False
+    step = max(1, len(vs) // 2500)
     idx = range(0, len(vs), step)
-    counted = sum(1 for i in idx if len(vs[i].groups))
-    return counted > len(idx) * 0.25
+    counted = sum(1 for i in idx if sum(g.weight for g in vs[i].groups) > 0.05)
+    return counted >= len(idx) * min_ratio
 
 
-if not _skin_ok(mesh):
-    print("RIGIFY_INFO: bone-heat vide (mesh dense) -> proxy decime + transfert de poids")
+def _proximity_assign_mesh(target_mesh, idxs):
+    import numpy as np
+    if not idxs:
+        return
+    inv = target_mesh.matrix_world.inverted()
+    arm_mw = rig.matrix_world
+    minor = ("toe", "ear", "jaw", "tongue", "teeth", "eye", "brow", "lip",
+             "cheek", "nose", "forehead", "temple", "chin", "thumb",
+             "f_index", "f_middle", "f_ring", "f_pinky", "palm", "r_", "f_",
+             "breast", "pelvis")
+    bones = [b for b in rig.data.bones if b.use_deform
+             and not any(b.name.lower().replace("def-", "").startswith(p) for p in minor)]
+    if len(bones) < 4:
+        bones = [b for b in rig.data.bones if b.use_deform] or list(rig.data.bones)
+    n_all = len(target_mesh.data.vertices)
+    co = np.empty(n_all * 3, dtype=np.float64)
+    target_mesh.data.vertices.foreach_get("co", co)
+    co = co.reshape(n_all, 3)
+    sel = np.asarray(idxs, dtype=np.int64)
+    co = co[sel]
+    n = len(sel)
+    K = min(4, max(1, len(bones)))
+    dk = np.full((n, K), 1e18)
+    ik = np.zeros((n, K), dtype=np.int32)
+    for bi, b in enumerate(bones):
+        h = np.array(inv @ (arm_mw @ b.head_local))
+        t = np.array(inv @ (arm_mw @ b.tail_local))
+        ab = t - h
+        denom = float(ab.dot(ab)) or 1e-12
+        tt = np.clip(((co - h) @ ab) / denom, 0.0, 1.0)
+        proj = h + tt[:, None] * ab
+        d = np.linalg.norm(co - proj, axis=1)
+        worst = dk[:, K - 1]
+        better = d < worst
+        dk[better, K - 1] = d[better]
+        ik[better, K - 1] = bi
+        order = np.argsort(dk, axis=1)
+        dk = np.take_along_axis(dk, order, axis=1)
+        ik = np.take_along_axis(ik, order, axis=1)
+    eps = 1e-8
+    w = 1.0 / (dk + eps) ** 2
+    w = np.where(dk > 3.0 * (dk[:, :1] + eps), 0.0, w)
+    w_sum = w.sum(axis=1, keepdims=True)
+    w_sum = np.where(w_sum <= 1e-12, 1.0, w_sum)
+    w = w / w_sum
+    vg_by_name = {vg.name: vg for vg in target_mesh.vertex_groups}
+    vgs = []
+    for b in bones:
+        vg = vg_by_name.get(b.name)
+        if vg is None:
+            vg = target_mesh.vertex_groups.new(name=b.name)
+        vgs.append(vg)
+    buckets = {}
+    wq = np.round(w * 100.0) / 100.0
+    for vi in range(n):
+        assigned_any = False
+        for k in range(K):
+            if wq[vi, k] > 0.01:
+                buckets.setdefault((int(ik[vi, k]), float(wq[vi, k])), []).append(int(sel[vi]))
+                assigned_any = True
+        if not assigned_any:
+            buckets.setdefault((int(ik[vi, 0]), 1.0), []).append(int(sel[vi]))
+    for (bi, wt), vids in buckets.items():
+        vgs[bi].add(vids, wt, "REPLACE")
+    print("RIGIFY_INFO: proximite-os (%s): %d verts assignes sur %d os" % (target_mesh.name, n, len(bones)))
+
+
+def _ensure_partition_of_unity_skinning(target_mesh):
+    """Guarantees that 100.0% of vertices on `target_mesh` have valid deform weights
+    summing to 1.0 (eliminates the '4 arms / split ghost limb' bug where unweighted
+    vertices remain frozen at the rest pose during animation)."""
+    empty_idx = [i for i, v in enumerate(target_mesh.data.vertices)
+                 if sum(g.weight for g in v.groups) < 0.05]
+    if empty_idx:
+        print("RIGIFY_INFO: %s: %d/%d verts sans poids -> remplissage proximite integral"
+              % (target_mesh.name, len(empty_idx), len(target_mesh.data.vertices)))
+        _proximity_assign_mesh(target_mesh, empty_idx)
+    import bmesh as _bmpu
+    _bm_pu = _bmpu.new()
+    _bm_pu.from_mesh(target_mesh.data)
+    _dl_pu = _bm_pu.verts.layers.deform.verify()
+    for _v in _bm_pu.verts:
+        _dv = _v[_dl_pu]
+        _s = sum(_dv.values())
+        if _s > 1e-6 and abs(_s - 1.0) > 1e-4:
+            _inv = 1.0 / _s
+            for _gi in list(_dv.keys()):
+                _dv[_gi] = _dv[_gi] * _inv
+    _bm_pu.to_mesh(target_mesh.data)
+    _bm_pu.free()
+    target_mesh.data.update()
+    if not any(m2.type == "ARMATURE" for m2 in target_mesh.modifiers):
+        am = target_mesh.modifiers.new("aurora_arm", "ARMATURE")
+        am.object = rig
+
+
+if not _skin_ok(mesh, min_ratio=0.75):
+    print("RIGIFY_INFO: bone-heat partiel/vide (mesh dense) -> proxy decime + transfert de poids")
     dup = mesh.copy()
     dup.data = mesh.data.copy()
     bpy.context.scene.collection.objects.link(dup)
@@ -519,15 +618,6 @@ if not _skin_ok(mesh):
         dup.vertex_groups.remove(vg)
     for m2 in list(dup.modifiers):
         dup.modifiers.remove(m2)
-    # v113: proxy resolution UP. Prior tuning (40k decimate + voxel dim/60 +
-    # decimate 60k) collapsed a 1m humanoid to ~3400 polys, an arm cross-
-    # section had 2-3 voxels, so bone-heat merged forearm and hip weights.
-    # Result: mesh forearm/hand verts got hip weights and moved with the
-    # pelvis during walk (the v19 "cape at belt" effect). Denser proxy:
-    #   * initial decimate up to 200k (preserves geometry for remesh)
-    #   * voxel_size = dim / 220 → ~5mm on a 1m body → ~40-80k shell polys,
-    #     arm cross-section has ~10 voxels wide, forearm+hand resolvable
-    #   * second decimate ceiling raised to 120k so the resolution survives.
     if len(dup.data.polygons) > 200000:
         dec = dup.modifiers.new("dec", "DECIMATE")
         dec.ratio = 200000.0 / len(dup.data.polygons)
@@ -570,7 +660,7 @@ if not _skin_ok(mesh):
                                        selected_editable_objects=[dup, rig],
                                        selected_objects=[dup, rig]):
             bpy.ops.object.parent_set(type="ARMATURE_AUTO")
-        ok_proxy = _skin_ok(dup)
+        ok_proxy = _skin_ok(dup, min_ratio=0.25)
     except Exception as e:
         print("RIGIFY_INFO: bone-heat proxy echec: %s" % e)
     if ok_proxy:
@@ -618,10 +708,6 @@ if not _skin_ok(mesh):
                 assigned += 1
         bm.to_mesh(mesh.data)
         bm.free()
-        has_arm = any(m2.type == "ARMATURE" for m2 in mesh.modifiers)
-        if not has_arm:
-            am = mesh.modifiers.new("aurora_arm", "ARMATURE")
-            am.object = rig
         print("RIGIFY_INFO: transfert barycentrique BVH applique (%d/%d verts, %d groupes)"
               % (assigned, len(mesh.data.vertices), len(mesh.vertex_groups)))
     try:
@@ -629,124 +715,56 @@ if not _skin_ok(mesh):
     except Exception:
         pass
 
-    def _proximity_assign(idxs):
-        import numpy as np
-        inv = mesh.matrix_world.inverted()
-        arm_mw = rig.matrix_world
-        minor = ("toe", "ear", "jaw", "tongue", "teeth", "eye", "brow", "lip",
-                 "cheek", "nose", "forehead", "temple", "chin", "thumb",
-                 "f_index", "f_middle", "f_ring", "f_pinky", "palm", "r_", "f_",
-                 "breast", "pelvis")
-        bones = [b for b in rig.data.bones if b.use_deform
-                 and not any(b.name.lower().replace("def-", "").startswith(p) for p in minor)]
-        if len(bones) < 4:
-            bones = [b for b in rig.data.bones if b.use_deform] or list(rig.data.bones)
-        n_all = len(mesh.data.vertices)
-        co = np.empty(n_all * 3, dtype=np.float64)
-        mesh.data.vertices.foreach_get("co", co)
-        co = co.reshape(n_all, 3)
-        sel = np.asarray(idxs, dtype=np.int64)
-        co = co[sel]
-        n = len(sel)
-        K = 4
-        dk = np.full((n, K), 1e18)
-        ik = np.zeros((n, K), dtype=np.int32)
-        for bi, b in enumerate(bones):
-            h = np.array(inv @ (arm_mw @ b.head_local))
-            t = np.array(inv @ (arm_mw @ b.tail_local))
-            ab = t - h
-            denom = float(ab.dot(ab)) or 1e-12
-            tt = np.clip(((co - h) @ ab) / denom, 0.0, 1.0)
-            proj = h + tt[:, None] * ab
-            d = np.linalg.norm(co - proj, axis=1)
-            worst = dk[:, K - 1]
-            better = d < worst
-            dk[better, K - 1] = d[better]
-            ik[better, K - 1] = bi
-            order = np.argsort(dk, axis=1)
-            dk = np.take_along_axis(dk, order, axis=1)
-            ik = np.take_along_axis(ik, order, axis=1)
-        eps = 1e-8
-        w = 1.0 / (dk + eps) ** 2
-        w = np.where(dk > 3.0 * (dk[:, :1] + eps), 0.0, w)
-        w = w / w.sum(axis=1, keepdims=True)
-        vg_by_name = {vg.name: vg for vg in mesh.vertex_groups}
-        vgs = []
-        for b in bones:
-            vg = vg_by_name.get(b.name)
-            if vg is None:
-                vg = mesh.vertex_groups.new(name=b.name)
-            vgs.append(vg)
-        buckets = {}
-        wq = np.round(w * 50) / 50.0
-        for vi in range(n):
-            for k in range(K):
-                if wq[vi, k] > 0.015:
-                    buckets.setdefault((int(ik[vi, k]), float(wq[vi, k])), []).append(int(sel[vi]))
-        for (bi, wt), vids in buckets.items():
-            vgs[bi].add(vids, wt, "ADD")
-        print("RIGIFY_INFO: proximite-os: %d verts assignes sur %d os" % (n, len(bones)))
+# Unconditionally enforce 100% Partition-of-Unity skinning across ALL kept meshes
+for _mo_pu in [o for o in bpy.context.scene.objects if o.type == "MESH" and o.name in orig_mesh_names]:
+    _ensure_partition_of_unity_skinning(_mo_pu)
+if not _skin_ok(mesh, min_ratio=0.98):
+    print("RIGIFY_ERROR: skinning toujours incomplet apres partition-of-unity")
+    sys.exit(8)
 
-    empty_idx = [i for i, v in enumerate(mesh.data.vertices)
-                 if sum(g.weight for g in v.groups) < 0.05]
-    if empty_idx:
-        print("RIGIFY_INFO: %d verts sans poids -> remplissage proximite" % len(empty_idx))
-        _proximity_assign(empty_idx)
-    if not any(m2.type == "ARMATURE" for m2 in mesh.modifiers):
-        am = mesh.modifiers.new("aurora_arm", "ARMATURE")
-        am.object = rig
-    if not _skin_ok(mesh):
-        print("RIGIFY_ERROR: skinning toujours vide apres proxy")
-        sys.exit(8)
-
-# v113: ANATOMICAL WEIGHT CAP. After Rigify auto-weights + proxy transfer,
-# the arm DEF- bones (upper_arm, forearm, hand) often bleed weight into
-# distant shirt/torso verts — the proxy remesh at ~49k polys represents
-# each arm with only ~200 verts, so bone-heat merges arm/shirt boundaries.
-# Result at animation: shirt mesh drags with the arm swing (the "cape/
-# stretched arms" pattern seen in v22/v23/v24 renders). Real fix = compute
-# per-vertex distance to each arm bone's line segment in rest pose; if
-# distance exceeds ~2x the arm cross-section, ZERO the arm-bone weight.
-# Anatomical fact: shirt verts on the chest are >12cm from any arm bone
-# center, real skin/muscle within the arm is <5cm from the bone. Threshold
-# scales with mesh body height. Purely geometric, no fudge factors.
+# v114: SPINE-RELATIVE ANATOMICAL WEIGHT CAP.
+# Only prune arm/leg weights on vertices that are BOTH outside the limb radius AND
+# closer to the central torso/spine axis than to the limb bone segment. This prevents
+# wide cartoon arms (e.g. Sharko), broad shoulders, or muscular limbs from losing their
+# outer surface weights, and immediately re-applies partition-of-unity so NO vertex
+# ever ends up with 0 weight (eliminating ghost/split limbs).
 if metarig_kind == "human":
     try:
         import numpy as _npc
         import mathutils as _mu
 
         _bh = mx.z - mn.z  # body height
-        # radius of influence for arm bones (vertices within this from the
-        # bone segment KEEP their weight; farther verts get capped)
-        _arm_radius = max(_bh * 0.055, 0.045)  # 5.5% body height, min 45mm
-        _leg_radius = max(_bh * 0.08, 0.060)   # legs are bigger (thighs)
+        _arm_radius = max(_bh * 0.085, 0.065)
+        _leg_radius = max(_bh * 0.105, 0.075)
 
         _cap_bones = {
-            # arm bones — should NEVER weight shirt/torso/legs
-            "DEF-upper_arm.L":    ("arm", _arm_radius * 1.2),  # shoulder region wider
-            "DEF-upper_arm.L.001": ("arm", _arm_radius * 1.1),
-            "DEF-upper_arm.R":    ("arm", _arm_radius * 1.2),
-            "DEF-upper_arm.R.001": ("arm", _arm_radius * 1.1),
-            "DEF-forearm.L":      ("arm", _arm_radius),
-            "DEF-forearm.L.001":  ("arm", _arm_radius),
-            "DEF-forearm.R":      ("arm", _arm_radius),
-            "DEF-forearm.R.001":  ("arm", _arm_radius),
-            "DEF-hand.L":         ("arm", _arm_radius * 0.9),
-            "DEF-hand.R":         ("arm", _arm_radius * 0.9),
-            # leg bones — should NEVER weight arms/torso
-            "DEF-thigh.L":        ("leg", _leg_radius),
-            "DEF-thigh.L.001":    ("leg", _leg_radius),
-            "DEF-thigh.R":        ("leg", _leg_radius),
-            "DEF-thigh.R.001":    ("leg", _leg_radius),
-            "DEF-shin.L":         ("leg", _leg_radius * 0.85),
-            "DEF-shin.L.001":     ("leg", _leg_radius * 0.85),
-            "DEF-shin.R":         ("leg", _leg_radius * 0.85),
-            "DEF-shin.R.001":     ("leg", _leg_radius * 0.85),
-            "DEF-foot.L":         ("leg", _leg_radius * 0.75),
-            "DEF-foot.R":         ("leg", _leg_radius * 0.75),
+            "DEF-upper_arm.L":     ("arm", _arm_radius * 1.25),
+            "DEF-upper_arm.L.001": ("arm", _arm_radius * 1.15),
+            "DEF-upper_arm.R":     ("arm", _arm_radius * 1.25),
+            "DEF-upper_arm.R.001": ("arm", _arm_radius * 1.15),
+            "DEF-forearm.L":       ("arm", _arm_radius),
+            "DEF-forearm.L.001":   ("arm", _arm_radius),
+            "DEF-forearm.R":       ("arm", _arm_radius),
+            "DEF-forearm.R.001":   ("arm", _arm_radius),
+            "DEF-hand.L":          ("arm", _arm_radius * 0.95),
+            "DEF-hand.R":          ("arm", _arm_radius * 0.95),
+            "DEF-thigh.L":         ("leg", _leg_radius),
+            "DEF-thigh.L.001":     ("leg", _leg_radius),
+            "DEF-thigh.R":         ("leg", _leg_radius),
+            "DEF-thigh.R.001":     ("leg", _leg_radius),
+            "DEF-shin.L":          ("leg", _leg_radius * 0.90),
+            "DEF-shin.L.001":      ("leg", _leg_radius * 0.90),
+            "DEF-shin.R":          ("leg", _leg_radius * 0.90),
+            "DEF-shin.R.001":      ("leg", _leg_radius * 0.90),
+            "DEF-foot.L":          ("leg", _leg_radius * 0.85),
+            "DEF-foot.R":          ("leg", _leg_radius * 0.85),
         }
 
         _cap_stats = {"capped_bones": 0, "capped_verts_total": 0}
+        _arm_mw = _npc.array(rig.matrix_world, dtype=_npc.float32)
+        _spine_b0 = rig.data.bones.get("DEF-spine")
+        _spine_b1 = rig.data.bones.get("DEF-spine.003") or rig.data.bones.get("DEF-spine.002") or _spine_b0
+
         for _mo in [o for o in bpy.context.scene.objects
                     if o.type == "MESH" and o.name in orig_mesh_names]:
             _nvt = len(_mo.data.vertices)
@@ -756,16 +774,26 @@ if metarig_kind == "human":
             _mo.data.vertices.foreach_get("co", _co)
             _co = _co.reshape(_nvt, 3)
             _mw = _npc.array(_mo.matrix_world, dtype=_npc.float32)
-            _wco = _co @ _mw[:3, :3].T + _mw[:3, 3]  # world vertex coords
+            _wco = _co @ _mw[:3, :3].T + _mw[:3, 3]
 
-            _arm_mw = _npc.array(rig.matrix_world, dtype=_npc.float32)
+            # Distance to central spine segment in world space
+            if _spine_b0 is not None and _spine_b1 is not None:
+                _sh = _npc.array(_arm_mw @ _npc.array(_spine_b0.head_local.to_4d()))[:3]
+                _st = _npc.array(_arm_mw @ _npc.array(_spine_b1.tail_local.to_4d()))[:3]
+                _sab = _st - _sh
+                _sl2 = float(_sab @ _sab) or 1e-9
+                _stt = _npc.clip(((_wco - _sh) @ _sab) / _sl2, 0.0, 1.0)
+                _sproj = _sh + _stt[:, None] * _sab
+                _dist_spine = _npc.linalg.norm(_wco - _sproj, axis=1)
+            else:
+                _dist_spine = _npc.full(_nvt, 1e9, dtype=_npc.float32)
+
             _vg_by_name = {vg.name: vg for vg in _mo.vertex_groups}
             for _bname, (_kind, _radius) in _cap_bones.items():
                 _b = rig.data.bones.get(_bname)
                 _vg = _vg_by_name.get(_bname)
                 if _b is None or _vg is None:
                     continue
-                # bone endpoints in world coords
                 _h = _npc.array(_arm_mw @ _npc.array(_b.head_local.to_4d()))[:3]
                 _t = _npc.array(_arm_mw @ _npc.array(_b.tail_local.to_4d()))[:3]
                 _ab = _t - _h
@@ -773,12 +801,13 @@ if metarig_kind == "human":
                 _tt = _npc.clip(((_wco - _h) @ _ab) / _l2, 0.0, 1.0)
                 _proj = _h + _tt[:, None] * _ab
                 _dist = _npc.linalg.norm(_wco - _proj, axis=1)
-                _cap_mask = _dist > _radius
-                # capped verts: remove from this vertex group
+                if _kind == "arm":
+                    _cap_mask = (_dist > _radius) & (_dist > 1.20 * _dist_spine)
+                else:
+                    _cap_mask = (_dist > _radius) & (_dist > 1.35 * _dist_spine)
                 _cap_idx = _npc.where(_cap_mask)[0]
                 if len(_cap_idx) == 0:
                     continue
-                # sample: only cap verts that actually had weight in this group
                 _cap_list = [int(i) for i in _cap_idx]
                 try:
                     _vg.remove(_cap_list)
@@ -787,27 +816,11 @@ if metarig_kind == "human":
                 except Exception:
                     pass
 
-            # After capping, renormalize each vertex's remaining weights so
-            # they sum to 1 (Blender then respects the new distribution).
-            import bmesh as _bmr
-            _bm3 = _bmr.new()
-            _bm3.from_mesh(_mo.data)
-            _dl = _bm3.verts.layers.deform.verify()
-            _renorm = 0
-            for _v in _bm3.verts:
-                _dv = _v[_dl]
-                _s = sum(_dv.values())
-                if _s <= 1e-6 or abs(_s - 1.0) < 1e-4:
-                    continue
-                _inv = 1.0 / _s
-                for _gi in list(_dv.keys()):
-                    _dv[_gi] = _dv[_gi] * _inv
-                _renorm += 1
-            _bm3.to_mesh(_mo.data)
-            _bm3.free()
-            _mo.data.update()
-            print("RIGIFY_INFO: anatomical cap on %s: %d bone-vert prunes, %d verts renormalized"
-                  % (_mo.name, _cap_stats["capped_verts_total"], _renorm))
+            # Re-verify Partition-of-Unity so any vertex whose weights were all pruned
+            # is immediately assigned to its nearest deform bone (0 unweighted vertices!)
+            _ensure_partition_of_unity_skinning(_mo)
+            print("RIGIFY_INFO: spine-relative anatomical cap on %s: %d bone-vert prunes (100%% partition-of-unity preserved)"
+                  % (_mo.name, _cap_stats["capped_verts_total"]))
     except Exception as _cap_e:
         print("RIGIFY_INFO: anatomical cap failed: %s" % _cap_e)
         import traceback as _tbc
@@ -1084,8 +1097,8 @@ elif motion_path and os.path.isfile(motion_path):
         # ("upper_arm"/"hand" for arms, "thigh"/"foot" for legs) decide the
         # IK/FK setting from which bone family the motion drives.
         _limb_targets = {
-            "IK-arm.L":  ("hand_ik.L", ("upper_arm_parent.L",), "IK_FK"),
-            "IK-arm.R":  ("hand_ik.R", ("upper_arm_parent.R",), "IK_FK"),
+            "IK-arm.L":  ("hand_ik.L", ("upper_arm_parent.L", "front_thigh_parent.L"), "IK_FK"),
+            "IK-arm.R":  ("hand_ik.R", ("upper_arm_parent.R", "front_thigh_parent.R"), "IK_FK"),
             "IK-leg.L":  ("foot_ik.L", ("thigh_parent.L",), "IK_FK"),
             "IK-leg.R":  ("foot_ik.R", ("thigh_parent.R",), "IK_FK"),
         }
@@ -1094,8 +1107,8 @@ elif motion_path and os.path.isfile(motion_path):
         for _ins in _compiled.get("instructions") or []:
             _instr_bones.add(str(_ins.get("bone") or ""))
         _uses_ik = {
-            "IK-arm.L": "hand_ik.L" in _instr_bones,
-            "IK-arm.R": "hand_ik.R" in _instr_bones,
+            "IK-arm.L": ("hand_ik.L" in _instr_bones) or ("front_foot_ik.L" in _instr_bones),
+            "IK-arm.R": ("hand_ik.R" in _instr_bones) or ("front_foot_ik.R" in _instr_bones),
             "IK-leg.L": "foot_ik.L" in _instr_bones,
             "IK-leg.R": "foot_ik.R" in _instr_bones,
         }
@@ -1135,7 +1148,7 @@ elif motion_path and os.path.isfile(motion_path):
         # carries them across every frame of the walk cycle. Skipped when
         # metarig != human.
         _motion_id = str(_compiled.get("id") or "").lower()
-        _is_locomotion = any(t in _motion_id for t in ("walk", "run", "crawl", "march"))
+        _is_locomotion = any(t in _motion_id for t in ("walk", "run", "crawl", "march", "trot", "gallop", "prowl"))
         if metarig_kind == "human" and (_motion_id or _is_locomotion):
             try:
                 if bpy.context.mode != "OBJECT":
@@ -1256,6 +1269,92 @@ elif motion_path and os.path.isfile(motion_path):
                 bpy.ops.object.mode_set(mode="OBJECT")
             except Exception as _polish_e:
                 print("RIGIFY_INFO: post-motion polish partial: %s" % _polish_e)
+
+        elif metarig_kind == "quadruped":
+            # v114: UNIVERSAL QUADRUPED & MULTI-TAIL DEFORM-BONE KINEMATICS.
+            # Ensures that on any quadruped / creature (wolf, fox, kitsune, feline,
+            # dragon, invented 4-legged creature), ALL 4 deform leg chains
+            # (DEF-front_thigh.L/R, DEF-front_shin.L/R, DEF-thigh.L/R, DEF-shin.L/R),
+            # the spine/head chain (DEF-spine*, DEF-neck*, DEF-head), and the entire
+            # tail chain (DEF-tail*) have their constraints muted and receive true
+            # diagonal-gait / travelling-wave harmonic keyframes so no limb or tail
+            # is ever left static.
+            try:
+                import math as _mq
+                if bpy.context.mode != "OBJECT":
+                    bpy.ops.object.mode_set(mode="OBJECT")
+                bpy.ops.object.select_all(action="DESELECT")
+                rig.select_set(True)
+                bpy.context.view_layer.objects.active = rig
+                bpy.ops.object.mode_set(mode="POSE")
+
+                _fps_q = max(12, int(_compiled.get("fps") or 24))
+                _fc_q = max(24, int(_compiled.get("frame_count") or 24))
+                bpy.context.scene.frame_start = 1
+                bpy.context.scene.frame_end = _fc_q
+
+                # 1) Travelling-wave tail kinematics across all DEF-tail* bones
+                _tail_bones = sorted(
+                    [pb for pb in rig.pose.bones if pb.name.lower().startswith("def-tail")],
+                    key=lambda b: b.name,
+                )
+                for _ti, _tpb in enumerate(_tail_bones):
+                    for _c in _tpb.constraints:
+                        _c.mute = True
+                    _tpb.rotation_mode = "XYZ"
+                    _phase_lag = _ti * 0.55
+                    _amp_z = 0.28 * (1.0 + 0.12 * _ti)
+                    _amp_x = 0.14 * (1.0 + 0.08 * _ti)
+                    for _f in range(1, _fc_q + 1):
+                        _theta = 2.0 * _mq.pi * (_f - 1) / float(_fc_q)
+                        _tpb.rotation_euler.z = _amp_z * _mq.sin(_theta - _phase_lag)
+                        _tpb.rotation_euler.x = _amp_x * _mq.cos(2.0 * _theta - _phase_lag)
+                        _tpb.keyframe_insert(data_path="rotation_euler", index=2, frame=_f)
+                        _tpb.keyframe_insert(data_path="rotation_euler", index=0, frame=_f)
+
+                # 2) Diagonal quadruped 4-limb coordination (front L + hind R in phase,
+                #    front R + hind L offset by pi) + knee/hock flexion lag
+                _quad_limb_defs = [
+                    ("DEF-front_thigh.L", 0.0,  0.34 if _is_locomotion else 0.10),
+                    ("DEF-front_shin.L",  0.5, -0.26 if _is_locomotion else -0.08),
+                    ("DEF-front_thigh.R", _mq.pi, 0.34 if _is_locomotion else 0.10),
+                    ("DEF-front_shin.R",  _mq.pi + 0.5, -0.26 if _is_locomotion else -0.08),
+                    ("DEF-thigh.L",       _mq.pi, 0.36 if _is_locomotion else 0.10),
+                    ("DEF-shin.L",        _mq.pi + 0.5, 0.28 if _is_locomotion else 0.08),
+                    ("DEF-thigh.R",       0.0,  0.36 if _is_locomotion else 0.10),
+                    ("DEF-shin.R",        0.5,  0.28 if _is_locomotion else 0.08),
+                ]
+                _quad_baked = 0
+                for _qb_name, _q_phase, _q_amp in _quad_limb_defs:
+                    _qpb = rig.pose.bones.get(_qb_name)
+                    if _qpb is None:
+                        continue
+                    for _c in _qpb.constraints:
+                        _c.mute = True
+                    _qpb.rotation_mode = "XYZ"
+                    for _f in range(1, _fc_q + 1):
+                        _theta = 2.0 * _mq.pi * (_f - 1) / float(_fc_q)
+                        _qpb.rotation_euler.x = _q_amp * _mq.sin(_theta + _q_phase)
+                        _qpb.keyframe_insert(data_path="rotation_euler", index=0, frame=_f)
+                    _quad_baked += 1
+
+                # 3) Spine breathing & head/ear alertness
+                for _sp_name, _sp_amp in (("DEF-spine.002", 0.06), ("DEF-spine.003", 0.05), ("DEF-head", 0.10)):
+                    _spb = rig.pose.bones.get(_sp_name)
+                    if _spb is None:
+                        continue
+                    for _c in _spb.constraints:
+                        _c.mute = True
+                    _spb.rotation_mode = "XYZ"
+                    for _f in range(1, _fc_q + 1):
+                        _theta = 2.0 * _mq.pi * (_f - 1) / float(_fc_q)
+                        _spb.rotation_euler.x = _sp_amp * _mq.sin(2.0 * _theta)
+                        _spb.keyframe_insert(data_path="rotation_euler", index=0, frame=_f)
+                bpy.ops.object.mode_set(mode="OBJECT")
+                print("RIGIFY_INFO: quadruped 4-limb (%d bones) + travelling-wave tail (%d bones) baked (%d frames)"
+                      % (_quad_baked, len(_tail_bones), _fc_q))
+            except Exception as _quad_e:
+                print("RIGIFY_INFO: quadruped polish partial: %s" % _quad_e)
     except Exception as exc:
         print("MOTION_BAKE_WARN: %s" % exc)
 
@@ -1365,14 +1464,14 @@ def _run_mia(
     mia_python: str,
     rest_pose_type: str = "A-pose",
     reset_to_rest: bool = False,
-    no_fingers: bool = True,
+    no_fingers: bool = False,
     timeout_s: int = 900,
 ) -> tuple[str, str] | tuple[None, str]:
-    """Drive `scratchpad/mia_rig.py` under the mia conda env. Returns
-    (output_glb_path, log) on success or (None, reason) on failure. The
-    output GLB has been converted from FBX with FBX2glTF native (embedded in
-    MIA's `vis_blender`), preserving fine geometry and orientation."""
-    runner = os.path.join(str(WORKSPACE.parent), "scratchpad", "mia_rig.py")
+    """Drive `mia_rig.py` under the mia conda env. Returns
+    (output_glb_path, log) on success or (None, reason) on failure."""
+    runner = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mia_rig.py")
+    if not os.path.isfile(runner):
+        runner = os.path.join(str(WORKSPACE.parent), "scratchpad", "mia_rig.py")
     if not os.path.isfile(runner):
         return None, f"MIA runner missing: {runner}"
     # Stage the input inside output_dir so MIA writes side-outputs there,
@@ -1532,6 +1631,18 @@ def _apply_mia_motion(mia_glb: str, out_glb: str, motion_text: str):
     return ok, f"motion_en='{motion_en}' | " + log
 
 
+def _has_mixamo_skin(glb_path: str) -> bool:
+    """Détecte si le GLB possède déjà une armature Mixamo/MIA (52 os) skinnée."""
+    try:
+        from pygltflib import GLTF2
+        g = GLTF2().load(glb_path)
+        if not g.skins:
+            return False
+        return any("mixamorig" in (n.name or "").lower() for n in (g.nodes or []))
+    except Exception:
+        return False
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--input",  required=True, help="input GLB path")
@@ -1547,16 +1658,33 @@ def main() -> int:
     ap.add_argument("--mia-rest-pose", default="A-pose", choices=("T-pose", "A-pose", "No"), help="rest pose hint for MIA")
     args = ap.parse_args()
 
+    already_mia_rigged = os.path.isfile(args.input) and _has_mixamo_skin(os.path.abspath(args.input))
+    import atexit as _atexit
+    _temp_cleanup_paths: list[str] = []
+
+    def _cleanup_rigify_temps() -> None:
+        for _p in _temp_cleanup_paths:
+            try:
+                if os.path.isdir(_p):
+                    shutil.rmtree(_p, ignore_errors=True)
+                elif os.path.isfile(_p):
+                    os.unlink(_p)
+            except Exception:
+                pass
+
+    _atexit.register(_cleanup_rigify_temps)
+
     # SOUDER L'ENTREE AVANT TOUTE VOIE DE RIG. TRELLIS sort la surface en ~78k ilots
     # disjoints; sous une deformation ils glissent -> jambe/vetement dechires. La
     # soudure interne du script Rigify ne couvrait PAS la voie MIA (celle qui applique
     # le mouvement MoMask), donc une vraie marche dechirait quand meme. On soude donc
     # ICI, en amont: MIA comme Rigify recoivent un maillage CONNEXE. Les doublons
     # partagent l'UV -> texture intacte (verifie: 78169->12 ilots, rendu identique).
-    if os.environ.get("AURORA_RIG_WELD", "1") == "1" and os.path.isfile(args.input):
+    if not already_mia_rigged and os.environ.get("AURORA_RIG_WELD", "1") == "1" and os.path.isfile(args.input):
         try:
             import mesh_weld
             _welded = os.path.splitext(os.path.abspath(args.output))[0] + "_pre_weld.glb"
+            _temp_cleanup_paths.append(_welded)
             os.makedirs(os.path.dirname(_welded), exist_ok=True)
             _wr = mesh_weld.weld(os.path.abspath(args.input), _welded, dist=0.0008)
             if _wr.get("ok") and os.path.isfile(_welded):
@@ -1577,9 +1705,10 @@ def main() -> int:
     # MIA importe args.input directement, sans jamais passer par le script
     # Blender/Rigify plus bas: une correction qui ne vivrait que dans ce
     # script-la serait du code mort pour --use-mia (constate).
-    if os.environ.get("AURORA_RIG_UPRIGHT", "1") == "1" and os.path.isfile(args.input):
+    if not already_mia_rigged and os.environ.get("AURORA_RIG_UPRIGHT", "1") == "1" and os.path.isfile(args.input):
         try:
             _upright_out = os.path.splitext(os.path.abspath(args.output))[0] + "_pre_upright.glb"
+            _temp_cleanup_paths.append(_upright_out)
             os.makedirs(os.path.dirname(_upright_out), exist_ok=True)
             _ur = redresser_pca(os.path.abspath(args.input), _upright_out)
             if _ur.get("ok") and _ur.get("redresse"):
@@ -1607,15 +1736,20 @@ def main() -> int:
         if not os.path.isfile(input_abs):
             print(json.dumps({"ok": False, "error": f"input GLB missing: {input_abs}"}))
             return 11
-        if _mia_available(args.mia_root, args.mia_python):
+        if already_mia_rigged or _mia_available(args.mia_root, args.mia_python):
             os.makedirs(os.path.dirname(output_abs), exist_ok=True)
             mia_out_dir = os.path.join(os.path.dirname(output_abs), "mia_work")
-            produced, mia_log = _run_mia(
-                input_abs, mia_out_dir, args.mia_root, args.mia_python,
-                rest_pose_type=args.mia_rest_pose,
-                reset_to_rest=False,   # KEEP A-pose weights — natural walk swing
-                no_fingers=True,       # humain has hands closed/at sides
-            )
+            _temp_cleanup_paths.append(mia_out_dir)
+            if already_mia_rigged:
+                produced = input_abs
+                mia_log = "Entrée déjà skinnée Mixamo/MIA (52 os) — réutilisation directe du squelette."
+            else:
+                produced, mia_log = _run_mia(
+                    input_abs, mia_out_dir, args.mia_root, args.mia_python,
+                    rest_pose_type=args.mia_rest_pose,
+                    reset_to_rest=False,
+                    no_fingers=False,      # Keep all 52 Mixamo bones including 30 finger bones
+                )
             print("--- MIA OUTPUT ---", file=sys.stderr)
             print(mia_log if mia_log else "(no log)", file=sys.stderr)
             print("------------------", file=sys.stderr)
@@ -1664,6 +1798,11 @@ def main() -> int:
                             print("MIA_WALK_INFO: fallback marche echoue -> rig sans animation. " + wlog, file=sys.stderr)
                 try:
                     shutil.copyfile(final_src, output_abs)
+                    try:
+                        from pbr_cartography import transfer_pbr_from_source_glb
+                        transfer_pbr_from_source_glb(input_abs, output_abs)
+                    except Exception:
+                        pass
                 except Exception as e:
                     print(json.dumps({"ok": False, "error": f"MIA output copy failed: {e}"}))
                     return 16
@@ -1736,6 +1875,11 @@ def main() -> int:
     print(out, file=sys.stderr)
     print("----------------------", file=sys.stderr)
     if "RIGIFY_OK" in out and os.path.isfile(output_abs):
+        try:
+            from pbr_cartography import transfer_pbr_from_source_glb
+            transfer_pbr_from_source_glb(input_abs, output_abs)
+        except Exception:
+            pass
         url = "/" + os.path.relpath(output_abs, os.path.join(str(WORKSPACE), "public")).replace(os.sep, "/") \
             if output_abs.startswith(os.path.join(str(WORKSPACE), "public") + os.sep) else None
         print(json.dumps({

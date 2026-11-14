@@ -1,4 +1,4 @@
-import { analyzePromptOntologySync, translateFrenchSubjectToEnglish } from './cognitivePromptDirector.ts'
+import { analyzePromptOntologyOpenWorld, analyzePromptOntologySync, translateFrenchSubjectToEnglish } from './cognitivePromptDirector.ts'
 
 export type ImageBrief = {
   subject: string
@@ -805,9 +805,9 @@ export async function expandHumanImagePromptWithAI(
   const looksLikeStyleSwitch =
     options.mode === 'style_transfer' ||
     (Boolean(options.hasReference) &&
-      /\b(en style|style |version |en anime|en manga|en photo|en peinture|en pixel|en 3d|en dessin|en comics|en aquarelle|transforme en|passe en)\b/.test(norm))
+      /\b(en style|style |version |en anime|en manga|en photo|en peinture|en pixel|en 3d|en dessin|en comics|en aquarelle|en figurine|en cartoon|transforme[- ]?(?:le|la|les)? en|passe en)\b/.test(norm))
 
-  const ontology = analyzePromptOntologySync(trimmed, {
+  const ontology = await analyzePromptOntologyOpenWorld(trimmed, {
     targetModule: 'image',
     modeHint:
       options.mode === 'edit' || looksLikeStyleSwitch
@@ -822,7 +822,7 @@ export async function expandHumanImagePromptWithAI(
 
   const effectiveMode: HumanPromptIntentMode = looksLikeReplicateRequest
     ? 'replicate'
-    : looksLikeStyleSwitch
+    : looksLikeStyleSwitch || ontology.effectiveRenderMode === 'hybrid_real_to_stylized'
       ? 'style_transfer'
       : ontology.operationMode === 'modification'
         ? 'edit'
@@ -849,12 +849,16 @@ export async function expandHumanImagePromptWithAI(
     try {
       const styleLabel =
         ontology.effectiveRenderMode === 'native_anime_stylized'
-          ? 'NATIVE ANIME / MANGA STYLIZED (cel-shaded anime aesthetics, anime proportions, ZERO realistic skin pores)'
-          : ontology.effectiveRenderMode === 'hybrid_anime_with_real_textures'
-            ? 'HYBRID ANIME + REAL HUMAN SKIN TEXTURES (preserve iconic anime silhouette/hair/costume, apply realistic human skin pores and physical fabrics)'
-            : options.requestedStyle && options.requestedStyle !== 'none'
-              ? options.requestedStyle
-              : 'NATIVE PHOTOREALISTIC (authentic physical materials, natural optics, realistic skin/surface micro-texture)'
+          ? `NATIVE ANIME / CARTOON STYLIZED (${ontology.styleDirectiveEn})`
+          : ontology.effectiveRenderMode === 'native_game_stylized'
+            ? `NATIVE VIDEO GAME / 3D ENGINE FIDELITY (${ontology.styleDirectiveEn})`
+            : ontology.effectiveRenderMode === 'hybrid_real_to_stylized'
+              ? `TARGET STYLIZED / MATERIAL TRANSFORMATION (${ontology.styleDirectiveEn})`
+              : ontology.effectiveRenderMode === 'hybrid_anime_with_real_textures'
+                ? 'HYBRID ANIME + REAL HUMAN SKIN TEXTURES (preserve iconic anime silhouette/hair/costume, apply realistic human skin pores and physical fabrics)'
+                : options.requestedStyle && options.requestedStyle !== 'none'
+                  ? options.requestedStyle
+                  : 'NATIVE PHOTOREALISTIC (authentic physical materials, natural optics, realistic skin/surface micro-texture)'
       const refBlock = options.referenceVisionSummary
         ? `\nREFERENCE IMAGE VISUAL ANALYSIS:\n${options.referenceVisionSummary.trim()}\n`
         : ''

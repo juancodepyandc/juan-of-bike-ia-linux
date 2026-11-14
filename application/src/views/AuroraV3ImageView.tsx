@@ -11,6 +11,7 @@
 import { lazy, Suspense, useState } from 'react'
 import { useImageViewLogic, DIMENSIONS, type DimensionId } from '../hooks/useImageViewLogic.ts'
 import { useFileDrop } from '../hooks/useFileDrop.ts'
+import ReinforcedModelBar from '../components/ReinforcedModelBar.tsx'
 import VoicePushToTalk from '../components/VoicePushToTalk.tsx'
 
 const InpaintingPanel = lazy(() => import('../components/InpaintingPanel'))
@@ -77,10 +78,11 @@ export default function AuroraV3ImageView() {
       </div>
       <div style={{
         position: 'absolute', top: 78, left: 36, fontStyle: 'italic',
-        fontSize: 14, color: '#3a2a1a',
+        fontSize: 14, color: '#3a2a1a', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
       }}>
-        FLUX 1.dev · seed {I.seed || '0xRND'} · style {I.style} · {dim.w}×{dim.h}
-        {I.previewIntent.isEditIntent && ` · ✂ ${I.previewIntent.editContract.label} — ${I.editEngine === 'kontext' ? 'Kontext (édition réelle)' : 'img2img (approximatif)'}`}
+        <ReinforcedModelBar activeModule="image" />
+        <span>seed {I.seed || '0xRND'} · style {I.style} · {dim.w}×{dim.h}</span>
+        {I.previewIntent.isEditIntent && ` · ✂ ${I.previewIntent.editContract.label}`}
         {I.generating && ' · ✏ rendu en cours…'}
         {I.progress && ` · ${I.progress}`}
       </div>

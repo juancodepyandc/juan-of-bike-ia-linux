@@ -257,6 +257,7 @@ def cowork_ext_version():
         # Fallbacks legacy (DEPRECATED) — gardes pour ne pas casser un
         # environnement deja installe sur l ancien dossier.
         pathlib.Path(WORKSPACE) / "aurora-connect-extension" / "manifest.json",
+        pathlib.Path(WORKSPACE).parent / "interface" / "extension" / "extension_chrome" / "manifest.json",
         pathlib.Path(WORKSPACE).parent / "extension_chrome" / "manifest.json",
         pathlib.Path(WORKSPACE).parent / "application" / "aurora-connect-extension" / "manifest.json",
     ]
@@ -326,6 +327,10 @@ def dev_reload_endpoint():
         if os.name == "nt":
             _respawn_bridge_async("dev reload endpoint")
             return
+        try:
+            os.closerange(3, 4096)
+        except Exception:
+            pass
         os.execv(sys.executable, [sys.executable] + sys.argv)
 
     threading.Thread(target=do_exec, daemon=True).start()
@@ -369,6 +374,10 @@ def _bridge_self_watch_loop():
                 last_mtime = cur_mtime
                 continue
             try:
+                try:
+                    os.closerange(3, 4096)
+                except Exception:
+                    pass
                 os.execv(sys.executable, [sys.executable] + sys.argv)
             except Exception as e:  # noqa: BLE001
                 print(f"[bridge self-watch] execv echec: {e}", flush=True)
@@ -406,14 +415,14 @@ def _start_self_watch_once():
 # ---------------------------------------------------------------------
 _WARMUP_STATE: "dict[str, object]" = {
     "state": "pending",
-    "model": "qwen3:14b",
+    "model": "orcarouter/Qwen3.8-27B-Uncensored:latest",
     "latency_ms": None,
     "ts": None,
     "error": None,
 }
 
 
-def _ollama_warmup_loop(model: str = "qwen3:14b") -> None:
+def _ollama_warmup_loop(model: str = "orcarouter/Qwen3.8-27B-Uncensored:latest") -> None:
     """Fire a tiny prompt at Ollama to amortize cold-start. Daemon-only."""
     import time as _time
     _WARMUP_STATE["state"] = "pending"
@@ -433,10 +442,17 @@ def _ollama_warmup_loop(model: str = "qwen3:14b") -> None:
             _WARMUP_STATE["ts"] = _time.time()
             return
         # Tiny prompt — max 4 tokens out, 1s temp, deterministic.
+        exec_model = model
+        try:
+            from agi_core.flagship_council import resolve_installed_flagship_model
+            exec_model = resolve_installed_flagship_model(model)
+        except Exception:
+            exec_model = model
         payload = {
-            "model": model,
+            "model": exec_model,
             "prompt": "ok",
             "stream": False,
+            "think": False,
             "options": {"num_predict": 4, "temperature": 0.0},
         }
         r = requests.post(f"{OLLAMA_URL}/api/generate", json=payload, timeout=120)
@@ -1321,14 +1337,21 @@ def _pick_vision_model_or_default(
     # cache write. Caller (picker_explain) is responsible for clamping/parsing.
     if simulate_vram_gb is not None:
         free_gb = float(simulate_vram_gb)
+        effective_30b_gb = free_gb
     else:
         free_gb = _get_free_vram_gb()
+        try:
+            import psutil
+            ram_avail_gb = float(psutil.virtual_memory().available) / (1024 ** 3)
+        except Exception:
+            ram_avail_gb = 24.0
+        effective_30b_gb = free_gb + ram_avail_gb
 
-    # 1. Big model if VRAM is generous and qwen3-vl:30b is pulled.
-    if free_gb >= 22.0:
+    # 1. Big model if VRAM (or unified VRAM+RAM in production) is generous and qwen3-vl:30b is pulled.
+    if effective_30b_gb >= 22.0:
         for orig, low in zip(names, lower_names):
             if low == "qwen3-vl:30b":
-                return (orig, f"qwen3-vl:30b matched (free VRAM {free_gb} >= 22.0)", "vram_30b")
+                return (orig, f"qwen3-vl:30b matched (free VRAM {free_gb} GB, unified {round(effective_30b_gb, 1)} >= 22.0)", "vram_30b")
 
     # 2. qwen3-vl:8b — sweet spot when >= 8 GB free.
     if free_gb >= 8.0:
@@ -1415,7 +1438,7 @@ def picker_explain():
                 "free_vram_gb": free_gb,
                 "simulated": simulate_vram_gb is not None,
             },
-            "text": {"model": "qwen3:14b"},
+            "text": {"model": "orcarouter/Qwen3.8-27B-Uncensored:latest"},
         })
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500
@@ -1499,7 +1522,7 @@ def warmup_health():
                 "reason": v_reason,
                 "reason_kind": v_kind,
             },
-            "text": {"model": "qwen3:14b"},
+            "text": {"model": "orcarouter/Qwen3.8-27B-Uncensored:latest"},
             "free_vram_gb": free_gb,
             "history_count": len(_PICKER_HISTORY),
             "last_picker": last_picker,
@@ -4049,11 +4072,20 @@ def cowork_extract_structured():
         user_msg = f"Intent : {intent}\n\nInput :\n{blob}" if blob else f"Intent : {intent}"
 
     try:
+        ollama_exec_model = model
+        try:
+            from agi_core.flagship_council import resolve_installed_flagship_model
+            ollama_exec_model = resolve_installed_flagship_model(
+                model, module="cowork", require_vision=bool(image_data_url)
+            )
+        except Exception:
+            ollama_exec_model = model
         body = {
-            "model": model,
+            "model": ollama_exec_model,
             "stream": False,
             "format": "json",
-            "options": {"temperature": 0.1, "num_predict": 1200, "num_ctx": 8192},
+            "think": False,
+            "options": {"temperature": 0.1, "num_predict": 4096, "num_ctx": 16384},
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_msg},

@@ -14,8 +14,15 @@ from pathlib import Path
 from .config import ROOT
 from .storage import atomic_json, digest, file_hash, read_json
 
-KAGGLE = ROOT / "cycle_app_venv/bin/kaggle"
-BRIDGE = [str(ROOT / "cycle_app_venv/bin/python"), str(Path(__file__).with_name("kaggle_bridge.py"))]
+import sys
+
+_CYCLE_KAGGLE = ROOT / "cycle_app_venv/bin/kaggle"
+_CYCLE_PYTHON = ROOT / "cycle_app_venv/bin/python"
+KAGGLE = _CYCLE_KAGGLE if _CYCLE_KAGGLE.is_file() else Path(shutil.which("kaggle") or "/home/juan/.local/bin/kaggle")
+BRIDGE = [
+    str(_CYCLE_PYTHON if _CYCLE_PYTHON.is_file() else Path("/usr/bin/python3" if Path("/usr/bin/python3").is_file() else sys.executable)),
+    str(Path(__file__).with_name("kaggle_bridge.py")),
+]
 
 
 class QuotaUnavailable(RuntimeError):
@@ -36,8 +43,17 @@ def command(argv, timeout=120):
     return p.stdout
 
 
+def _bridge_json(argv, timeout=120):
+    raw = command(argv, timeout=timeout)
+    for line in reversed(raw.splitlines()):
+        s = line.strip()
+        if s.startswith("{") and s.endswith("}"):
+            return json.loads(s)
+    return json.loads(raw)
+
+
 def quota():
-    return json.loads(command([*BRIDGE, "quota"]))
+    return _bridge_json([*BRIDGE, "quota"])
 
 
 def safe_extract(archive, destination, max_bytes=4 * 2 ** 30):
@@ -60,7 +76,9 @@ def build_kernel(package_dir, kernel_dir, c, job_id, payload_hash):
             z.write(p, "auto_rl/" + p.name)
     blob = base64.b64encode(buffer.getvalue()).decode()
     dependencies = ["safetensors==0.8.0", "huggingface_hub", "numpy<3", "pillow", "transformers==4.57.6", "accelerate", "bitsandbytes", "sentencepiece", "einops"]
-    if c["trainer"] not in {"preference_lora", "surrogate_es"}:
+    if c.get("multi_module_testbench"):
+        dependencies.extend(["trimesh", "manifold3d", "sympy", "z3-solver", "scipy"])
+    elif c["trainer"] not in {"preference_lora", "surrogate_es"}:
         dependencies.append("diffusers==0.39.0")
     bootstrap = f'''# Aurora private training worker. Credentials stay in Kaggle Secrets.
 import base64,io,os,sys,zipfile,subprocess,json,traceback
@@ -107,86 +125,116 @@ def train_on_kaggle(c, run, input_files, training_spec, status, check):
     if available < 900:
         raise QuotaUnavailable("Quota GPU Kaggle insuffisant pour une session et sa sauvegarde")
     timeout = min(c["kaggle_timeout_seconds"], available)
-    payload_dir = run / "kaggle_upload"
-    payload_dir.mkdir(exist_ok=True)
-    training_spec = {**training_spec, "job_id": job_id, "config": c,
-                     "training_seconds": timeout - 600,
-                     "epochs": 10000 if c["kaggle_max_session"] else c["kaggle_epochs"]}
-    atomic_json(run / "submitted_spec.json", training_spec)
-    atomic_json(payload_dir / "spec.json", training_spec)
-    with zipfile.ZipFile(payload_dir / "payload.bin", "w", zipfile.ZIP_DEFLATED) as z:
-        z.write(payload_dir / "spec.json", "spec.json")
-        for source, relative in input_files:
-            relative = Path(relative)
-            if relative.is_absolute() or ".." in relative.parts:
-                raise ValueError("Chemin d'envoi invalide")
-            z.write(source, str(relative))
-    atomic_json(run / "upload_manifest.json", {"job_id": job_id, "sha256": file_hash(payload_dir / "payload.bin"), "bytes": (payload_dir / "payload.bin").stat().st_size, "files": [str(relative) for _, relative in input_files]})
-    # Only the explicit training payload is uploaded; no home directory or secrets.
-    (payload_dir / "spec.json").unlink()
-    atomic_json(payload_dir / "dataset-metadata.json", {"title": "Aurora RL Training Batches", "id": c["kaggle_dataset"],
-                "licenses": [{"name": "other"}], "description": "Private synthetic training artifacts. Model and code licenses remain applicable."})
-    marker = Path(c["state_dir"]) / "kaggle_dataset_created.json"
-    status.update("uploading", "Envoi du vrai lot d'entraînement dans le dataset Kaggle privé…")
-    if read_json(marker, {}).get("id") == c["kaggle_dataset"]:
-        command([KAGGLE, "datasets", "version", "-p", payload_dir, "-m", "Aurora job " + job_id], timeout=600)
-    else:
-        try:
-            command([KAGGLE, "datasets", "create", "-p", payload_dir], timeout=600)
-        except RuntimeError as e:
-            if not re.search(r"already exists|already been taken|409", str(e), re.I):
-                raise
-            command([KAGGLE, "datasets", "version", "-p", payload_dir, "-m", "Aurora job " + job_id], timeout=600)
-        atomic_json(marker, {"id": c["kaggle_dataset"]})
-    # Dataset processing is asynchronous. Wait for its actual READY status.
-    until = time.monotonic() + 600
-    while True:
-        check()
-        answer = command([KAGGLE, "datasets", "status", c["kaggle_dataset"]]).lower()
-        if "ready" in answer:
-            for _ in range(15):
-                check()
-                time.sleep(1)
-            break
-        if "error" in answer or time.monotonic() > until:
-            raise RuntimeError("Dataset Kaggle non disponible : " + answer)
-        time.sleep(5)
-    kernel_dir = run / "kaggle_kernel"
-    build_kernel(Path(__file__).parent, kernel_dir, c, job_id, file_hash(payload_dir / "payload.bin"))
     try:
-        previous = json.loads(command([*BRIDGE, "status", c["kaggle_kernel"]]))
+        previous = _bridge_json([*BRIDGE, "status", c["kaggle_kernel"]])
     except RuntimeError as exc:
         if "404" not in str(exc):
             raise
         previous = {"status": "absent"}
+
+    reattached_job = None
     if previous["status"] in {"running", "queued"}:
-        raise RuntimeError("Un entraînement Kaggle est déjà actif sur ce kernel")
-    status.update("cloud_starting", "Lancement de l'entraînement réel sur Kaggle…", job_id=job_id)
-    response = command([*BRIDGE, "push", kernel_dir, str(timeout), c.get("kaggle_accelerator", "gpu_t4_x2")])
-    matches = [line[len("AURORA_PUSH "):] for line in response.splitlines() if line.startswith("AURORA_PUSH ")]
-    if not matches:
-        raise RuntimeError("Kaggle n'a pas retourné d'identifiant de version")
-    pushed = json.loads(matches[-1])
-    if pushed.get("error"):
-        if quota_error(pushed["error"]):
-            raise QuotaUnavailable(pushed["error"])
-        raise RuntimeError(pushed["error"])
-    pinned = f"{c['kaggle_kernel']}/{pushed['version']}"
-    atomic_json(run / "kaggle_job.json", {**pushed, "job_id": job_id, "pinned": pinned, "timeout": timeout})
-    status.update("cloud_training", "Kaggle : entraînement en file d'attente…", kaggle_url=pushed["url"], job_id=job_id)
+        runs_root = Path(c["state_dir"]) / "runs"
+        candidates = [run] + sorted(runs_root.glob(f"{c['module']}-*"), reverse=True)
+        for cand_run in candidates:
+            kj = cand_run / "kaggle_job.json"
+            ss = cand_run / "submitted_spec.json"
+            if kj.is_file() and ss.is_file():
+                prev_job = read_json(kj, {})
+                prev_spec = read_json(ss, {})
+                if prev_job.get("job_id") and prev_job.get("pinned") and prev_spec.get("job_id") == prev_job.get("job_id"):
+                    reattached_job = (prev_job, prev_spec)
+                    break
+
+    if reattached_job is not None:
+        pushed, training_spec = reattached_job
+        job_id = pushed["job_id"]
+        pinned = pushed["pinned"]
+        timeout = int(pushed.get("timeout") or timeout)
+        atomic_json(run / "submitted_spec.json", training_spec)
+        atomic_json(run / "kaggle_job.json", pushed)
+        status.update(
+            "cloud_training",
+            f"Kaggle : rattachement au job actif ({pinned}, statut={previous['status']})…",
+            kaggle_url=pushed.get("url", ""),
+            job_id=job_id,
+        )
+    else:
+        payload_dir = run / "kaggle_upload"
+        payload_dir.mkdir(exist_ok=True)
+        training_spec = {**training_spec, "job_id": job_id, "config": c,
+                         "training_seconds": timeout - 600,
+                         "epochs": 10000 if c["kaggle_max_session"] else c["kaggle_epochs"]}
+        atomic_json(run / "submitted_spec.json", training_spec)
+        atomic_json(payload_dir / "spec.json", training_spec)
+        with zipfile.ZipFile(payload_dir / "payload.bin", "w", zipfile.ZIP_DEFLATED) as z:
+            z.write(payload_dir / "spec.json", "spec.json")
+            for source, relative in input_files:
+                relative = Path(relative)
+                if relative.is_absolute() or ".." in relative.parts:
+                    raise ValueError("Chemin d'envoi invalide")
+                z.write(source, str(relative))
+        atomic_json(run / "upload_manifest.json", {"job_id": job_id, "sha256": file_hash(payload_dir / "payload.bin"), "bytes": (payload_dir / "payload.bin").stat().st_size, "files": [str(relative) for _, relative in input_files]})
+        # Only the explicit training payload is uploaded; no home directory or secrets.
+        (payload_dir / "spec.json").unlink()
+        atomic_json(payload_dir / "dataset-metadata.json", {"title": "Aurora RL Training Batches", "id": c["kaggle_dataset"],
+                    "licenses": [{"name": "other"}], "description": "Private synthetic training artifacts. Model and code licenses remain applicable."})
+        marker = Path(c["state_dir"]) / "kaggle_dataset_created.json"
+        status.update("uploading", "Envoi du vrai lot d'entraînement dans le dataset Kaggle privé…")
+        if read_json(marker, {}).get("id") == c["kaggle_dataset"]:
+            command([KAGGLE, "datasets", "version", "-p", payload_dir, "-m", "Aurora job " + job_id], timeout=600)
+        else:
+            try:
+                command([KAGGLE, "datasets", "create", "-p", payload_dir], timeout=600)
+            except RuntimeError as e:
+                if not re.search(r"already exists|already been taken|409", str(e), re.I):
+                    raise
+                command([KAGGLE, "datasets", "version", "-p", payload_dir, "-m", "Aurora job " + job_id], timeout=600)
+            atomic_json(marker, {"id": c["kaggle_dataset"]})
+        # Dataset processing is asynchronous. Wait for its actual READY status.
+        until = time.monotonic() + 600
+        while True:
+            check()
+            answer = command([KAGGLE, "datasets", "status", c["kaggle_dataset"]]).lower()
+            if "ready" in answer:
+                for _ in range(15):
+                    check()
+                    time.sleep(1)
+                break
+            if "error" in answer or time.monotonic() > until:
+                raise RuntimeError("Dataset Kaggle non disponible : " + answer)
+            time.sleep(5)
+        kernel_dir = run / "kaggle_kernel"
+        build_kernel(Path(__file__).parent, kernel_dir, c, job_id, file_hash(payload_dir / "payload.bin"))
+        status.update("cloud_starting", "Lancement de l'entraînement réel sur Kaggle…", job_id=job_id)
+        response = command([*BRIDGE, "push", kernel_dir, str(timeout), c.get("kaggle_accelerator", "gpu_t4_x2")])
+        matches = [line[len("AURORA_PUSH "):] for line in response.splitlines() if line.startswith("AURORA_PUSH ")]
+        if not matches:
+            raise RuntimeError("Kaggle n'a pas retourné d'identifiant de version")
+        pushed = json.loads(matches[-1])
+        if pushed.get("error"):
+            if quota_error(pushed["error"]):
+                raise QuotaUnavailable(pushed["error"])
+            raise RuntimeError(pushed["error"])
+        pinned = f"{c['kaggle_kernel']}/{pushed['version']}"
+        atomic_json(run / "kaggle_job.json", {**pushed, "job_id": job_id, "pinned": pinned, "timeout": timeout})
+        status.update("cloud_training", "Kaggle : entraînement en file d'attente…", kaggle_url=pushed["url"], job_id=job_id)
     log_path = run / "kaggle_live.log"
     with log_path.open("w") as logs:
         stream = subprocess.Popen([str(KAGGLE), "kernels", "logs", c["kaggle_kernel"], "--follow"], stdout=logs, stderr=subprocess.STDOUT)
         deadline = time.monotonic() + timeout + 900
+        queue_ceiling = time.monotonic() + 21600
         try:
             offset, failures = 0, 0
             polling_started = time.monotonic()
             observed_active = False
+            observed_running = False
             previous_remote = None
             while True:
                 check()
+                pinned = read_json(run / "kaggle_job.json", {}).get("pinned", pinned)
                 try:
-                    remote = json.loads(command([*BRIDGE, "status", pinned]))
+                    remote = _bridge_json([*BRIDGE, "status", pinned])
                     failures = 0
                 except RuntimeError:
                     failures += 1
@@ -195,6 +243,12 @@ def train_on_kaggle(c, run, input_files, training_spec, status, check):
                     time.sleep(5)
                     continue
                 status.flush(kaggle_status=remote["status"], heartbeat_at=time.time())
+                if remote["status"] == "running":
+                    observed_running = True
+                elif remote["status"] == "queued" and not observed_running:
+                    # Queue wait time on Kaggle does not consume GPU quota or training time;
+                    # keep the execution deadline fresh until the GPU node actually starts running.
+                    deadline = time.monotonic() + timeout + 900
                 if remote["status"] != previous_remote and not status.data.get("epoch"):
                     status.update("cloud_training", "Kaggle : préparation du GPU et du modèle…" if remote["status"] == "running" else "Kaggle : " + remote["status"])
                 previous_remote = remote["status"]
@@ -206,6 +260,7 @@ def train_on_kaggle(c, run, input_files, training_spec, status, check):
                             try:
                                 metrics = json.loads(line[token + len("AURORA_STATUS "):])
                                 if metrics.get("job_id") == job_id:
+                                    observed_running = True
                                     status.update("cloud_training", metrics.get("status", "Entraînement Kaggle"),
                                         **{k: metrics[k] for k in ("epoch", "epochs", "loss", "judge_score", "progress_percent", "validation_loss", "diagnosis", "changes", "attempt", "autonomous_elapsed_seconds", "training_elapsed_seconds","trial","parallel_trials") if k in metrics})
                             except ValueError:
@@ -214,16 +269,17 @@ def train_on_kaggle(c, run, input_files, training_spec, status, check):
                 observed_active |= remote["status"] in {"running", "queued"}
                 if remote["status"] not in {"running", "queued"} and (observed_active or time.monotonic() - polling_started > 90):
                     break
-                if time.monotonic() > deadline:
+                if time.monotonic() > deadline or time.monotonic() > queue_ceiling:
                     raise RuntimeError("Délai Kaggle dépassé")
                 for _ in range(c["kaggle_poll_seconds"]):
                     check()
                     time.sleep(1)
         except BaseException:
-            try:
-                command([*BRIDGE, "cancel", pinned], timeout=30)
-            except Exception as e:
-                status.flush(remote_stop_error=str(e), kaggle_url=pushed["url"])
+            if observed_running:
+                try:
+                    command([*BRIDGE, "cancel", pinned], timeout=30)
+                except Exception as e:
+                    status.flush(remote_stop_error=str(e), kaggle_url=pushed["url"])
             raise
         finally:
             stream.terminate()

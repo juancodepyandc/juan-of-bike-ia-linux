@@ -295,10 +295,17 @@ def _apply_zone(g, zone, alpha_fallback, mask_cache):
     if ("roughness" in ch or "metallic" in ch or "baseColor" in ch) and mask_tex is None:
         if mat.pbrMetallicRoughness is None:
             mat.pbrMetallicRoughness = pygltflib.PbrMetallicRoughness()
-        if "roughness" in ch:
-            mat.pbrMetallicRoughness.roughnessFactor = float(ch["roughness"])
-        if "metallic" in ch:
-            mat.pbrMetallicRoughness.metallicFactor = float(ch["metallic"])
+        has_orm_tex = getattr(mat.pbrMetallicRoughness, "metallicRoughnessTexture", None) is not None
+        if not has_orm_tex:
+            if "roughness" in ch:
+                mat.pbrMetallicRoughness.roughnessFactor = float(ch["roughness"])
+            if "metallic" in ch:
+                mat.pbrMetallicRoughness.metallicFactor = float(ch["metallic"])
+        else:
+            # Si une carte ORM par-texel est deja attachee, ne pas ecraser le canal B (metallic)
+            # par metallicFactor=0.0 ni ecraser la dynamique de rugosite par un facteur bas.
+            mat.pbrMetallicRoughness.metallicFactor = 1.0
+            mat.pbrMetallicRoughness.roughnessFactor = 1.0
         if "baseColor" in ch and mat.pbrMetallicRoughness.baseColorTexture is None:
             rgb = _rgb(ch["baseColor"])
             if rgb is not None:

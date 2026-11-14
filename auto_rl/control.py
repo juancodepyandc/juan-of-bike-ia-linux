@@ -7,18 +7,28 @@ jobs and waits for quota; audit rejection is a result, not a controller error.
 from __future__ import annotations
 import argparse
 import contextlib
-import fcntl
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
 import subprocess
+import sys
 import time
 import uuid
 from .config import ROOT, STATE, PYTHON, LABELS, defaults, validate
 from .storage import atomic_json, read_json, exclusive_lock
 
 TERMINAL = {'complete', 'stopped', 'error', 'interrupted'}
+
+
+@contextlib.contextmanager
+def reserve_gpu(c=None, owner='serve', module='general'):
+    """Cooperative GPU reservation lock shared between local serving and audit."""
+    state_dir = Path((c or {}).get('state_dir') or STATE)
+    lock_file = state_dir / 'gpu_reserve.lock'
+    with exclusive_lock(lock_file):
+        yield {'status': 'reserved', 'owner': owner, 'module': module}
 
 
 def cleanup_transients(run):
@@ -46,7 +56,10 @@ def failure_details(code, current, log_path, session_id):
     if current.get('phase') == 'error':
         message=current.get('status') or 'Erreur du cycle'
     elif code < 0:
-        name=signal.Signals(-code).name
+        try:
+            name=signal.Signals(-code).name
+        except ValueError:
+            name=f'SIG{-code}'
         message=f'Processus interrompu par {name} (code {code}).'
         if code == -9:
             try:
@@ -71,17 +84,48 @@ def failure_details(code, current, log_path, session_id):
 @contextlib.contextmanager
 def control_lock(state):
     Path(state).mkdir(parents=True, exist_ok=True)
-    with (Path(state)/'control.lock').open('a+') as file:
-        fcntl.flock(file, fcntl.LOCK_EX)
-        try: yield
-        finally: fcntl.flock(file, fcntl.LOCK_UN)
+    with exclusive_lock(Path(state)/'control.lock'):
+        yield
 
 
 def process_identity(pid):
     try:
-        fields = Path(f'/proc/{int(pid)}/stat').read_text().rsplit(')', 1)[1].split()
-        return fields[19] if fields[0] != 'Z' else None
-    except (OSError, ValueError, TypeError, IndexError):
+        pid_int = int(pid)
+        if pid_int <= 0:
+            return None
+    except (ValueError, TypeError):
+        return None
+    stat_path = Path(f'/proc/{pid_int}/stat')
+    if stat_path.exists():
+        try:
+            fields = stat_path.read_text().rsplit(')', 1)[1].split()
+            return fields[19] if fields[0] != 'Z' else None
+        except (OSError, ValueError, TypeError, IndexError):
+            pass
+    if os.name == 'nt':
+        try:
+            import ctypes
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            STILL_ACTIVE = 259
+            h = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid_int)
+            if not h:
+                return None
+            try:
+                code = ctypes.c_ulong()
+                ok = ctypes.windll.kernel32.GetExitCodeProcess(h, ctypes.byref(code))
+                return f'win:{pid_int}' if (ok and code.value == STILL_ACTIVE) else None
+            finally:
+                ctypes.windll.kernel32.CloseHandle(h)
+        except Exception:
+            return None
+    try:
+        os.kill(pid_int, 0)
+        return f'posix:{pid_int}'
+    except ProcessLookupError:
+        return None
+    except PermissionError:
+        return f'posix:{pid_int}'
+    except OSError:
         return None
 
 
@@ -135,16 +179,29 @@ def options(data):
 
 
 def launch(session_id, state):
-    # A user service survives bridge reloads and enforces the tested RAM limit.
-    argv = ['systemd-run', '--user', '--quiet', '--collect',
-            '--unit=aurora-training-'+session_id, '--property=MemoryHigh=24G',
+    worker_cmd = [
+        str(PYTHON), '-m', 'auto_rl.control', 'worker', '--session', session_id,
+        '--state', str(state),
+    ]
+    if sys.platform.startswith('linux') and shutil.which('systemd-run'):
+        # A user service survives bridge reloads and enforces the tested RAM limit.
+        argv = [
+            'systemd-run', '--user', '--quiet', '--collect',
+            '--unit=aurora-training-' + session_id, '--property=MemoryHigh=24G',
             '--property=MemoryMax=26G', '--property=MemorySwapMax=24G',
-            '--property=WorkingDirectory='+str(ROOT),
-            str(PYTHON), '-m', 'auto_rl.control', 'worker', '--session', session_id,
-            '--state', str(state)]
-    result = subprocess.run(argv, capture_output=True, text=True, timeout=20)
-    if result.returncode:
-        raise RuntimeError('Démarrage du service impossible : '+result.stderr[-1000:])
+            '--property=WorkingDirectory=' + str(ROOT),
+            *worker_cmd,
+        ]
+        result = subprocess.run(argv, capture_output=True, text=True, timeout=20)
+        if result.returncode == 0:
+            return
+    # Cross-platform / non-systemd fallback (Alpine/OpenRC, Void/runit, Docker/WSL, macOS, Windows)
+    kwargs = {'cwd': str(ROOT), 'stdin': subprocess.DEVNULL, 'stdout': subprocess.DEVNULL, 'stderr': subprocess.DEVNULL}
+    if os.name == 'nt':
+        kwargs['creationflags'] = getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0) | getattr(subprocess, 'DETACHED_PROCESS', 0)
+    else:
+        kwargs['start_new_session'] = True
+    subprocess.Popen(worker_cmd, **kwargs)
 
 
 def start(data, state=STATE):
@@ -197,15 +254,17 @@ def cycle_config(spec, number, state=STATE):
     # Reuse the tested local generation profiles, never their old resume flags.
     profile = read_json(Path.home()/'Bureau/Aurora_Entrainement.json', {})
     c = defaults(spec['module'])
+    _explicit_profile = {}
     for override in (profile.get('common', {}), profile.get('overrides', {}).get(spec['module'], {})):
         for key, value in override.items():
             if key in {'generation', 'models'}:
                 c[key].update(value)
             else:
                 c[key] = value
+                _explicit_profile[key] = value
     for key in ('resume_run', 'resume_audit', 'initial_adapter', 'prepared_tasks'):
         c.pop(key, None)
-    _bornes = {k: c[k] for k in ('max_hours', 'train_tasks', 'fallback_on_quota') if k in c}
+    _bornes = {k: _explicit_profile[k] for k in ('max_hours', 'train_tasks', 'fallback_on_quota') if k in _explicit_profile}
     c.update(module=spec['module'], state_dir=str(state), stage='full',
              mode='auto', cycles=1, fallback_on_quota=False, kaggle_max_session=False,
              training_budget_seconds=spec['training_minutes']*60,
@@ -225,14 +284,16 @@ def cycle_config(spec, number, state=STATE):
     c['training_start']=spec.get('training_start','best')
     # `strategy.apply` fixe `max_hours=24` et `train_tasks=12` par defaut et
     # écrase donc ce que le profil Bureau demandait. Le profil reste
-    # autoritaire: on mémorise ses bornes et on les réapplique après `apply`,
-    # sinon `max_hours: 5` et `train_tasks: 3` du fichier 3d n'ont jamais eu
-    # aucun effet. Le budget par défaut reste 24 h si le profil ne dit rien.
+    # autoritaire: on mémorise ses bornes explicites et on les réapplique après `apply`.
     if spec.get('strategy','radical-v3') in {'radical-v2','radical-v3'}:
-        from .strategy import apply
-        apply(c)
+        import importlib
+        from . import strategy as _strategy_mod
+        importlib.reload(_strategy_mod)
+        _strategy_mod.apply(c)
     for _key, _value in _bornes.items():
         c[_key] = _value
+    if 'minimum_preference_pairs' in c and 'train_tasks' in c:
+        c['minimum_preference_pairs'] = min(int(c['minimum_preference_pairs']), max(2, int(c['train_tasks']) - 1))
     from .lineage import choose
     parent=choose(c['module'],c['training_start'],state)
     if parent:
@@ -249,8 +310,23 @@ def cycle_config(spec, number, state=STATE):
     contract=digest({key:c.get(key) for key in ('module','train_tasks','eval_tasks','models','generation','audit_partition_seed','curriculum_version')})
     c['control_curriculum_key']=contract
     cached=Path(state)/'control_curricula'/(contract+'.json')
-    if c['module'] not in {'code','conversation','cyber','cowork','learning'} and cached.is_file():
+    if c['module'] not in {'code','conversation','cyber','cowork','learning','business','simulator'} and cached.is_file():
         c['prepared_tasks']=str(cached)
+    runs_root = Path(state)/'runs'
+    if runs_root.is_dir():
+        for cand_run in sorted(runs_root.glob(f"{c['module']}-*"), reverse=True)[:5]:
+            if (
+                (cand_run/'preferences/preferences.json').is_file()
+                and (cand_run/'kaggle_job.json').is_file()
+                and not (cand_run/'candidate.safetensors').is_file()
+                and not (cand_run/'report.json').is_file()
+            ):
+                last_cfg = read_json(cand_run/'config.json', {})
+                for _rk in ('models', 'generation', 'rank', 'max_layers', 'seed', 'train_tasks', 'eval_tasks', 'rollouts_per_task'):
+                    if _rk in last_cfg:
+                        c[_rk] = last_cfg[_rk]
+                c['resume_run'] = cand_run.name
+                break
     return validate(c)
 
 
@@ -330,6 +406,10 @@ def worker(session_id, state=STATE):
                 config_path = folder/f'cycle_{index:04d}.json'
                 atomic_json(config_path, c)
                 cycle_started = time.time()
+                last_tech_watch = cycle_started
+                with contextlib.suppress(Exception):
+                    from .tech_radar_agi import run_parallel_tech_watch_cycle
+                    run_parallel_tech_watch_cycle(active_module=spec['module'], state=state)
                 with (folder/f'cycle_{index:04d}.log').open('a') as log:
                     child = subprocess.Popen([str(PYTHON), '-m', 'auto_rl.cli', 'run', '--config', str(config_path)],
                                              cwd=ROOT, stdout=log, stderr=subprocess.STDOUT)
@@ -338,6 +418,11 @@ def worker(session_id, state=STATE):
                     local_failure=None
                     interruption_at=None
                     while child.poll() is None:
+                        if time.time() - last_tech_watch >= 300:
+                            last_tech_watch = time.time()
+                            with contextlib.suppress(Exception):
+                                from .tech_radar_agi import run_parallel_tech_watch_cycle
+                                run_parallel_tech_watch_cycle(active_module=spec['module'], state=state)
                         current = read_json(state/'status.json', {})
                         own = current.get('pid') == child.pid
                         command = pending(state, record)
@@ -394,6 +479,14 @@ def worker(session_id, state=STATE):
                         atomic_json(run/'diagnostic.json',details)
                         current.update(phase='error',status=details['message'],diagnostic=details,updated_at=time.time())
                         atomic_json(run/'status.json',current);atomic_json(state/'status.json',current)
+                    if record.get('mode') == 'continuous':
+                        with contextlib.suppress(Exception):
+                            from . import tech_radar_agi as _tr_mod
+                            next_mod = _tr_mod.next_rotation_module(spec['module'])
+                            record.update(module=next_mod, module_started_at=time.time(), module_cycles=0)
+                        save(phase='running', child_pid=None, last_recoverable_error=details['message'])
+                        time.sleep(3)
+                        continue
                     raise RuntimeError(details['message'])
                 # The marker is only a boundary signal.  Keep the cancellation
                 # reason in status.json and remove the marker so a retained run
@@ -408,6 +501,14 @@ def worker(session_id, state=STATE):
                 with contextlib.suppress(Exception):
                     from .reinforced_registry import sync_all_reinforced_models
                     sync_all_reinforced_models(state)
+                if record.get('mode') == 'continuous' and not pending(state, record):
+                    with contextlib.suppress(Exception):
+                        import importlib
+                        from . import tech_radar_agi as _tr_mod
+                        importlib.reload(_tr_mod)
+                        next_mod = _tr_mod.next_rotation_module(spec['module'])
+                        record.update(module=next_mod, module_started_at=time.time(), module_cycles=0)
+                        _tr_mod.run_parallel_tech_watch_cycle(active_module=next_mod, state=state)
                 save(phase='running', child_pid=None)
         finally:
             guard.__exit__(None, None, None)

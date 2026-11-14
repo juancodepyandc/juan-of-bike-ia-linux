@@ -173,15 +173,19 @@ fi
 if bridge_is_running; then
   echo "      Bridge existant réutilisé (API Aurora vérifiée)."
 else
-  (
-    cd "$APP_DIR"
-    # A service manager can have completed startup since the first probe.
-    if bridge_is_running; then
-      echo "Bridge existant réutilisé (API Aurora vérifiée)."
-      exit 0
-    fi
-    exec "$APP_PY" bridge_server.py
-  ) >"$LOG_DIR/bridge.log" 2>&1 &
+  setsid bash -c '
+    cd "'"$APP_DIR"'"
+    exec "'"$APP_PY"'" bridge_server.py
+  ' >"$LOG_DIR/bridge.log" 2>&1 </dev/null &
+fi
+
+if curl -fsS -m 2 -o /dev/null http://127.0.0.1:11435/health 2>/dev/null; then
+  echo "      Serveur Modèles Renforcés MoA (:11435) existant réutilisé."
+else
+  setsid bash -c '
+    cd "'"$ROOT_DIR"'"
+    exec "'"$APP_PY"'" -m auto_rl.serve
+  ' >"$LOG_DIR/rl_serve.log" 2>&1 </dev/null &
 fi
 
 echo "[3.5/5] Cerveau AGI (J.O.B.I.A. Core)"
@@ -191,7 +195,13 @@ fi
 if daemon_is_running; then
   echo "      Démon AGI existant réutilisé (protocole IPC vérifié)."
 else
-  run_agi_supervisor &
+  setsid bash -c '
+    cd "'"$ROOT_DIR"'"
+    while true; do
+      "'"$APP_PY"'" "'"$ROOT_DIR"'/scripts/ops/aurora_agi_daemon.py" >> "'"$LOG_DIR"'/agi_daemon.log" 2>&1 && break
+      sleep 5
+    done
+  ' >/dev/null 2>&1 </dev/null &
   AGI_PID=$!
   echo "      AGI Daemon lancé en arrière-plan (PID: $AGI_PID, logs: $LOG_DIR/agi_daemon.log)"
 fi
@@ -223,10 +233,10 @@ if command -v npm >/dev/null 2>&1; then
   if curl -fsS -m 3 -o /dev/null http://127.0.0.1:1420/ 2>/dev/null; then
     echo "      Interface Vite existante réutilisée."
   else
-    (
-      cd "$APP_DIR"
+    setsid bash -c '
+      cd "'"$APP_DIR"'"
       exec npm run dev:web
-    ) >"$LOG_DIR/vite.log" 2>&1 &
+    ' >"$LOG_DIR/vite.log" 2>&1 </dev/null &
   fi
   # 30/07: l'app native est un binaire Tauri RELEASE — l'interface y est
   # INCORPOREE a la compilation. Reconstruire dist/ ne suffit PAS: si le
@@ -283,7 +293,8 @@ if [ "${AURORA_START_TUNNEL:-1}" = "1" ]; then
       : > "$LOG_DIR/cloudflared.log"
       # Le bridge proxyfie Vite et reste disponible pendant une reconstruction
       # de l'interface, exactement comme le point d'entree Aurora attendu.
-      setsid cloudflared tunnel --url http://127.0.0.1:3001 >"$LOG_DIR/cloudflared.log" 2>&1 </dev/null &
+      # --protocol http2 --edge-ip-version 4 evite les timeouts UDP QUIC IPv6 (2500ms+) sur les box FAI.
+      setsid cloudflared tunnel --protocol http2 --edge-ip-version 4 --url http://127.0.0.1:3001 >"$LOG_DIR/cloudflared.log" 2>&1 </dev/null &
       echo "  Tunnel demarre, recuperation de l'adresse publique..."
       TUN_URL=""
       for _i in $(seq 1 30); do
@@ -298,10 +309,13 @@ if [ "${AURORA_START_TUNNEL:-1}" = "1" ]; then
         if bash "$ROOT_DIR/scripts/verify-tunnel-url.sh" "$TUN_URL" 45; then
           # tunnel.txt reste la source locale du bridge. Le script de publication
           # le copie dans aurora-live/tunnel.txt et met aussi le README a jour.
+          mkdir -p "$ROOT_DIR/interface/tunnel"
           printf '%s\n' "$TUN_URL" > "$ROOT_DIR/tunnel.txt"
-          # Compatibilite avec les anciens outils qui lisaient encore ce nom.
-          # Les deux fichiers locaux affichent donc toujours la MEME URL.
           printf '%s\n' "$TUN_URL" > "$ROOT_DIR/tunnel_url.txt"
+          printf '%s\n' "$TUN_URL" > "$ROOT_DIR/interface/tunnel/tunnel.txt"
+          # Compatibilite avec les anciens outils qui lisaient encore ce nom.
+          # Les fichiers locaux affichent donc toujours la MEME URL.
+          printf '%s\n' "$TUN_URL" > "$ROOT_DIR/interface/tunnel/tunnel_url.txt"
           echo
           echo "  ========================================"
           echo "  URL TELEPHONE : $TUN_URL"
@@ -317,8 +331,9 @@ if [ "${AURORA_START_TUNNEL:-1}" = "1" ]; then
           bash "$ROOT_DIR/scripts/publish-live-link.sh" open \
             || echo "  (tunnel.txt mis a jour localement, publication aurora-live echouee)"
         else
-          : > "$ROOT_DIR/tunnel.txt"
-          : > "$ROOT_DIR/tunnel_url.txt"
+          mkdir -p "$ROOT_DIR/interface/tunnel"
+          : > "$ROOT_DIR/interface/tunnel/tunnel.txt"
+          : > "$ROOT_DIR/interface/tunnel/tunnel_url.txt"
           bash "$ROOT_DIR/scripts/publish-live-link.sh" closed || true
           echo "  Tunnel genere mais non joignable : non publie sur aurora-live."
         fi

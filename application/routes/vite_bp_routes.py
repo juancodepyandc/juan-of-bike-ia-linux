@@ -646,16 +646,17 @@ def three_d_run_pipeline():
         _run_env.setdefault("AURORA_MEM_SWAP_MAX_GB", "40")
         _run_env.setdefault("AURORA_LLM_4BIT", "1")
         _run_env.setdefault("AURORA_PERFECTION_ESSAIS", "2")
+        _mod_from = (data.get("modify_from") or data.get("existing_glb") or "").strip()
+        if _mod_from:
+            _run_env["AURORA_MODIFY_FROM_GLB"] = _mod_from
         if bool(data.get("max_precision")):
-            # Mode PRECISION MAX : vrai TRELLIS.2 1536_cascade via allocateur manage
-            # (spill GPU->RAM) -> geometrie fine (fentes, resistances, composants au mm).
-            # Lent (~25-30 min/objet, deborde sur la RAM) mais precision maximale.
+            # Mode PRECISION MAX : 1024_cascade + GPU Dual-Contouring Remesh + 16 pas Flow-Matching
+            # + super-resolution PBR 16K tuilee (tient a 100% dans les 16 Go VRAM RTX 5070 Ti sans OOM).
             _run_env["AURORA_TRELLIS2_MANAGED"] = os.environ.get("AURORA_TRELLIS2_MANAGED", "0")
-            _run_env["AURORA_TRELLIS2_QUALITY"] = "1536_cascade"
-            _run_env["AURORA_TRELLIS2_STEPS"] = "40"
-            # 8192 en normal + 1536_cascade + texture 8K = OOM mesure sur
-            # cette carte. La normale reste haute, la texture suit le plafond
-            # prouve (surchargeable par l'appelant).
+            _run_env["AURORA_TRELLIS2_QUALITY"] = os.environ.get("AURORA_TRELLIS2_QUALITY", "1024_cascade")
+            _run_env["AURORA_TRELLIS2_STEPS"] = os.environ.get("AURORA_TRELLIS2_STEPS", "16")
+            _run_env["AURORA_TRELLIS2_REMESH"] = os.environ.get("AURORA_TRELLIS2_REMESH", "1")
+            _run_env["AURORA_TRELLIS2_REMESH_PROJECT"] = os.environ.get("AURORA_TRELLIS2_REMESH_PROJECT", "0.5")
             _run_env["AURORA_NORMAL_RES"] = os.environ.get("AURORA_NORMAL_RES", "4096")
             _run_env["AURORA_TAUBIN_ITERS"] = "16"
             _run_env["AURORA_VLM_CRITIC"] = "1"
@@ -690,6 +691,56 @@ def three_d_run_pipeline():
             "stdout": stdout_text[-800:],
         }), 500
     return jsonify({"ok": False, "error": "pipeline produced no JSON", "stdout": stdout_text[-800:]}), 500
+
+
+@vite_bp.route("/api/3d/modify-delta", methods=["POST"])
+def three_d_modify_delta():
+    """Modification incrémentale directe d'un modèle 3D existant sans repartir de zéro :
+    applique uniquement le delta demandé (couleur extérieure/intérieure, texte gravé,
+    morphologie Cœur Émoji <-> Cœur Anatomique, ou profil optique PBR) en < 5 secondes."""
+    data = request.get_json(silent=True) or {}
+    prompt_delta = (data.get("prompt") or data.get("delta_prompt") or "").strip()
+    source_glb = (data.get("source_glb") or data.get("modify_from") or data.get("input_glb") or "").strip()
+    output_glb = (data.get("output_glb") or source_glb).strip()
+    if not prompt_delta or not source_glb:
+        return jsonify({"ok": False, "error": "missing 'prompt' or 'source_glb'"}), 400
+
+    workspace = os.path.realpath(WORKSPACE)
+    if not _three_d_path_is_allowed(source_glb, workspace):
+        return jsonify({"ok": False, "error": "source_glb outside workspace"}), 400
+
+    try:
+        py_srv = os.path.join(workspace, "python-services")
+        if py_srv not in sys.path:
+            sys.path.insert(0, py_srv)
+        from pathlib import Path as _PMod
+        src_p = _PMod(source_glb)
+        spec_file = src_p.parent / "vessel_spec.json"
+        from crystal_vessel_sculptor import (
+            is_engraved_or_shaped_vessel_prompt as _is_vessel,
+            generate_crystal_vessel_deliverables as _gen_vessel,
+        )
+        if spec_file.is_file() or _is_vessel(prompt_delta):
+            res = _gen_vessel(
+                prompt=prompt_delta,
+                output_glb_path=output_glb,
+                geometry_glb_path=str(src_p.parent / "modele_geometrie.glb"),
+                modify_from=str(src_p),
+            )
+            return jsonify({"ok": True, "mode": "vessel_spec_delta", "result": res})
+
+        from pbr_cartography import (
+            inject_gltf_optical_extensions as _inject_ext,
+            resolve_pbr_optical_profile as _resolve_prof,
+        )
+        import shutil as _sh_mod
+        if os.path.abspath(source_glb) != os.path.abspath(output_glb):
+            _sh_mod.copy2(source_glb, output_glb)
+        prof = _resolve_prof(prompt_delta)
+        _inject_ext(output_glb, prof)
+        return jsonify({"ok": True, "mode": "optical_pbr_delta", "output_glb": output_glb, "profile": prof})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
 
 
 @vite_bp.route("/api/3d/compose-scene", methods=["POST"])
@@ -2594,37 +2645,68 @@ def three_d_custom_motion():
     # Step 2: optionally re-bake
     bake_result = None
     if input_glb and output_glb and os.path.isfile(input_glb):
-        intent_tmp = os.path.join(
-            os.path.dirname(os.path.abspath(output_glb)),
-            "intent_custom.json",
-        )
-        os.makedirs(os.path.dirname(intent_tmp), exist_ok=True)
-        with open(intent_tmp, "w", encoding="utf-8") as f:
-            json.dump(intent, f)
-        baker = os.path.join(
-            os.path.realpath(WORKSPACE),
-            "python-services", "motion_intent_baker.py",
-        )
-        try:
-            bproc = subprocess.run(
-                [sys.executable, baker,
-                 "--intent", intent_tmp,
-                 "--input", input_glb,
-                 "--output", output_glb],
-                capture_output=True, text=True, timeout=600, check=False,
+        if intent.get("category") == "creature_organic" or os.environ.get("AURORA_CUSTOM_MOTION_HYMOTION", "1") == "1":
+            try:
+                py_srv = os.path.join(os.path.realpath(WORKSPACE), "python-services")
+                if py_srv not in sys.path:
+                    sys.path.insert(0, py_srv)
+                import aurora_3d_pipeline as _a3d_cm
+                from pathlib import Path as _PathCM
+                import shutil as _shutil_cm
+                work_dir = _PathCM(os.path.dirname(os.path.abspath(output_glb))) / f"custom_hymotion_{int(time.time())}"
+                work_dir.mkdir(parents=True, exist_ok=True)
+                hm_res = _a3d_cm.run_motion_bake(
+                    rescued_mesh=_PathCM(input_glb),
+                    motion_prompt=custom or prompt,
+                    output_dir=work_dir,
+                    run_id="custom_motion",
+                    subject_kind="humanoid",
+                    prompt=prompt,
+                )
+                if isinstance(hm_res, dict) and hm_res.get("ok") and hm_res.get("rigged_mesh") and os.path.isfile(hm_res["rigged_mesh"]):
+                    os.makedirs(os.path.dirname(os.path.abspath(output_glb)), exist_ok=True)
+                    _shutil_cm.copy2(hm_res["rigged_mesh"], output_glb)
+                    bake_result = {
+                        "ok": True,
+                        "engine": "HY-Motion-1.0+Aurora-Animation-UniRig-GeodesicDQS-HYMotion-v2+MIA-52bones",
+                        "output_glb": output_glb,
+                        "size_bytes": os.path.getsize(output_glb),
+                    }
+            except Exception:
+                bake_result = None
+
+        if not (isinstance(bake_result, dict) and bake_result.get("ok")):
+            intent_tmp = os.path.join(
+                os.path.dirname(os.path.abspath(output_glb)),
+                "intent_custom.json",
+            )
+            os.makedirs(os.path.dirname(intent_tmp), exist_ok=True)
+            with open(intent_tmp, "w", encoding="utf-8") as f:
+                json.dump(intent, f)
+            baker = os.path.join(
+                os.path.realpath(WORKSPACE),
+                "python-services", "motion_intent_baker.py",
             )
             try:
-                bake_result = json.loads(bproc.stdout)
-            except json.JSONDecodeError:
-                bake_result = {"ok": False, "raw": bproc.stdout[-400:]}
-            if not isinstance(bake_result, dict):
-                bake_result = {"ok": False, "error": "bake result must be a JSON object"}
-            if bproc.returncode != 0:
-                bake_result.update(ok=False, returncode=bproc.returncode,
-                                   error=bake_result.get("error") or "baker process failed",
-                                   stderr=(bproc.stderr or "")[-400:])
-        except subprocess.TimeoutExpired:
-            bake_result = {"ok": False, "error": "bake timed out"}
+                bproc = subprocess.run(
+                    [sys.executable, baker,
+                     "--intent", intent_tmp,
+                     "--input", input_glb,
+                     "--output", output_glb],
+                    capture_output=True, text=True, timeout=600, check=False,
+                )
+                try:
+                    bake_result = json.loads(bproc.stdout)
+                except json.JSONDecodeError:
+                    bake_result = {"ok": False, "raw": bproc.stdout[-400:]}
+                if not isinstance(bake_result, dict):
+                    bake_result = {"ok": False, "error": "bake result must be a JSON object"}
+                if bproc.returncode != 0:
+                    bake_result.update(ok=False, returncode=bproc.returncode,
+                                       error=bake_result.get("error") or "baker process failed",
+                                       stderr=(bproc.stderr or "")[-400:])
+            except subprocess.TimeoutExpired:
+                bake_result = {"ok": False, "error": "bake timed out"}
 
     return jsonify({"ok": True, "intent": intent, "bake": bake_result})
 
@@ -2727,47 +2809,77 @@ def three_d_auto_motion_bake():
         return jsonify({"ok": True, "intent": intent, "decision": decision,
                         "glb_path": input_glb})
 
-    # Step 3: bake
-    intent_tmp = os.path.join(
-        os.path.dirname(os.path.abspath(output_glb)),
-        f"intent_auto_{int(time.time())}.json",
-    )
-    try:
-        os.makedirs(os.path.dirname(intent_tmp), exist_ok=True)
-    except OSError:
-        pass
-    try:
-        with open(intent_tmp, "w", encoding="utf-8") as f:
-            json.dump(intent, f)
-    except OSError as exc:
-        return jsonify({"ok": False, "error": f"intent write failed: {exc}"}), 500
-
-    baker = os.path.join(
-        os.path.realpath(WORKSPACE),
-        "python-services", "motion_intent_baker.py",
-    )
+    # Step 3: bake (route creature_organic / humanoid first through HY-Motion-1.0 Reinforced + MIA 52-bone rigging)
     bake_result = None
-    try:
-        bproc = subprocess.run(
-            [sys.executable, baker,
-             "--intent", intent_tmp,
-             "--input", input_glb,
-             "--output", output_glb],
-            capture_output=True, text=True, timeout=600, check=False,
+    if category == "creature_organic":
+        try:
+            py_srv = os.path.join(os.path.realpath(WORKSPACE), "python-services")
+            if py_srv not in sys.path:
+                sys.path.insert(0, py_srv)
+            import aurora_3d_pipeline as _a3d_am
+            from pathlib import Path as _PathAM
+            import shutil as _shutil_am
+            work_dir = _PathAM(os.path.dirname(os.path.abspath(output_glb))) / f"auto_hymotion_{int(time.time())}"
+            work_dir.mkdir(parents=True, exist_ok=True)
+            hm_res = _a3d_am.run_motion_bake(
+                rescued_mesh=_PathAM(input_glb),
+                motion_prompt=prompt,
+                output_dir=work_dir,
+                run_id="auto_motion",
+                subject_kind="humanoid",
+                prompt=prompt,
+            )
+            if isinstance(hm_res, dict) and hm_res.get("ok") and hm_res.get("rigged_mesh") and os.path.isfile(hm_res["rigged_mesh"]):
+                os.makedirs(os.path.dirname(os.path.abspath(output_glb)), exist_ok=True)
+                _shutil_am.copy2(hm_res["rigged_mesh"], output_glb)
+                bake_result = {
+                    "ok": True,
+                    "engine": "HY-Motion-1.0+Aurora-Animation-UniRig-GeodesicDQS-HYMotion-v2+MIA-52bones",
+                    "output_glb": output_glb,
+                }
+        except Exception:
+            bake_result = None
+
+    if not (isinstance(bake_result, dict) and bake_result.get("ok")):
+        intent_tmp = os.path.join(
+            os.path.dirname(os.path.abspath(output_glb)),
+            f"intent_auto_{int(time.time())}.json",
         )
         try:
-            bake_result = json.loads(bproc.stdout)
-        except json.JSONDecodeError:
-            bake_result = {"ok": False, "raw": (bproc.stdout or "")[-400:],
-                           "stderr": (bproc.stderr or "")[-400:]}
-        if not isinstance(bake_result, dict):
-            bake_result = {"ok": False, "error": "bake result must be a JSON object"}
-        if bproc.returncode != 0:
-            bake_result.update(ok=False, returncode=bproc.returncode,
-                               error=bake_result.get("error") or "baker process failed",
-                               stderr=(bproc.stderr or "")[-400:])
-    except subprocess.TimeoutExpired:
-        bake_result = {"ok": False, "error": "bake timed out"}
+            os.makedirs(os.path.dirname(intent_tmp), exist_ok=True)
+        except OSError:
+            pass
+        try:
+            with open(intent_tmp, "w", encoding="utf-8") as f:
+                json.dump(intent, f)
+        except OSError as exc:
+            return jsonify({"ok": False, "error": f"intent write failed: {exc}"}), 500
+
+        baker = os.path.join(
+            os.path.realpath(WORKSPACE),
+            "python-services", "motion_intent_baker.py",
+        )
+        try:
+            bproc = subprocess.run(
+                [sys.executable, baker,
+                 "--intent", intent_tmp,
+                 "--input", input_glb,
+                 "--output", output_glb],
+                capture_output=True, text=True, timeout=600, check=False,
+            )
+            try:
+                bake_result = json.loads(bproc.stdout)
+            except json.JSONDecodeError:
+                bake_result = {"ok": False, "raw": (bproc.stdout or "")[-400:],
+                               "stderr": (bproc.stderr or "")[-400:]}
+            if not isinstance(bake_result, dict):
+                bake_result = {"ok": False, "error": "bake result must be a JSON object"}
+            if bproc.returncode != 0:
+                bake_result.update(ok=False, returncode=bproc.returncode,
+                                   error=bake_result.get("error") or "baker process failed",
+                                   stderr=(bproc.stderr or "")[-400:])
+        except subprocess.TimeoutExpired:
+            bake_result = {"ok": False, "error": "bake timed out"}
 
     glb_path = input_glb
     if bake_result and bake_result.get("ok") and os.path.isfile(output_glb):

@@ -398,12 +398,13 @@ function detectPromptTraits(prompt: string) {
   const wantsSoftPreservation = /\b(conserve|garde|preserve|same|meme|identique|juste|simplement|ameliore|more realistic|plus realiste|plus réaliste)\b/i.test(normalized)
 
   const wantsPixelArt = /\b(pixel art|pixel-art|pixelart|sprite|tileset|aseprite|rpg maker|gameboy|game boy|gba|snes|nes|8 bit|8-bit|16 bit|16-bit|voxel)\b/i.test(normalized)
-  const wantsAnimeCharacter = /\b(anime|manga|personnage|character|hero|heroine|villain|waifu|pokemon|digimon|cosplay)\b/i.test(normalized)
+  const wantsAnimeCharacter = /\b(anime|manga|cel[- ]?shad(?:ed|ing)|shonen|seinen|shojo|manhwa|webtoon)\b/i.test(normalized)
   const wantsMechanicalSubject = /\b(component|composant|piece|part|mecanique|mechanical|courroie|belt|poulie|pulley|gear|engrenage|verin|cylinder|bearing|roulement|cable|connector|connecteur|harness|faisceau)\b/i.test(normalized)
   const wantsExactReference = /\b(reference exacte|exact reference|official design|modele reel|real object|same subject|meme sujet|existing character|existing object)\b/i.test(normalized)
   const wantsFullBody = /\b(plein pied|plain pied|corps entier|full body|head[-\s]?to[-\s]?toe|entire body|figure entiere|figure enti[eè]re|des pieds a la tete|des pieds [aà] la t[eê]te)\b/i.test(normalized)
   const wantsLandscapeOrScene = /\b(paysage|landscape|montagne|mountain|foret|forêt|forest|ocean|océan|mer|sea|plage|beach|lac|lake|riviere|rivière|river|vallee|vallée|valley|desert|désert|canyon| cascade|waterfall|ville|city|cityscape|rue|ruelle|street|architecture|batiment|bâtiment|interieur|intérieur|interior|piece|chambre|salon|temple|chateau|château|castle|panorama|horizon|nature|campagne|jardin|garden|ciel|sky|aurore|sunset|sunrise|coucher de soleil)\b/i.test(normalized)
   const wantsHumanSubject = /\b(homme|femme|personne|personnage|portrait|visage|garcon|garçon|fille|enfant|guerrier|guerriere|man|woman|person|character|face|boy|girl|child|human|people|crowd)\b/i.test(normalized)
+  const wantsMaxQuality = /\b(qualit[eé]r?\s*(?:max(?:imale|imum)?|ultime|parfaite|extr[eê]me)|max(?:imum|imale)?\s*(?:de\s*)?qualit[eé]r?|pr[eé]cision\s*(?:max(?:imale|imum)?|nanom[eé]trique|extr[eê]me)|pixel[\s-]?perfect|ultra[\s-]?(?:hd|pr[eé]cis|net|d[eé]taill[eé])|8k|16k|4k\s*uhd|masterpiece|chef[\s-]?d['’]?(?:oeuvre|œuvre)|meilleure?\s*qualit[eé]r?)\b/i.test(normalized)
 
   return {
     wantsMonochrome,
@@ -417,6 +418,7 @@ function detectPromptTraits(prompt: string) {
     wantsFullBody,
     wantsLandscapeOrScene,
     wantsHumanSubject,
+    wantsMaxQuality,
   }
 }
 
@@ -679,6 +681,14 @@ function buildStyledPrompt(prompt: string, style: FluxStyle, hasReferenceImage =
     )
   }
 
+  if ((promptTraits.wantsMaxQuality || editIntent?.wantsMaxQuality) && style !== 'pixel_art') {
+    qualityRules.push(
+      'ultra-high optical acuity and sub-pixel edge precision across the entire frame',
+      'rich micro-surface fidelity faithful to the chosen visual style',
+      'zero compression artifacts, zero muddy transitions, zero synthetic blur',
+    )
+  }
+
   const qualitySuffix = Array.from(new Set(qualityRules))
     .join(', ')
     .slice(0, 1800)
@@ -753,10 +763,8 @@ export function createFluxWorkflow(options: FluxWorkflowOptions): Record<string,
   const augmentedPrompt = prompt
   const seed = seedOpt ?? Math.floor(Math.random() * 2 ** 32)
   const styleConfig = STYLE_PRESETS[style] || STYLE_PRESETS.none
-  const baseSteps = styleConfig.steps ?? steps
-  const effectiveSteps = referenceImage && editIntent?.isEditIntent
-    ? Math.max(baseSteps, steps + editIntent.editContract.stepsBoost)
-    : baseSteps
+  const baseSteps = steps > 0 ? steps : (styleConfig.steps ?? 24)
+  const effectiveSteps = baseSteps
   const styledPrompt = buildStyledPrompt(augmentedPrompt, style, Boolean(referenceImage), editIntent)
   const referenceDenoise = referenceImage?.denoise ?? (referenceImage ? editIntent?.editContract.denoise ?? styleConfig.editDenoise : 1.0)
   const effectiveNegative = (negativePrompt || '').trim() ||
@@ -801,6 +809,21 @@ export function createFluxWorkflow(options: FluxWorkflowOptions): Record<string,
   let refLatentNode2: [string, number] | null = null
   let nextNodeId = 5
 
+  const isMorphologyRestyle = Boolean(
+    referenceImage && (
+      referenceDenoise >= 0.68 ||
+      editIntent?.editMode === 'restyle' ||
+      /\b(figurine|funko|chibi|nendoroid|vinyl\s+figure|toy\s+figure|action\s+figure|claymation|clay|plush|peluche|lego|voxel|cubique|cubic|cube|blocky|low[- ]?poly|pixel\s*art|origami|pedestal\s+base)\b/i.test(styledPrompt)
+    )
+  )
+  const isMaterialOrStyleRestyle = Boolean(
+    referenceImage && (
+      isMorphologyRestyle ||
+      editIntent?.editMode === 'restyle' ||
+      referenceDenoise >= 0.62
+    )
+  )
+
   if (referenceImage) {
     const cleanRefName = referenceImage.filename.replace(/\\/g, '/').split('/').pop()!
     const loadId = String(nextNodeId++)
@@ -809,14 +832,23 @@ export function createFluxWorkflow(options: FluxWorkflowOptions): Record<string,
       inputs: { image: cleanRefName, upload: 'image' },
     }
     const scaleId = String(nextNodeId++)
+    const targetRefMax = referenceDenoise <= 0.52
+      ? Math.max(width, height)
+      : isMorphologyRestyle
+        ? 320
+        : isMaterialOrStyleRestyle
+          ? 512
+          : 768
+    const refScaleW = referenceDenoise <= 0.52 ? width : Math.min(width, targetRefMax)
+    const refScaleH = referenceDenoise <= 0.52 ? height : Math.min(height, targetRefMax)
     workflow[scaleId] = {
       class_type: 'ImageScale',
       inputs: {
         image: [loadId, 0],
-        width,
-        height,
+        width: refScaleW,
+        height: refScaleH,
         upscale_method: 'lanczos',
-        crop: 'center',
+        crop: referenceDenoise <= 0.20 ? 'disabled' : 'center',
       },
     }
     const encodeId = String(nextNodeId++)
@@ -829,10 +861,11 @@ export function createFluxWorkflow(options: FluxWorkflowOptions): Record<string,
     }
     refLatentNode = [encodeId, 0]
 
-    // Si denoise < 0.88 (retouche locale ou conservation stricte de la structure),
-    // on part du latent de l'image de référence ; sinon on part d'un latent FLUX.2
-    // vierge guidé par ReferenceLatent (reproduction / nouvelle pose / nouvelle scène).
-    if (referenceDenoise < 0.88) {
+    // En FLUX.2-dev, ReferenceLatent injecte déjà la structure et l'identité de l'image
+    // de référence dans le conditionnement positif/négatif. On n'utilise le latent encodé
+    // direct (img2img BasicScheduler) que si denoise < 0.30 (micro-retouche locale),
+    // sinon on part d'un EmptyFlux2LatentImage + Flux2Scheduler guidé par ReferenceLatent.
+    if (referenceDenoise < 0.30) {
       latentNode = [encodeId, 0]
     } else {
       const emptyId = String(nextNodeId++)
@@ -887,7 +920,7 @@ export function createFluxWorkflow(options: FluxWorkflowOptions): Record<string,
   }
 
   const sigmaNode = String(nextNodeId++)
-  if (referenceImage && referenceDenoise < 0.88) {
+  if (referenceImage && referenceDenoise < 0.30) {
     workflow[sigmaNode] = {
       class_type: 'BasicScheduler',
       inputs: {
@@ -929,20 +962,27 @@ export function createFluxWorkflow(options: FluxWorkflowOptions): Record<string,
   let positiveCond: [string, number] = [posTextNode, 0]
   let negativeCond: [string, number] = [negTextNode, 0]
 
-  // Conditionnement ReferenceLatent natif FLUX.2 (verrouille l'identité et les détails de référence)
+  // Conditionnement ReferenceLatent natif FLUX.2 :
+  // - En retouche ciblée ou ancrage canonique (denoise < 0.62), on attache ReferenceLatent
+  //   au positif ET au négatif pour verrouiller la géométrie et l'identité.
+  // - En transformation de style/matière/figurine (isMaterialOrStyleRestyle), on l'attache
+  //   UNIQUEMENT au positif afin de permettre une vraie refonte morphologique/matérielle
+  //   (ex: figurine cartoon 3D corps entier sur socle) tout en conservant les traits d'identité.
   if (refLatentNode) {
     const refPosId = String(nextNodeId++)
     workflow[refPosId] = {
       class_type: 'ReferenceLatent',
       inputs: { conditioning: positiveCond, latent: refLatentNode },
     }
-    const refNegId = String(nextNodeId++)
-    workflow[refNegId] = {
-      class_type: 'ReferenceLatent',
-      inputs: { conditioning: negativeCond, latent: refLatentNode },
-    }
     positiveCond = [refPosId, 0]
-    negativeCond = [refNegId, 0]
+    if (!isMaterialOrStyleRestyle) {
+      const refNegId = String(nextNodeId++)
+      workflow[refNegId] = {
+        class_type: 'ReferenceLatent',
+        inputs: { conditioning: negativeCond, latent: refLatentNode },
+      }
+      negativeCond = [refNegId, 0]
+    }
   }
 
   if (refLatentNode2) {
@@ -967,7 +1007,7 @@ export function createFluxWorkflow(options: FluxWorkflowOptions): Record<string,
       model: ['4', 0],
       positive: positiveCond,
       negative: negativeCond,
-      cfg: styleConfig.guidance,
+      cfg: referenceImage && referenceDenoise <= 0.20 ? 1.2 : styleConfig.guidance,
     },
   }
 

@@ -331,7 +331,7 @@ def _clean_headers():
     return {"Content-Type": request.content_type or "application/json"}
 
 
-def _proxy(target_url, stream=True, timeout=180, data_override=None):
+def _proxy(target_url, stream=True, timeout=1800, data_override=None):
     """Proxy generique vers un service local.
     Forward aussi les query parameters (filename, subfolder, type, etc.)."""
     resp = requests.request(
@@ -767,6 +767,7 @@ def _ext_default_model(models=None, *, resources=None, task="general"):
         if not isinstance(resources, dict):
             raise ValueError("Observed model resources must be an object.")
         ram, vram = resources.get("ram_total_bytes"), resources.get("nvidia_vram_bytes", 0)
+        swap = resources.get("swap_total_bytes", 0) or 0
         if (ram is not None and (type(ram) is not int or ram <= 0)) or type(vram) is not int or vram < 0:
             raise ValueError("Observed RAM/VRAM bytes must be valid nonnegative measurements.")
     else:
@@ -786,7 +787,14 @@ def _ext_default_model(models=None, *, resources=None, task="general"):
                 vram = sum(totals) * 1024 ** 2
         except (OSError, ValueError, subprocess.SubprocessError):
             pass
-    capacity = ram + vram if ram is not None else None
+        swap = 0
+        try:
+            swap_measured = psutil.swap_memory().total
+            if type(swap_measured) is int and swap_measured > 0:
+                swap = swap_measured
+        except (OSError, ValueError, RuntimeError):
+            pass
+    capacity = (ram + vram + swap) if ram is not None else None
     candidates, excluded = [], []
     for model in installed:
         name, size = model["name"], model.get("size")
@@ -808,7 +816,7 @@ def _ext_default_model(models=None, *, resources=None, task="general"):
             candidates = coding
         _EXT_DEFAULT_MODEL_INFO["task"] = task
         _EXT_DEFAULT_MODEL_INFO["routing"] = "Installed coding-family name heuristic; no quality or physical engineering guarantee."
-    for pref in ("qwen3-coder-next:q4_K_M", "qwen-cyber:latest", "deepseek-r1:32b", "qwen3-coder:30b", "orcarouter", "qwen3-vl:8b"):
+    for pref in ("qwen3-coder-next:q4_K_M", "qwen-cyber:latest", "deepseek-r1:32b", "orcarouter", "qwen3-coder:30b", "qwen3-vl:30b", "qwen3-vl:8b"):
         match = next((name for name in candidates if pref.lower() in name.lower()), None)
         if match:
             _EXT_DEFAULT_MODEL_INFO["model"] = match
@@ -1476,7 +1484,7 @@ def sync_tunnel_url_to_gist():
 
 
 if __name__ == "__main__":
-    if os.environ.get("AURORA_BRIDGE_SYNC_TUNNEL", "1").strip().lower() not in {"0", "false", "no"}:
+    if os.environ.get("AURORA_BRIDGE_SYNC_TUNNEL", "0").strip().lower() not in {"0", "false", "no"}:
         sync_tunnel_url_to_gist()
     print("=" * 60)
     print("  BRIDGE AURORA — Port 3001")
@@ -1508,9 +1516,9 @@ if __name__ == "__main__":
     print("  SELF-WATCH       = ON  (auto re-exec sur changement de bridge_server.py)")
     # v82ld — fire-and-forget warmup of qwen3:14b so the first extract-structured
     # request doesn t pay the ~11s cold-load. Daemon thread, never blocks boot.
-    if os.environ.get("AURORA_BRIDGE_BACKGROUND_PRELOAD", "1").strip().lower() not in {"0", "false", "no"}:
-        _start_ollama_warmup_once("qwen3:14b")
-        print("  WARMUP           = qwen3:14b (background, non-blocking)")
+    if os.environ.get("AURORA_BRIDGE_BACKGROUND_PRELOAD", "0").strip().lower() not in {"0", "false", "no"}:
+        _start_ollama_warmup_once("orcarouter/Qwen3.8-27B-Uncensored:latest")
+        print("  WARMUP           = orcarouter/Qwen3.8-27B-Uncensored:latest (background, non-blocking)")
         # Best-effort conditional pull; disabled together with the warmup.
         _start_qwen3vl_pull_once("qwen3-vl:8b")
         print("  QWEN3-VL PULL    = conditional (skip if low VRAM / already installed)")
@@ -1518,7 +1526,7 @@ if __name__ == "__main__":
     # which vision model the bridge would pick if extract-structured were
     # called with an image right now. Pure observability, zero side effects.
     try:
-        _vision_pick, _vision_reason, _vision_kind = _pick_vision_model_or_default("qwen3-vl:8b")
+        _vision_pick, _vision_reason, _vision_kind = _pick_vision_model_or_default("qwen3-vl:30b")
         _free_gb = _get_free_vram_gb()
         print(f"  VISION PICKER    = {_vision_pick} (free VRAM ~{_free_gb} GB)")
         print(f"  VISION REASON    = {_vision_reason} [{_vision_kind}]")
@@ -1529,132 +1537,132 @@ if __name__ == "__main__":
         from routes.voice_bp_routes import voice_bp
         app.register_blueprint(voice_bp)
     except Exception as e:
-        print(f'Registration failed for {mod_name}: {e}')
+        print(f'Registration failed: {e}')
     try:
         from routes.fs_bp_routes import fs_bp
         app.register_blueprint(fs_bp)
     except Exception as e:
-        print(f'Registration failed for {mod_name}: {e}')
+        print(f'Registration failed: {e}')
     try:
         from routes.cinema_bp_routes import cinema_bp
         app.register_blueprint(cinema_bp)
     except Exception as e:
-        print(f'Registration failed for {mod_name}: {e}')
+        print(f'Registration failed: {e}')
     try:
         from routes.python_bp_routes import python_bp
         app.register_blueprint(python_bp)
     except Exception as e:
-        print(f'Registration failed for {mod_name}: {e}')
+        print(f'Registration failed: {e}')
     try:
         from routes.cli_bp_routes import cli_bp
         app.register_blueprint(cli_bp)
     except Exception as e:
-        print(f'Registration failed for {mod_name}: {e}')
+        print(f'Registration failed: {e}')
     try:
         from routes.postgres_bp_routes import postgres_bp
         app.register_blueprint(postgres_bp)
     except Exception as e:
-        print(f'Registration failed for {mod_name}: {e}')
+        print(f'Registration failed: {e}')
     try:
         from routes.s3_bp_routes import s3_bp
         app.register_blueprint(s3_bp)
     except Exception as e:
-        print(f'Registration failed for {mod_name}: {e}')
+        print(f'Registration failed: {e}')
     try:
         from routes.iot_bp_routes import iot_bp
         app.register_blueprint(iot_bp)
     except Exception as e:
-        print(f'Registration failed for {mod_name}: {e}')
+        print(f'Registration failed: {e}')
     try:
         from routes.vite_bp_routes import vite_bp
         app.register_blueprint(vite_bp)
     except Exception as e:
-        print(f'Registration failed for {mod_name}: {e}')
+        print(f'Registration failed: {e}')
     try:
         from routes.connect_bp_routes import connect_bp
         app.register_blueprint(connect_bp)
     except Exception as e:
-        print(f'Registration failed for {mod_name}: {e}')
+        print(f'Registration failed: {e}')
     try:
         from routes.repo_bp_routes import repo_bp
         app.register_blueprint(repo_bp)
     except Exception as e:
-        print(f'Registration failed for {mod_name}: {e}')
+        print(f'Registration failed: {e}')
     try:
         from routes.ext_bp_routes import ext_bp
         app.register_blueprint(ext_bp)
     except Exception as e:
-        print(f'Registration failed for {mod_name}: {e}')
+        print(f'Registration failed: {e}')
     try:
         from routes.comfy_proxy_bp_routes import comfy_proxy_bp
         app.register_blueprint(comfy_proxy_bp)
     except Exception as e:
-        print(f'Registration failed for {mod_name}: {e}')
+        print(f'Registration failed: {e}')
     try:
         from routes.hardware_bp_routes import hardware_bp
         app.register_blueprint(hardware_bp)
     except Exception as e:
-        print(f'Registration failed for {mod_name}: {e}')
+        print(f'Registration failed: {e}')
     try:
         from routes.status_bp_routes import status_bp
         app.register_blueprint(status_bp)
     except Exception as e:
-        print(f'Registration failed for {mod_name}: {e}')
+        print(f'Registration failed: {e}')
     try:
         from routes.web_action_bp_routes import web_action_bp
         app.register_blueprint(web_action_bp)
     except Exception as e:
-        print(f'Registration failed for {mod_name}: {e}')
+        print(f'Registration failed: {e}')
     try:
         from routes.web_search_bp_routes import web_search_bp
         app.register_blueprint(web_search_bp)
     except Exception as e:
-        print(f'Registration failed for {mod_name}: {e}')
+        print(f'Registration failed: {e}')
     try:
         from routes.python_prog_bp_routes import python_prog_bp
         app.register_blueprint(python_prog_bp)
     except Exception as e:
-        print(f'Registration failed for {mod_name}: {e}')
+        print(f'Registration failed: {e}')
     try:
         from routes.asset_bp_routes import asset_bp
         app.register_blueprint(asset_bp)
     except Exception as e:
-        print(f'Registration failed for {mod_name}: {e}')
+        print(f'Registration failed: {e}')
     try:
         from routes.ollama_list_bp_routes import ollama_list_bp
         app.register_blueprint(ollama_list_bp)
     except Exception as e:
-        print(f'Registration failed for {mod_name}: {e}')
+        print(f'Registration failed: {e}')
     try:
         from routes.upload_bp_routes import upload_bp
         app.register_blueprint(upload_bp)
     except Exception as e:
-        print(f'Registration failed for {mod_name}: {e}')
+        print(f'Registration failed: {e}')
     try:
         from routes.comfy_life_bp_routes import comfy_life_bp
         app.register_blueprint(comfy_life_bp)
     except Exception as e:
-        print(f'Registration failed for {mod_name}: {e}')
+        print(f'Registration failed: {e}')
     try:
         from routes.ollama_enh_bp_routes import ollama_enh_bp
         app.register_blueprint(ollama_enh_bp)
     except Exception as e:
-        print(f'Registration failed for {mod_name}: {e}')
+        print(f'Registration failed: {e}')
     try:
         from routes.sysinfo_bp_routes import sysinfo_bp
         app.register_blueprint(sysinfo_bp)
     except Exception as e:
-        print(f'Registration failed for {mod_name}: {e}')
+        print(f'Registration failed: {e}')
     try:
         from routes.cowork_file_bp_routes import cowork_file_bp
         app.register_blueprint(cowork_file_bp)
     except Exception as e:
-        print(f'Registration failed for {mod_name}: {e}')
+        print(f'Registration failed: {e}')
     try:
         from routes.cowork_ext_bp_routes import cowork_ext_bp
         app.register_blueprint(cowork_ext_bp)
     except Exception as e:
-        print(f'Registration failed for {mod_name}: {e}')
+        print(f'Registration failed: {e}')
     # iter32 SEC (D.3): bind loopback par défaut — le bridge est destiné à la
     # machine + au tunnel cloudflared (qui connecte en local sur 127.0.0.1:3001).
     # Exposer sur 0.0.0.0 ouvrait toutes les routes (dont exécution de commandes)
@@ -1662,4 +1670,12 @@ if __name__ == "__main__":
     # d'un accès LAN assumé.
     _bind_host = os.environ.get("AURORA_BRIDGE_HOST", "127.0.0.1").strip() or "127.0.0.1"
     print(f"  BIND             = {_bind_host}:3001 (AURORA_BRIDGE_HOST pour changer)", flush=True)
-    app.run(host=_bind_host, port=3001, threaded=True, debug=dev_reload, use_reloader=dev_reload)
+    for _bind_attempt in range(20):
+        try:
+            app.run(host=_bind_host, port=3001, threaded=True, debug=dev_reload, use_reloader=dev_reload)
+            break
+        except OSError as _bind_err:
+            if _bind_attempt < 19 and ("Address already in use" in str(_bind_err) or getattr(_bind_err, "errno", None) == 98):
+                time.sleep(0.5)
+                continue
+            raise

@@ -74,6 +74,7 @@ HTML_TEMPLATE = """<!doctype html>
 import * as THREE from 'three'
 import {{ OrbitControls }} from 'three/addons/controls/OrbitControls.js'
 import {{ GLTFLoader }} from 'three/addons/loaders/GLTFLoader.js'
+import {{ RoomEnvironment }} from 'three/addons/environments/RoomEnvironment.js'
 // iter11.C: DRACOLoader wires KHR_draco_mesh_compression so the standalone
 // viewer can read the new compressed bake outputs (8-15× smaller).
 import {{ DRACOLoader }} from 'three/addons/loaders/DRACOLoader.js'
@@ -106,6 +107,12 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
 renderer.toneMapping = THREE.ACESFilmicToneMapping
 renderer.toneMappingExposure = 1.0
 wrap.appendChild(renderer.domElement)
+
+try {{
+  const pmremGenerator = new THREE.PMREMGenerator(renderer)
+  scene.environment = pmremGenerator.fromScene(new RoomEnvironment(renderer), 0.04).texture
+  scene.environmentIntensity = 0.85
+}} catch (_envErr) {{}}
 
 const controls = new OrbitControls(camera, renderer.domElement)
 controls.enableDamping = true

@@ -3,7 +3,21 @@ from pathlib import Path
 import os
 from .config import ROOT
 
-FOLDERS = {"3d": "3D_Trellis", "image": "Images", "code": "Code_Qwen", "audio": "Voix_Audio", "conversation": "Conversation", "cyber": "Cyber", "cowork": "Cowork", "learning": "Apprentissage", "video": "Video", "animation": "Animation"}
+FOLDERS = {
+    "3d": "3D_Trellis",
+    "image": "Images",
+    "code": "Code_Qwen",
+    "audio": "Voix_Audio",
+    "conversation": "Conversation",
+    "cyber": "Cyber",
+    "cowork": "Cowork",
+    "learning": "Apprentissage",
+    "business": "Business_Qwen",
+    "drawing": "Dessin_Flux",
+    "simulator": "Simulateur_Qwen",
+    "video": "Video",
+    "animation": "Animation",
+}
 
 
 def publish_shortcuts(module, run):

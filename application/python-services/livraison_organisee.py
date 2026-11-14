@@ -39,10 +39,21 @@ def _glb_sans_materiaux(src: str | Path, dst: str | Path) -> dict:
         graph, blob = glb_io.load(src)
         for mesh in graph.get("meshes", []):
             for primitive in mesh.get("primitives", []):
-                primitive.pop("material", None)
+                primitive["material"] = 0
                 primitive.get("attributes", {}).pop("COLOR_0", None)
-        for key in ("materials", "textures", "images", "samplers"):
+        for key in ("textures", "images", "samplers"):
             graph.pop(key, None)
+        graph["materials"] = [
+            {
+                "name": "AuroraClayGeometry",
+                "doubleSided": True,
+                "pbrMetallicRoughness": {
+                    "baseColorFactor": [0.87, 0.84, 0.82, 1.0],
+                    "metallicFactor": 0.08,
+                    "roughnessFactor": 0.34,
+                },
+            }
+        ]
 
         # Meshopt embeds direct binary offsets outside bufferViews; leave that
         # representation intact. Ordinary and Draco buffers can be repacked.
@@ -101,6 +112,10 @@ def organiser(run_dir: str | Path, run_id: str, *,
     dans travail/. Les livrables sont DEPLACES (pas copies: zero doublon).
     """
     run_dir = Path(run_dir)
+    if run_dir.name in ("conversations", "3d", "output"):
+        if not run_id:
+            return {"ok": False, "error": "refus d'organiser le dossier parent: %s" % run_dir}
+        run_dir = run_dir / run_id
     if not run_dir.is_dir():
         return {"ok": False, "error": "run_dir absent: %s" % run_dir}
     d_prompt = run_dir / "prompt"
@@ -218,7 +233,7 @@ def organiser(run_dir: str | Path, run_id: str, *,
         cibles_planches.append((run_id + "_MOUVEMENT_GEOMETRIE.png",
                                 d_apercus / "MOUVEMENT_GEOMETRIE.png"))
     for motif, dst in cibles_planches:
-        for base in (run_dir, run_dir / "models"):
+        for base in (run_dir, run_dir / "models", run_dir / "work"):
             if not base.is_dir():
                 continue
             src = base / motif
@@ -227,6 +242,24 @@ def organiser(run_dir: str | Path, run_id: str, *,
     for src in list(run_dir.rglob("*_GEOMETRIE.png")):
         if src.is_file() and d_apercus not in src.parents and not str(src).startswith(str(d_mouv)):
             _mv(src, d_apercus / "GEOMETRIE.png")
+    for base_g in (run_dir, run_dir / "models", run_dir / "work"):
+        if not base_g.is_dir():
+            continue
+        for src in list(base_g.glob("*_GEOMETRIE_*.png")):
+            if src.is_file():
+                _mv(src, d_apercus / src.name)
+    for base_j in (run_dir / "work" / "journal", run_dir / "models" / "journal"):
+        if base_j.is_dir():
+            for src_j in list(base_j.rglob("*")):
+                if src_j.is_file():
+                    rel_j = src_j.relative_to(base_j)
+                    _mv(src_j, d_journal / rel_j)
+    for src in list((d_journal / "verifications").glob("*_vue*.png")):
+        if src.is_file():
+            try:
+                shutil.copyfile(src, d_apercus / src.name)
+            except Exception:
+                pass
     src_frames = run_dir / (run_id + "_MOUVEMENT_GEOMETRIE_frames")
     if src_frames.is_dir() and avec_mouvement:
         try:
@@ -242,7 +275,7 @@ def organiser(run_dir: str | Path, run_id: str, *,
 
     # 4) PROMPT: un seul exemplaire
     vus_prompt = False
-    for base in (run_dir / "prompts", run_dir / "models", run_dir):
+    for base in (run_dir / "prompts", run_dir / "models", run_dir / "work", run_dir):
         src = base / (run_id + "_prompt.txt")
         if src.is_file():
             if not vus_prompt:
@@ -286,10 +319,16 @@ def organiser(run_dir: str | Path, run_id: str, *,
                 # masques/, ...) restaient sur place: le run paraissait range
                 # mais models/ gardait des Go de travail. Racine: on ne touche
                 # jamais aux 6 dossiers de livraison.
-                if base == run_dir and src.name in (
-                        "prompt", "reference", "modele", "mouvement",
-                        "journal", "travail", "apercus", "models", "work", "rescue",
-                        "motion", "prompts", "audits"):
+                if base == run_dir and (
+                        src.name.startswith(".")
+                        or src.name in (
+                            "prompt", "reference", "modele", "mouvement",
+                            "journal", "travail", "apercus", "models", "work", "rescue",
+                            "motion", "prompts", "audits"
+                        )
+                        or (src / "modele").is_dir()
+                        or not src.name.startswith(("rescue", "mia_", "matvision", "masques", "essais_", "temp", "tmp", "_"))
+                ):
                     continue
                 try:
                     dst = d_travail / src.name
@@ -343,10 +382,19 @@ def organiser(run_dir: str | Path, run_id: str, *,
             glb_io.load(path)
         except (OSError, ValueError, KeyError) as exc:
             errors.append(f"{path.name}: {exc}")
+    if not errors and os.environ.get("AURORA_GARDER_TRAVAIL", "0") != "1":
+        try:
+            if d_travail.is_dir():
+                shutil.rmtree(d_travail, ignore_errors=True)
+            essais_sib = run_dir.parent / f"essais_{run_id}"
+            if essais_sib.is_dir():
+                shutil.rmtree(essais_sib, ignore_errors=True)
+        except Exception:  # noqa: BLE001
+            pass
     return {"ok": not errors, "error": "; ".join(errors) if errors else None,
             "livraison": livraison, "deplaces": len(deplaces),
             "arborescence": ["prompt/", "reference/", "modele/", "mouvement/",
-                             "journal/", "travail/", "apercus/"]}
+                             "journal/", "apercus/"]}
 
 
 if __name__ == "__main__":

@@ -66,29 +66,50 @@ export function buildHumanoidAnatomyBlock(
   if (!isHumanoid) return ''
 
   const ontology = analyzePromptOntologySync(prompt, { targetModule: '3d' })
-  const realisticRequested =
-    ontology.effectiveRenderMode === 'native_photorealistic'
-    || ontology.effectiveRenderMode === 'hybrid_anime_with_real_textures'
-    || /\b(realiste|realistic|adult|adulte|photorealist)\b/i.test(prompt)
+  const stylizedSubmode = ontology.stylizedSubmode ?? 'anime_cel'
+  const isCartoonOrFigurine =
+    stylizedSubmode === 'cartoon_3d'
+    || stylizedSubmode === 'cartoon_figurine'
+    || stylizedSubmode === 'figurine_toy'
+    || stylizedSubmode === 'clay_or_plush'
+    || stylizedSubmode === 'lowpoly_voxel'
   const stylizedRequested =
     ontology.effectiveRenderMode === 'native_anime_stylized'
     || ontology.effectiveRenderMode === 'hybrid_real_to_stylized'
-    || /\b(chibi|cartoon|anime|anim[eé]|manga|stylis[eé])\b/i.test(prompt)
+    || ontology.effectiveRenderMode === 'native_game_stylized'
+    || /\b(chibi|cartoon|dessin\s*anim[eé]|anime|anim[eé]|manga|stylis[eé]|figurine|funko|pixar|disney|peluche|jouet|p[aâ]te\s+[aà]\s+modeler|clay|low[-\s]?poly|voxel)\b/i.test(prompt)
+  const realisticRequested =
+    !stylizedRequested
+    && (
+      ontology.effectiveRenderMode === 'native_photorealistic'
+      || ontology.effectiveRenderMode === 'hybrid_anime_with_real_textures'
+      || /\b(realiste|realistic|adult|adulte|photorealist)\b/i.test(prompt)
+    )
 
   const baseLines: string[] = [
-    'HUMANOID ANATOMY DIRECTIVES (Meshy-grade requirement):',
+    'HUMANOID / CHARACTER ANATOMY DIRECTIVES (Meshy-grade requirement):',
     '- Full-body framing: subject occupies the WHOLE vertical extent of the image, head at top, feet at bottom, NO head close-up, NO waist crop',
-    '- Vertical silhouette aspect ratio at least 3:1 (height:width) — the subject is taller than wide',
-    '- Head occupies approximately 12% of the total vertical extent for realistic adult (1:7 head:body), 16% for authentic anime hero, 25% for child/chibi',
-    '- Hips and feet zone WIDER than the head zone (no inverted proportions, no head wider than shoulders unless explicit helmet/coiffure was requested)',
-    '- Limbs separated and clearly visible: arms not glued to torso, legs distinct, fingers on each hand',
+    ...(isCartoonOrFigurine
+      ? [
+          `- Authentic ${stylizedSubmode} proportions: preserve the exact iconic cartoon, figurine, Funko Pop, chibi, or stylized head-to-body ratio and silhouette width`,
+        ]
+      : [
+          '- Vertical silhouette aspect ratio at least 3:1 (height:width) — the subject is taller than wide',
+          '- Head occupies approximately 12% of the total vertical extent for realistic adult (1:7 head:body), 16% for authentic anime hero, 25% for child/chibi',
+          '- Hips and feet zone WIDER than the head zone (no inverted proportions, no head wider than shoulders unless explicit helmet/coiffure was requested)',
+        ]),
+    '- Limbs separated and clearly visible: arms not glued to torso, legs distinct, readable hands/paws/digits',
     '- Bilateral symmetry: left and right halves match (left arm = right arm length, left ear = right ear, left eye = right eye)',
     '- Stable centered standing pose by default (T-pose or A-pose) unless an explicit action verb appears in the user prompt',
   ]
 
   if (ontology.effectiveRenderMode === 'hybrid_anime_with_real_textures') {
     baseLines.push(
-      '- HYBRID ANIME + REAL PERSON TEXTURES MODE: preserve the iconic anime character silhouette, sculpted hairstyle geometry, and canonical costume proportions, while applying photorealistic human skin pores, subsurface scattering, and real physical fabric weaves',
+      '- HYBRID ANIME/CARTOON + REAL PERSON TEXTURES MODE: preserve the iconic character silhouette, sculpted hairstyle geometry, and canonical costume proportions, while applying photorealistic human skin pores, subsurface scattering, and real physical fabric weaves',
+    )
+  } else if (isCartoonOrFigurine && stylizedRequested) {
+    baseLines.push(
+      `- STYLIZED CARTOON / FIGURINE MODE (${stylizedSubmode.toUpperCase()}): render in authentic 3D cartoon / collectible figurine aesthetics with vibrant colors, expressive cartoon/figurine features, and smooth stylized surfaces (DO NOT force realistic human skin pores or realistic adult 1:7 proportions), while keeping limbs clearly separated for 3D rigging`,
     )
   } else if (ontology.effectiveRenderMode === 'native_anime_stylized' || stylizedRequested) {
     baseLines.push(

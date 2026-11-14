@@ -282,12 +282,12 @@ export async function classifyOralMode(
           { role: 'user', content: userMsg },
         ],
         stream: false,
-        options: { temperature: 0.2, num_ctx: 4096, num_predict: 300 },
+        options: { temperature: 0.2, num_ctx: 32768, num_predict: 4096 },
       }),
       signal: ctrl.signal,
     })
-    const data = await resp.json() as { message?: { content?: string }; response?: string }
-    const text = data?.message?.content ?? data?.response ?? ''
+    const data = await resp.json() as { message?: { content?: string; thinking?: string }; response?: string }
+    const text = (data?.message?.content || data?.response || data?.message?.thinking || '')
     if (timer) clearTimeout(timer)
     const parsed = parseLLMJson(text)
     if (parsed) return parsed

@@ -125,26 +125,37 @@ TARGET_TO_BONES: Dict[str, List[str]] = {
     # quadruped gait animated the HIND legs and left the front legs frozen.
     # Both namings are listed; apply_compiled_motion() skips absent bones.
     "front_legs": [
+        "DEF-front_thigh.L", "DEF-front_thigh.R", "DEF-front_shin.L", "DEF-front_shin.R",
+        "DEF-front_foot.L", "DEF-front_foot.R",
         "front_thigh_fk.L", "front_thigh_fk.R", "front_shin_fk.L", "front_shin_fk.R",
         "upper_arm_fk.L", "upper_arm_fk.R", "forearm_fk.L", "forearm_fk.R",
     ],
-    "hind_legs": ["thigh_fk.L", "thigh_fk.R", "shin_fk.L", "shin_fk.R"],
-    "back_legs": ["thigh_fk.L", "thigh_fk.R", "shin_fk.L", "shin_fk.R"],
+    "hind_legs": [
+        "DEF-thigh.L", "DEF-thigh.R", "DEF-shin.L", "DEF-shin.R", "DEF-foot.L", "DEF-foot.R",
+        "thigh_fk.L", "thigh_fk.R", "shin_fk.L", "shin_fk.R",
+    ],
+    "back_legs": [
+        "DEF-thigh.L", "DEF-thigh.R", "DEF-shin.L", "DEF-shin.R", "DEF-foot.L", "DEF-foot.R",
+        "thigh_fk.L", "thigh_fk.R", "shin_fk.L", "shin_fk.R",
+    ],
     "all_four_legs": [
+        "DEF-thigh.L", "DEF-thigh.R", "DEF-shin.L", "DEF-shin.R", "DEF-foot.L", "DEF-foot.R",
+        "DEF-front_thigh.L", "DEF-front_thigh.R", "DEF-front_shin.L", "DEF-front_shin.R",
+        "DEF-front_foot.L", "DEF-front_foot.R",
         "thigh_fk.L", "thigh_fk.R", "shin_fk.L", "shin_fk.R",
         "front_thigh_fk.L", "front_thigh_fk.R", "front_shin_fk.L", "front_shin_fk.R",
         "upper_arm_fk.L", "upper_arm_fk.R", "forearm_fk.L", "forearm_fk.R",
     ],
-    "tail": ["tail_fk", "tail_fk.001", "tail_fk.002", "tail_fk.003", "tail_fk.004",
-             "tail", "tail.001", "tail.002", "tail.003", "tail.004",
-             "DEF-tail", "DEF-tail.001", "DEF-tail.002"],
-    "ears": ["ear.L", "ear.R", "ear_fk.L", "ear_fk.R"],
+    "tail": ["DEF-tail", "DEF-tail.001", "DEF-tail.002", "DEF-tail.003", "DEF-tail.004",
+             "tail_fk", "tail_fk.001", "tail_fk.002", "tail_fk.003", "tail_fk.004",
+             "tail", "tail.001", "tail.002", "tail.003", "tail.004"],
+    "ears": ["DEF-ear.L", "DEF-ear.R", "ear.L", "ear.R", "ear_fk.L", "ear_fk.R"],
     "snout": ["face_snout", "snout"],
     # creature.roar / character.talk drive the jaw. Without this entry the
     # primitive resolved to [] and the roar silently lost its mouth opening.
     "jaw": ["jaw_master", "jaw", "DEF-jaw", "teeth.B"],
-    "head": ["head_fk", "head"],
-    "neck": ["neck_fk", "neck"],
+    "head": ["DEF-head", "head_fk", "head"],
+    "neck": ["DEF-neck", "DEF-neck.001", "neck_fk", "neck"],
 
     # Non-rigify (mechanism / vehicle / creature) — empty list means "object root"
     "drive_gear": [],
@@ -241,14 +252,15 @@ def _gait_phase_for_bone(bone: str, target: Optional[str]) -> float:
       • Knee lag: the shin/lower segment trails the thigh by ~0.08 cycle
         (heel-strike → the knee keeps extending a beat after the hip).
     """
-    is_quadruped = target in _QUADRUPED_TARGETS
-    side = 0.5 if (bone.endswith(".R") or "right" in bone.lower() or "driven" in bone.lower()) else 0.0
+    b_low = bone.lower()
+    is_quadruped = target in _QUADRUPED_TARGETS or "front_" in b_low
+    side = 0.5 if (bone.endswith(".R") or "right" in b_low or "driven" in b_low) else 0.0
     ph = side
     if _is_arm_bone(bone) and not is_quadruped:
         # contralateral arm swing — but in a quadruped the "arm" bones ARE the
         # front legs (anatomically), so they follow leg phasing, not arm-swing.
         ph += 0.5
-    if is_quadruped and (("thigh" in bone.lower()) or ("shin" in bone.lower())):
+    if is_quadruped and (("thigh" in b_low) or ("shin" in b_low)) and ("front" not in b_low):
         ph += 0.5  # hind legs trot diagonally to front legs
     if _is_shin_bone(bone):
         ph += 0.08  # knee/lower-segment lag behind the upper segment

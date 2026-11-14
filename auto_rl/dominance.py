@@ -81,6 +81,23 @@ TRACKED_BY_MODULE: dict[str, dict[str, int]] = {
     "learning": {
         "passed": +1,
     },
+    "business": {
+        "passed": +1,
+        "exit_code": -1,
+        "attempts": -1,
+    },
+    "simulator": {
+        "passed": +1,
+        "exit_code": -1,
+        "attempts": -1,
+    },
+    "drawing": {
+        "clip_cosine": +1,
+        "laion_aesthetic_0_10": +1,
+        "contrast": +1,
+        "edge_energy": +1,
+        "extreme_pixels": -1,
+    },
 }
 
 

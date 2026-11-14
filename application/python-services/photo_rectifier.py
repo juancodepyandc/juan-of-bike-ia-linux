@@ -69,14 +69,15 @@ def _to_srgb(x: np.ndarray) -> np.ndarray:
                     (1 + _SRGB_A) * np.power(x, 1 / 2.4) - _SRGB_A)
 
 
-def mesurer(bgr: np.ndarray) -> dict:
-    """Diagnostic photométrique de l'image (tout le reste en découle)."""
+def mesurer(bgr: np.ndarray, mask: np.ndarray | None = None) -> dict:
+    """Diagnostic photométrique de l'image ou du sujet détouré (tout le reste en découle)."""
     lum = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    vals = lum[mask > 180] if (mask is not None and int((mask > 180).sum()) > 200) else lum.ravel()
     return {
-        "luma_moyenne": float(lum.mean()),
-        "luma_mediane": float(np.median(lum)),
-        "point_blanc": float(np.percentile(lum, 99.0)),
-        "part_ombre": float((lum < 40).mean()),
+        "luma_moyenne": float(vals.mean()),
+        "luma_mediane": float(np.median(vals)),
+        "point_blanc": float(np.percentile(vals, 99.0)),
+        "part_ombre": float((vals < 40).mean()),
         "nettete": float(cv2.Laplacian(lum, cv2.CV_32F).var()),
     }
 
@@ -240,96 +241,107 @@ def rectify_photo_for_3d(
         pil = ImageOps.exif_transpose(pil)
     except Exception:  # noqa: BLE001
         pass
+    input_existing_alpha: np.ndarray | None = None
+    if "A" in pil.getbands():
+        _a_in = np.array(pil.getchannel("A"))
+        _trans_ratio = float((_a_in < 25).mean())
+        if 0.02 <= _trans_ratio <= 0.95:
+            input_existing_alpha = _a_in
     bgr = cv2.cvtColor(np.array(pil.convert("RGB")), cv2.COLOR_RGB2BGR)
 
-    avant = mesurer(bgr)
-    rapport: dict[str, Any] = {"mesures_avant": {k: round(v, 2) for k, v in avant.items()}}
+    avant_global = mesurer(bgr)
+    rapport: dict[str, Any] = {"mesures_avant": {k: round(v, 2) for k, v in avant_global.items()}}
     log("[photo_rectifier] photo recue: luma %.0f/255, ombre %.0f%%, point blanc %.0f"
-        % (avant["luma_moyenne"], 100 * avant["part_ombre"], avant["point_blanc"]))
+        % (avant_global["luma_moyenne"], 100 * avant_global["part_ombre"], avant_global["point_blanc"]))
 
-    # ORDRE IMPOSÉ PAR LA MESURE. Le déreflet doit passer sur l'image
-    # d'ORIGINE (signature bleue intacte), mais le détecteur de visage, lui,
-    # a besoin d'y voir clair. On éclaircit donc une copie JETABLE pour
-    # localiser le visage, et on applique la correction sur l'originale.
-    # Les deux images ont exactement les mêmes dimensions: les repères sont
-    # directement transposables.
     os.makedirs(os.path.dirname(os.path.abspath(output_rgba_path)), exist_ok=True)
     tmp = str(Path(output_rgba_path).with_name(Path(output_rgba_path).stem + "_reperage.png"))
-    apercu, _ = corriger_exposition(bgr, avant)
-    cv2.imwrite(tmp, apercu)
-    landmarks, face_bbox = None, None
+
+    # 1. DÉTOURAGE HAUTE PRÉCISION EN PREMIER (`birefnet-general` 1024x1024).
+    # Exécuter le détourage AVANT la mesure photométrique évite qu'un fond sombre
+    # (ex: décor de Poudlard sombre derrière Harry Potter ou fond de studio dramatique)
+    # ne déclenche un gain d'exposition ou un CLAHE qui délaverait les vêtements noirs
+    # et les cheveux foncés du sujet ! De plus, `birefnet-general` préserve intégralement
+    # les socles de figurines, accessoires et corps entiers (contrairement à `birefnet-portrait`).
+    modele = os.environ.get("AURORA_RECTIFIER_MATTING") or "birefnet-general"
+    log("[photo_rectifier] detourage (%s)..." % modele)
+    rgb_init = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
     try:
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
-        from face_restore import detect_face_bbox
-        hit = detect_face_bbox(tmp, allow_silhouette=False)
-        if hit is not None:
-            landmarks = getattr(hit, "landmarks", None)
-            face_bbox = getattr(hit, "bbox", None)
+        import rembg
+        try:
+            session = rembg.new_session(modele)
+        except Exception:
+            session = rembg.new_session("u2net")
+        rgba_init = rembg.remove(Image.fromarray(rgb_init), session=session)
+        rapport["detourage"] = {"ok": True, "modele": modele}
     except Exception as exc:  # noqa: BLE001
-        log("[photo_rectifier] detection visage indisponible (%s)" % type(exc).__name__)
+        rgba_init = Image.fromarray(rgb_init).convert("RGBA")
+        rapport["detourage"] = {"ok": False, "error": repr(exc)[:160]}
+        log("[photo_rectifier] detourage indisponible (%s) — image pleine conservee"
+            % type(exc).__name__)
+
+    rgba_init = rgba_init.convert("RGBA")
+    arr = np.array(rgba_init)
+    if input_existing_alpha is not None and input_existing_alpha.shape == arr[..., 3].shape:
+        arr[..., 3] = np.minimum(arr[..., 3], input_existing_alpha)
+
+    # Durcissement propre du canal alpha (élimine les franges semi-transparentes de barbe/fond)
+    alpha_raw = arr[..., 3].astype(np.float32)
+    alpha_clean = np.clip((alpha_raw - 38.0) * (255.0 / (205.0 - 38.0)), 0.0, 255.0).astype(np.uint8)
+    arr[..., 3] = alpha_clean
+
+    # 2. MESURE PHOTOMÉTRIQUE SUR LE SUJET DÉTOURÉ UNIQUEMENT (`alpha > 180`).
+    avant = mesurer(bgr, mask=arr[..., 3])
+    rapport["mesures_sujet"] = {k: round(v, 2) for k, v in avant.items()}
+    is_clean_studio_or_stylized = (
+        avant["point_blanc"] >= 195.0
+        or avant["luma_moyenne"] >= 90.0
+        or (input_existing_alpha is not None)
+    )
+    landmarks, face_bbox = None, None
+    if not is_clean_studio_or_stylized:
+        apercu, _ = corriger_exposition(bgr, avant)
+        cv2.imwrite(tmp, apercu)
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from face_restore import detect_face_bbox
+            hit = detect_face_bbox(tmp, allow_silhouette=False)
+            if hit is not None:
+                landmarks = getattr(hit, "landmarks", None)
+                face_bbox = getattr(hit, "bbox", None)
+        except Exception as exc:  # noqa: BLE001
+            log("[photo_rectifier] detection visage indisponible (%s)" % type(exc).__name__)
     rapport["visage_detecte"] = bool(landmarks)
 
-    bgr, rapport["reflets"] = eteindre_reflets_lunettes(bgr, landmarks,
-                                                        bbox=face_bbox, log=log)
+    if not is_clean_studio_or_stylized and landmarks:
+        bgr, rapport["reflets"] = eteindre_reflets_lunettes(bgr, landmarks,
+                                                            bbox=face_bbox, log=log)
+    else:
+        rapport["reflets"] = {"applique": False, "raison": "sujet deja bien expose / studio / stylise"}
     if rapport["reflets"].get("applique"):
         log("[photo_rectifier] reflet de lunettes eteint (%d px, zone issue des "
             "reperes du visage)" % rapport["reflets"]["px_reflet"])
     else:
         log("[photo_rectifier] pas de dereflet: %s" % rapport["reflets"].get("raison", ""))
 
-    bgr, rapport["exposition"] = corriger_exposition(bgr, avant)
-    if rapport["exposition"].get("applique"):
-        log("[photo_rectifier] exposition corrigee (gain x%.2f, mesure sur le "
-            "point blanc — teint preserve)" % rapport["exposition"]["gain"])
-    bgr, rapport["ombres"] = rehausser_ombres(bgr, avant)
-    bgr, rapport["bruit"] = debruiter_chroma(bgr, rapport["exposition"].get("gain", 1.0))
+    if not is_clean_studio_or_stylized:
+        bgr, rapport["exposition"] = corriger_exposition(bgr, avant)
+        if rapport["exposition"].get("applique"):
+            log("[photo_rectifier] exposition corrigee (gain x%.2f, mesure sur le "
+                "point blanc du sujet — teint preserve)" % rapport["exposition"]["gain"])
+        bgr, rapport["ombres"] = rehausser_ombres(bgr, avant)
+        bgr, rapport["bruit"] = debruiter_chroma(bgr, rapport["exposition"].get("gain", 1.0))
+    else:
+        rapport["exposition"] = {"gain": 1.0, "applique": False}
+        rapport["ombres"] = {"applique": False}
+        rapport["bruit"] = {"applique": False}
 
-    rapport["mesures_apres"] = {k: round(v, 2) for k, v in mesurer(bgr).items()}
-
-    # Détourage. BiRefNet-PORTRAIT garde les mèches bouclées et les motifs,
-    # mais il est entraîné sur des humains: sur un objet il découperait de
-    # travers. Le modèle suit donc ce qui a été DÉTECTÉ, pas une supposition
-    # sur le sujet.
-    modele = os.environ.get("AURORA_RECTIFIER_MATTING") or (
-        "birefnet-portrait" if landmarks else "u2net")
-    log("[photo_rectifier] detourage (%s)..." % modele)
+    rapport["mesures_apres"] = {k: round(v, 2) for k, v in mesurer(bgr, mask=arr[..., 3]).items()}
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-    try:
-        import rembg
-        session = rembg.new_session(modele)
-        rgba = rembg.remove(Image.fromarray(rgb), session=session)
-        rapport["detourage"] = {"ok": True}
-    except Exception as exc:  # noqa: BLE001
-        rgba = Image.fromarray(rgb).convert("RGBA")
-        rapport["detourage"] = {"ok": False, "error": repr(exc)[:160]}
-        log("[photo_rectifier] detourage indisponible (%s) — image pleine conservee"
-            % type(exc).__name__)
+    arr[..., :3] = rgb
+    rgba = Image.fromarray(arr)
 
-    # `arr` n'etait DEFINI NULLE PART: utilise plus bas ligne ~324 (dans un try,
-    # donc avale en « filtrage logos/textes (name 'arr' is not defined) ») ET
-    # ligne ~339 HORS try — la fonction levait donc un NameError a chaque appel.
-    # Consequence: la rectification entiere n'a JAMAIS tourne. Ni le nettoyage
-    # des filigranes, ni surtout le CADRAGE qui ferme la silhouette — celui-la
-    # meme dont le commentaire ci-dessous dit qu'il existe pour empecher le
-    # « toujours presque plat ». Corrige le 03/09.
-    rgba = rgba.convert("RGBA")
-    arr = np.array(rgba)
-
-    # CADRE CARRÉ AVEC MARGE GARANTIE — la silhouette doit être FERMÉE.
-    # Mesuré sur ce selfie: le sujet occupait 77% du cadre et touchait les
-    # bords (100% en bas, ~30% de chaque côté). Une silhouette qui sort du
-    # cadre n'a pas de contour fermé: la reconstruction a rendu un PLAN
-    # (profondeur mesurée exactement 0.0 sur 1,8 M de faces) au lieu d'un
-    # volume — c'est la cause du "toujours presque plat". Recadrer ne suffit
-    # pas quand le sujet touche déjà les bords: il faut AJOUTER du vide.
-    # On compose donc sur un canevas carré transparent où le sujet occupe une
-    # fraction bornée, sans jamais redimensionner ni déformer les pixels
-    # réels. Ce qui sortait du cadre d'origine reste absent — rien n'est
-    # inventé; on rend seulement le contour exploitable.
-    # NETTOYAGE DES TEXTES ET LOGOS PARASITES DÉCONNECTÉS.
-    # Les images transparentes du web (pngitem, pikpng...) contiennent souvent
-    # un logo ou texte de franchise (ex: "FAIRY TAIL", "PIKPNG") dans un coin.
-    # Si on le laisse, la reconstruction 3D sculpte ce texte flottant dans le maillage.
+    # NETTOYAGE DES TEXTES ET LOGOS PARASITES DÉCONNECTÉS (sans supprimer un 2e personnage).
     try:
         bin_mask = (arr[..., 3] > 15).astype(np.uint8)
         num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(bin_mask, connectivity=8)
@@ -340,12 +352,35 @@ def rectify_photo_for_3d(
                 c_area = float(stats[comp_idx, cv2.CC_STAT_AREA])
                 c_w = float(stats[comp_idx, cv2.CC_STAT_WIDTH])
                 c_h = float(stats[comp_idx, cv2.CC_STAT_HEIGHT])
-                is_text_aspect = (c_w > 2.5 * c_h and c_area < 0.20 * max_area) or (c_h > 2.5 * c_w and c_area < 0.10 * max_area)
-                if c_area < 0.08 * max_area or is_text_aspect:
+                is_text_banner = (c_w > 3.2 * c_h and c_area < 0.12 * max_area)
+                if c_area < 0.015 * max_area or is_text_banner:
                     arr[labels == comp_idx, 3] = 0
             rgba = Image.fromarray(arr)
     except Exception as _cc_exc:
         log(f"[photo_rectifier] filtrage logos/textes ({_cc_exc})")
+
+    # Défrangeage Voronoï strictement limité à la frange semi-transparente (<= 2.5 px, alpha < 240)
+    # pour éliminer tout halo de fond sans altérer les couleurs internes.
+    try:
+        fg_2d = arr[..., 3] > 128
+        if int(fg_2d.sum()) > 1500:
+            rgb_tex = arr[..., :3].copy()
+            dist_init = cv2.distanceTransform(fg_2d.astype(np.uint8), cv2.DIST_L2, 5)
+            valid_interior = fg_2d & (dist_init > 2.5) & (arr[..., 3] >= 240)
+            if int(valid_interior.sum()) > 500:
+                _, lbl_vor = cv2.distanceTransformWithLabels(
+                    (~valid_interior).astype(np.uint8), cv2.DIST_L2, 5, labelType=cv2.DIST_LABEL_PIXEL
+                )
+                flat_valid = np.flatnonzero(valid_interior.ravel())
+                lut = np.zeros(lbl_vor.max() + 1, dtype=np.int64)
+                lut[lbl_vor.ravel()[flat_valid]] = flat_valid
+                vor_rgb = rgb_tex.reshape(-1, 3)[lut[lbl_vor.ravel()]].reshape(rgb_tex.shape)
+                rim_fringe = (arr[..., 3] > 0) & (arr[..., 3] < 240) & (dist_init <= 2.5)
+                rgb_tex[rim_fringe] = vor_rgb[rim_fringe]
+                arr[..., :3] = rgb_tex
+                rgba = Image.fromarray(arr)
+    except Exception as _g2d_exc:
+        log(f"[photo_rectifier] defrangeage Voronoï ignore ({_g2d_exc})")
 
     ys, xs = np.where(arr[..., 3] > 10)
     # NE PADDER QUE SI LA SILHOUETTE EN A BESOIN. Ce canevas carre existe

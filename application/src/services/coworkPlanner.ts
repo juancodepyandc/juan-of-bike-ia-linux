@@ -1065,24 +1065,28 @@ async function buildAccompanimentPlan(ctx: PlannerContext): Promise<CoworkPlan |
 }
 
 function buildDeterministicPlan(ctx: PlannerContext): CoworkPlan | null {
+  const transactionalRecovery = buildTransactionalRecoveryPlan(ctx)
+  if (transactionalRecovery) return optimizePlanByCausalDag(transactionalRecovery, ctx.workspaceRoot)
+  const multiDocPlan = buildMultiDocumentReconciliationPlan(ctx)
+  if (multiDocPlan) return optimizePlanByCausalDag(multiDocPlan, ctx.workspaceRoot)
   const desktopPlan = buildDesktopDeterministicPlan(ctx)
-  if (desktopPlan) return desktopPlan
+  if (desktopPlan) return optimizePlanByCausalDag(desktopPlan, ctx.workspaceRoot)
   const userFolderFilterPlan = buildUserFolderFilteredListingPlan(ctx)
-  if (userFolderFilterPlan) return userFolderFilterPlan
+  if (userFolderFilterPlan) return optimizePlanByCausalDag(userFolderFilterPlan, ctx.workspaceRoot)
   const userFolderOverviewPlan = buildUserFolderOverviewPlan(ctx)
-  if (userFolderOverviewPlan) return userFolderOverviewPlan
+  if (userFolderOverviewPlan) return optimizePlanByCausalDag(userFolderOverviewPlan, ctx.workspaceRoot)
   const userFolderPlan = buildUserFolderArtifactPlan(ctx)
-  if (userFolderPlan) return userFolderPlan
+  if (userFolderPlan) return optimizePlanByCausalDag(userFolderPlan, ctx.workspaceRoot)
   const academicWebPlan = buildAcademicWebResearchPlan(ctx)
-  if (academicWebPlan) return academicWebPlan
+  if (academicWebPlan) return optimizePlanByCausalDag(academicWebPlan, ctx.workspaceRoot)
   const creativeProductionPlan = buildCreativeProductionPlan(ctx)
-  if (creativeProductionPlan) return creativeProductionPlan
+  if (creativeProductionPlan) return optimizePlanByCausalDag(creativeProductionPlan, ctx.workspaceRoot)
   const workspacePlan = buildWorkspaceExplorationPlan(ctx)
-  if (workspacePlan) return workspacePlan
+  if (workspacePlan) return optimizePlanByCausalDag(workspacePlan, ctx.workspaceRoot)
   const missionBootstrapPlan = buildMissionBootstrapPlan(ctx)
-  if (missionBootstrapPlan) return missionBootstrapPlan
+  if (missionBootstrapPlan) return optimizePlanByCausalDag(missionBootstrapPlan, ctx.workspaceRoot)
   const creativePlan = buildCreativeReflectionPlan(ctx)
-  if (creativePlan) return creativePlan
+  if (creativePlan) return optimizePlanByCausalDag(creativePlan, ctx.workspaceRoot)
   return null
 }
 
@@ -2584,10 +2588,9 @@ function isUserFolderArtifactRequest(ctx: PlannerContext): boolean {
   const current = normalizeIntentText(getEffectiveUserPrompt(ctx))
   const targetsUserFolder = isUserFolderTargetRequest(ctx)
   const wantsPdfArtifact = /\bpdf\b/.test(current)
-  const hasSupportedDeterministicTopic = /\b(seconde|2e|deuxieme).{0,24}guerre.{0,24}mondiale\b/.test(current) || /\b(ww2|wwii)\b/.test(current)
   const wantsCreation = /\b(fais|fait|cree|creer|genere|generer|produis|produire|redige|rediger|ecris|ecrire|mets|mettre|prepare|preparer)\b/.test(current)
   const wantsScanThenCreate = /\b(scan|scanne|scanner|parcours|parcourir|lis|lire|regarde|analyse|analyser)\b/.test(current) && wantsPdfArtifact
-  return targetsUserFolder && wantsPdfArtifact && hasSupportedDeterministicTopic && (wantsCreation || wantsScanThenCreate)
+  return targetsUserFolder && wantsPdfArtifact && (wantsCreation || wantsScanThenCreate)
 }
 
 function buildUserFolderFilteredListingPlan(ctx: PlannerContext): CoworkPlan | null {
@@ -3326,6 +3329,7 @@ async function planWithRetry(
     processed = repairMetaOnlyReplyPlan(processed, ctx)
     processed = repairExtensionBlockedWebResearchPlan(processed, ctx)
     processed = repairPassiveCoworkPlan(processed, ctx)
+    processed = optimizePlanByCausalDag(processed, ctx?.workspaceRoot)
     return processed
   }
   if (retriesLeft > 0) {
@@ -3630,6 +3634,10 @@ function buildUserPrompt(ctx: PlannerContext): string {
       const summary = summariseEntry(entry)
       lines.push(`- ${summary}`)
     }
+    const crossDocDigest = buildCrossDocumentPromptDigest(ctx.history)
+    if (crossDocDigest) {
+      lines.push('', crossDocDigest)
+    }
   }
   return lines.join('\n')
 }
@@ -3818,4 +3826,1109 @@ function extractContent(response: unknown): string {
   }
   // Last resort : stringify (parser will fail cleanly with "no JSON detected")
   try { return JSON.stringify(response) } catch { return String(response) }
+}
+
+// ===========================================================================
+// 1. DECOMPOSITION DAG CAUSALE MULTI-AGENTS (Tri Topologique de Kahn + CPM)
+// ===========================================================================
+
+export type CoworkAgentRole =
+  | 'explorer'
+  | 'analyst'
+  | 'mutator'
+  | 'verifier'
+  | 'synthesizer'
+  | 'communicator'
+
+export type CausalDependencyKind =
+  | 'RAW'                // Read-After-Write (consomme ce qu une action precedente produit)
+  | 'WAR'                // Write-After-Read (ecrase ce qu une lecture precedente observait)
+  | 'WAW'                // Write-After-Write (ordonnancement strict des mutations)
+  | 'VERIFICATION_GATE'  // Verification post-mutation
+  | 'CAUSAL_BARRIER'     // Barriere terminale (reply / voice_speak / finish)
+
+export type CausalDagEdge = {
+  from: number
+  to: number
+  kind: CausalDependencyKind
+  resource: string
+}
+
+export type CausalDagNode = {
+  index: number
+  action: CoworkAction
+  agentRole: CoworkAgentRole
+  consumesResources: string[]
+  producesResources: string[]
+  estimatedDurationMs: number
+  earliestStartMs: number
+  earliestFinishMs: number
+  latestStartMs: number
+  latestFinishMs: number
+  slackMs: number
+  isCritical: boolean
+}
+
+export type AgentHandoffEdge = {
+  fromIndex: number
+  toIndex: number
+  fromRole: CoworkAgentRole
+  toRole: CoworkAgentRole
+  resource: string
+}
+
+export type CausalPlanDag = {
+  nodes: CausalDagNode[]
+  edges: CausalDagEdge[]
+  topologicalOrder: number[]
+  parallelStages: number[][]
+  criticalPathIndices: number[]
+  criticalPathDurationMs: number
+  sequentialDurationMs: number
+  parallelSpeedupRatio: number
+  agentHandoffs: AgentHandoffEdge[]
+  hasCycle: boolean
+}
+
+function classifyActionAgentRole(action: CoworkAction, index: number, priorActions: CoworkAction[]): CoworkAgentRole {
+  switch (action.kind) {
+    case 'read_file':
+    case 'list_dir': {
+      const target = normalizeWorkspacePath(action.path).toLowerCase()
+      const verifiesPriorWrite = priorActions.slice(0, index).some((prev) =>
+        (prev.kind === 'write_file' || prev.kind === 'edit_file')
+        && normalizeWorkspacePath(prev.path).toLowerCase() === target,
+      )
+      return verifiesPriorWrite ? 'verifier' : 'explorer'
+    }
+    case 'web_search':
+    case 'fetch':
+    case 'dom_query':
+    case 'clipboard_read':
+    case 'screenshot_desktop':
+      return 'explorer'
+    case 'browser':
+      return ['click', 'fill', 'eval', 'navigate'].includes(action.operation) ? 'mutator' : 'explorer'
+    case 'think':
+    case 'think_long':
+    case 'vision_describe':
+      return 'analyst'
+    case 'write_file':
+    case 'edit_file':
+    case 'delete_file':
+    case 'clipboard_write':
+    case 'remember_fact':
+    case 'forget_fact':
+    case 'ephemeral_tool':
+    case 'file_bundle':
+      return 'mutator'
+    case 'shell': {
+      const cmd = (action.command || '').trim().toLowerCase()
+      const joined = `${cmd} ${(action.args ?? []).join(' ')}`.toLowerCase()
+      if (/\b(test|pytest|vitest|jest|tsc|eslint|check|status|curl)\b/.test(joined)) {
+        return 'verifier'
+      }
+      if (/^(ls|dir|rg|fd|find|cat|head|tail|git\s+status|git\s+diff|git\s+log|ps|uname|whoami|which|where)\b/.test(joined)) {
+        return 'explorer'
+      }
+      return 'mutator'
+    }
+    case 'connector': {
+      const op = (action.action || '').toLowerCase()
+      return /^(get_|list_|search|check|probe|read|status)/.test(op) ? 'explorer' : 'mutator'
+    }
+    case 'open_url':
+    case 'voice_speak':
+      return 'communicator'
+    case 'reply':
+    case 'finish':
+      return 'synthesizer'
+  }
+}
+
+function estimateActionDurationForDag(action: CoworkAction): number {
+  switch (action.kind) {
+    case 'think':
+    case 'reply':
+    case 'finish':
+    case 'remember_fact':
+    case 'forget_fact':
+    case 'clipboard_read':
+    case 'clipboard_write':
+      return 40
+    case 'read_file':
+    case 'list_dir':
+    case 'dom_query':
+      return 180
+    case 'write_file':
+    case 'edit_file':
+    case 'delete_file':
+      return 260
+    case 'open_url':
+      return 200
+    case 'web_search':
+    case 'fetch':
+      return 1200
+    case 'screenshot_desktop':
+      return 900
+    case 'vision_describe':
+      return 3800
+    case 'voice_speak':
+      return 1800
+    case 'browser':
+      return action.operation === 'extract_structured' ? 4200 : 850
+    case 'connector':
+      return /^aurora_(3d|video|image|code)/.test(action.connector) ? 12_000 : 1600
+    case 'shell':
+      return Math.min(action.timeoutMs ?? 3500, 15_000)
+    case 'think_long':
+      return Math.min(action.durationHintMs ?? 15_000, 30_000)
+    case 'ephemeral_tool':
+      return (action.timeoutSeconds ?? 10) * 1000
+    case 'file_bundle':
+      return 350
+  }
+}
+
+function inferActionResourceFootprint(
+  action: CoworkAction,
+  workspaceRoot = '',
+): { consumes: string[]; produces: string[] } {
+  const normPath = (p: string) => {
+    const clean = normalizeWorkspacePath(p)
+    if (!clean) return 'fs:root'
+    if (workspaceRoot && !isAbsoluteWorkspacePath(clean)) {
+      return `fs:${joinWorkspacePath(workspaceRoot, clean).toLowerCase()}`
+    }
+    return `fs:${clean.toLowerCase()}`
+  }
+
+  switch (action.kind) {
+    case 'read_file':
+      return { consumes: [normPath(action.path)], produces: [`knowledge:${normPath(action.path)}`] }
+    case 'list_dir':
+      return { consumes: [normPath(action.path || workspaceRoot)], produces: [`listing:${normPath(action.path || workspaceRoot)}`] }
+    case 'write_file':
+      return { consumes: [], produces: [normPath(action.path)] }
+    case 'edit_file':
+      return { consumes: [normPath(action.path)], produces: [normPath(action.path)] }
+    case 'delete_file':
+      return { consumes: [normPath(action.path)], produces: [normPath(action.path)] }
+    case 'web_search':
+      return { consumes: [], produces: ['web:search_results'] }
+    case 'fetch':
+      return { consumes: ['web:search_results'], produces: [`url:${action.url}`] }
+    case 'screenshot_desktop':
+      return { consumes: [], produces: ['visual:screenshot'] }
+    case 'vision_describe':
+      return { consumes: ['visual:screenshot'], produces: ['knowledge:vision_description'] }
+    case 'browser': {
+      if (action.operation === 'screenshot') {
+        return { consumes: [], produces: ['visual:screenshot'] }
+      }
+      if (action.operation === 'analyze_page') {
+        return { consumes: [], produces: ['dom:page_topology'] }
+      }
+      if (action.operation === 'extract_structured') {
+        return { consumes: ['dom:page_topology'], produces: ['knowledge:structured_items'] }
+      }
+      if (action.operation === 'click' || action.operation === 'fill' || action.operation === 'navigate' || action.operation === 'eval') {
+        return { consumes: ['dom:page_topology'], produces: ['dom:page_state'] }
+      }
+      return { consumes: [], produces: ['dom:page_topology'] }
+    }
+    case 'shell': {
+      const args = [action.command, ...(action.args ?? [])]
+      const fileTokens = args
+        .filter((tok) => !tok.startsWith('-') && /[/.][a-z0-9]{1,6}$/i.test(tok))
+        .map(normPath)
+      const isReadOnly = /^(ls|dir|rg|fd|find|cat|head|tail|wc|pwd|whoami|where|which)$/i.test(action.command.trim())
+      return isReadOnly
+        ? { consumes: fileTokens, produces: ['knowledge:shell_observation'] }
+        : { consumes: fileTokens, produces: [...fileTokens, 'state:shell_env'] }
+    }
+    case 'think':
+    case 'think_long':
+      return { consumes: [], produces: ['knowledge:reasoning'] }
+    case 'connector':
+      return {
+        consumes: [],
+        produces: [`connector:${action.connector}.${action.action}`],
+      }
+    case 'reply':
+      return { consumes: ['barrier:all_work'], produces: ['utterance:reply'] }
+    case 'voice_speak':
+      return { consumes: ['utterance:reply'], produces: ['utterance:spoken'] }
+    case 'finish':
+      return { consumes: ['barrier:all_work', 'utterance:reply', 'utterance:spoken'], produces: ['plan:complete'] }
+    default:
+      return { consumes: [], produces: [] }
+  }
+}
+
+/**
+ * Construit le DAG causal multi-agents d un CoworkPlan par premiers principes :
+ * - Infere les dependances de donnees (RAW, WAR, WAW, VERIFICATION_GATE, CAUSAL_BARRIER)
+ * - Execute le tri topologique de Kahn en vagues paralleles
+ * - Calcule la methode du chemin critique (CPM : ES, EF, LS, LF, Slack)
+ * - Identifie les passages de relais inter-agents (explorer -> analyst -> mutator -> verifier -> synthesizer)
+ */
+export function buildCausalPlanDag(plan: CoworkPlan, workspaceRoot = ''): CausalPlanDag {
+  const actions = plan.actions ?? []
+  const n = actions.length
+  if (n === 0) {
+    return {
+      nodes: [],
+      edges: [],
+      topologicalOrder: [],
+      parallelStages: [],
+      criticalPathIndices: [],
+      criticalPathDurationMs: 0,
+      sequentialDurationMs: 0,
+      parallelSpeedupRatio: 1,
+      agentHandoffs: [],
+      hasCycle: false,
+    }
+  }
+
+  const nodes: CausalDagNode[] = actions.map((action, index) => {
+    const footprint = inferActionResourceFootprint(action, workspaceRoot)
+    const role = classifyActionAgentRole(action, index, actions)
+    const dur = estimateActionDurationForDag(action)
+    return {
+      index,
+      action,
+      agentRole: role,
+      consumesResources: footprint.consumes,
+      producesResources: footprint.produces,
+      estimatedDurationMs: dur,
+      earliestStartMs: 0,
+      earliestFinishMs: dur,
+      latestStartMs: 0,
+      latestFinishMs: dur,
+      slackMs: 0,
+      isCritical: false,
+    }
+  })
+
+  const edges: CausalDagEdge[] = []
+  const adj = Array.from({ length: n }, () => new Set<number>())
+  const revAdj = Array.from({ length: n }, () => new Set<number>())
+
+  const addEdge = (from: number, to: number, kind: CausalDependencyKind, resource: string) => {
+    if (from === to || from < 0 || to < 0 || from >= n || to >= n) return
+    if (adj[from].has(to)) return
+    adj[from].add(to)
+    revAdj[to].add(from)
+    edges.push({ from, to, kind, resource })
+  }
+
+  for (let i = 0; i < n; i += 1) {
+    const nodeI = nodes[i]
+    const actI = nodeI.action
+
+    // Barriere terminale : finish depend de tout ce qui precede ;
+    // reply depend de toutes les actions non-terminales precedentes ;
+    // voice_speak depend de reply (s il existe) et des actions de travail.
+    if (actI.kind === 'finish') {
+      for (let j = 0; j < i; j += 1) {
+        addEdge(j, i, 'CAUSAL_BARRIER', 'plan:complete')
+      }
+      continue
+    }
+
+    if (actI.kind === 'voice_speak') {
+      for (let j = 0; j < i; j += 1) {
+        if (actions[j].kind !== 'finish') {
+          addEdge(j, i, 'CAUSAL_BARRIER', 'utterance:reply')
+        }
+      }
+      continue
+    }
+
+    if (actI.kind === 'reply') {
+      for (let j = 0; j < i; j += 1) {
+        if (actions[j].kind !== 'finish' && actions[j].kind !== 'voice_speak') {
+          addEdge(j, i, 'CAUSAL_BARRIER', 'barrier:all_work')
+        }
+      }
+      continue
+    }
+
+    for (let j = 0; j < i; j += 1) {
+      const nodeJ = nodes[j]
+      // 1. Read-After-Write (RAW) : j produit R, i consomme R
+      for (const prod of nodeJ.producesResources) {
+        if (nodeI.consumesResources.includes(prod)) {
+          const kind: CausalDependencyKind = nodeI.agentRole === 'verifier' && nodeJ.agentRole === 'mutator'
+            ? 'VERIFICATION_GATE'
+            : 'RAW'
+          addEdge(j, i, kind, prod)
+        }
+      }
+      // 2. Write-After-Read (WAR) : j consomme R, i produit/ecrase R
+      for (const cons of nodeJ.consumesResources) {
+        if (nodeI.producesResources.includes(cons)) {
+          addEdge(j, i, 'WAR', cons)
+        }
+      }
+      // 3. Write-After-Write (WAW) : j produit R, i produit R sur une ressource mutable
+      for (const prod of nodeJ.producesResources) {
+        if (
+          (prod.startsWith('fs:') || prod.startsWith('dom:') || prod.startsWith('state:'))
+          && nodeI.producesResources.includes(prod)
+        ) {
+          addEdge(j, i, 'WAW', prod)
+        }
+      }
+      // 4. Si j est un think/think_long initial et i est une mutation ou verification,
+      //    le raisonnement guide causalement la mutation.
+      if (nodeJ.agentRole === 'analyst' && (nodeI.agentRole === 'mutator' || nodeI.agentRole === 'synthesizer')) {
+        addEdge(j, i, 'RAW', 'knowledge:reasoning')
+      }
+    }
+  }
+
+  // Tri topologique de Kahn par niveaux (parallelStages)
+  const inDegree = revAdj.map((s) => s.size)
+  const remaining = new Set<number>(Array.from({ length: n }, (_, i) => i))
+  const topologicalOrder: number[] = []
+  const parallelStages: number[][] = []
+  let hasCycle = false
+
+  const rolePriority: Record<CoworkAgentRole, number> = {
+    analyst: 0,
+    explorer: 1,
+    mutator: 2,
+    verifier: 3,
+    synthesizer: 4,
+    communicator: 5,
+  }
+
+  while (remaining.size > 0) {
+    const ready: number[] = []
+    for (const idx of remaining) {
+      if (inDegree[idx] === 0) ready.push(idx)
+    }
+    if (ready.length === 0) {
+      hasCycle = true
+      const fallback = remaining.values().next().value
+      if (fallback === undefined) break
+      ready.push(fallback)
+    }
+    ready.sort((a, b) => {
+      const pa = rolePriority[nodes[a].agentRole]
+      const pb = rolePriority[nodes[b].agentRole]
+      return pa !== pb ? pa - pb : a - b
+    })
+    parallelStages.push(ready)
+    for (const u of ready) {
+      remaining.delete(u)
+      topologicalOrder.push(u)
+      for (const v of adj[u]) {
+        inDegree[v] = Math.max(0, inDegree[v] - 1)
+      }
+    }
+  }
+
+  // Critical Path Method (CPM) — Passe avant (Earliest Start / Earliest Finish)
+  const predOnCritical = new Array<number>(n).fill(-1)
+  for (const u of topologicalOrder) {
+    let maxEF = 0
+    for (const p of revAdj[u]) {
+      if (nodes[p].earliestFinishMs > maxEF) {
+        maxEF = nodes[p].earliestFinishMs
+        predOnCritical[u] = p
+      }
+    }
+    nodes[u].earliestStartMs = maxEF
+    nodes[u].earliestFinishMs = maxEF + nodes[u].estimatedDurationMs
+  }
+
+  const criticalPathDurationMs = nodes.reduce((m, nd) => Math.max(m, nd.earliestFinishMs), 0)
+
+  // Critical Path Method (CPM) — Passe arriere (Latest Start / Latest Finish / Slack)
+  for (let k = topologicalOrder.length - 1; k >= 0; k -= 1) {
+    const u = topologicalOrder[k]
+    if (adj[u].size === 0) {
+      nodes[u].latestFinishMs = criticalPathDurationMs
+    } else {
+      let minLS = criticalPathDurationMs
+      for (const v of adj[u]) {
+        if (nodes[v].latestStartMs < minLS) {
+          minLS = nodes[v].latestStartMs
+        }
+      }
+      nodes[u].latestFinishMs = minLS
+    }
+    nodes[u].latestStartMs = nodes[u].latestFinishMs - nodes[u].estimatedDurationMs
+    nodes[u].slackMs = Math.max(0, nodes[u].latestStartMs - nodes[u].earliestStartMs)
+    nodes[u].isCritical = nodes[u].slackMs === 0
+  }
+
+  // Reconstruction de la chaine critique principale
+  let terminalIdx = 0
+  for (let i = 1; i < n; i += 1) {
+    if (nodes[i].earliestFinishMs > nodes[terminalIdx].earliestFinishMs) {
+      terminalIdx = i
+    }
+  }
+  const criticalPathIndices: number[] = []
+  let curr = terminalIdx
+  let guard = 0
+  while (curr !== -1 && guard <= n) {
+    criticalPathIndices.unshift(curr)
+    curr = predOnCritical[curr] ?? -1
+    guard += 1
+  }
+
+  // Passages de relais inter-agents (Handoffs)
+  const agentHandoffs: AgentHandoffEdge[] = []
+  for (const edge of edges) {
+    const fromRole = nodes[edge.from].agentRole
+    const toRole = nodes[edge.to].agentRole
+    if (fromRole !== toRole) {
+      agentHandoffs.push({
+        fromIndex: edge.from,
+        toIndex: edge.to,
+        fromRole,
+        toRole,
+        resource: edge.resource,
+      })
+    }
+  }
+
+  const sequentialDurationMs = nodes.reduce((acc, nd) => acc + nd.estimatedDurationMs, 0)
+  const parallelSpeedupRatio = criticalPathDurationMs > 0
+    ? Number((sequentialDurationMs / criticalPathDurationMs).toFixed(2))
+    : 1
+
+  return {
+    nodes,
+    edges,
+    topologicalOrder,
+    parallelStages,
+    criticalPathIndices,
+    criticalPathDurationMs,
+    sequentialDurationMs,
+    parallelSpeedupRatio,
+    agentHandoffs,
+    hasCycle,
+  }
+}
+
+/**
+ * Optimise l ordonnancement d un CoworkPlan par tri topologique de Kahn tout
+ * en respectant strictement chaque dependance causale (RAW, WAR, WAW, barriere).
+ */
+export function optimizePlanByCausalDag(plan: CoworkPlan, workspaceRoot = ''): CoworkPlan {
+  if (!plan || !Array.isArray(plan.actions) || plan.actions.length <= 1) {
+    return plan
+  }
+  const dag = buildCausalPlanDag(plan, workspaceRoot)
+  if (dag.hasCycle || dag.topologicalOrder.length !== plan.actions.length) {
+    return plan
+  }
+  const reordered = dag.topologicalOrder.map((idx) => plan.actions[idx])
+  return {
+    ...plan,
+    actions: reordered,
+  }
+}
+
+// ===========================================================================
+// 2. REPRISE TRANSACTIONNELLE SUR ERREUR DANS LE PLANIFICATEUR
+// ===========================================================================
+
+/**
+ * Analyse les erreurs d execution recentes dans l historique et construit un
+ * plan de reprise transactionnelle causale (ex: lecture prealable sur echec
+ * edit_file, fallback outil lors d une commande introuvable).
+ */
+export function buildTransactionalRecoveryPlan(ctx: PlannerContext): CoworkPlan | null {
+  if (!ctx.history || ctx.history.length === 0) return null
+  const lastEntry = ctx.history[ctx.history.length - 1]
+  if (lastEntry.result.ok) return null
+
+  const failedAction = lastEntry.action
+  const errorText = (lastEntry.result.error || lastEntry.result.output || '').trim()
+
+  // Cas 1 : edit_file a echoue parce que oldText est introuvable ou ambigu,
+  // et le fichier n a pas ete relu apres cet echec.
+  if (
+    failedAction.kind === 'edit_file'
+    && /oldText\s+(introuvable|apparait)/i.test(errorText)
+  ) {
+    const alreadyRecovered = ctx.history.length >= 2
+      && ctx.history[ctx.history.length - 2].action.kind === 'edit_file'
+    if (!alreadyRecovered) {
+      return {
+        reasoning: `Reprise transactionnelle : edit_file sur ${failedAction.path} a echoue (${errorText}). Je relis l etat exact du fichier avant de reformuler une edition non ambigue.`,
+        actions: [
+          {
+            kind: 'think',
+            topic: 'reprise transactionnelle edit_file',
+            thought: `L edition de ${failedAction.path} a ete annulee sans corrompre le fichier. Je lis le contenu exact pour aligner oldText.`,
+          },
+          { kind: 'read_file', path: failedAction.path },
+        ],
+        expectedOutcome: 'Contenu exact du fichier observe pour reappliquer la modification proprement.',
+      }
+    }
+  }
+
+  return null
+}
+
+// ===========================================================================
+// 3. SYNTHESE CROISEE INTER-DOCUMENTS (Reconciliation CSV/JSON/Texte &
+//    Detection d Anomalies Statistiques Z-score + MAD/Tukey IQR)
+// ===========================================================================
+
+export type ReconciledDocumentSource = {
+  id: string
+  label: string
+  format: 'csv' | 'json' | 'markdown_table' | 'key_value_text'
+  rowCount: number
+  rawColumns: string[]
+  canonicalToRawMap: Record<string, string>
+  records: Array<Record<string, string | number | null>>
+}
+
+export type StatisticalAnomaly = {
+  canonicalField: string
+  sourceId: string
+  rowIndex: number
+  entityKey?: string
+  value: number
+  mean: number
+  stdDev: number
+  median: number
+  mad: number
+  zScore: number
+  modifiedZScore: number
+  reason: 'parametric_z_outlier' | 'robust_mad_iqr_outlier' | 'both'
+}
+
+export type CrossDocumentDiscrepancy = {
+  joinKeyField: string
+  entityKeyValue: string
+  canonicalField: string
+  leftSource: string
+  leftValue: string | number | null
+  rightSource: string
+  rightValue: string | number | null
+  relativeDeltaPct?: number
+}
+
+export type FieldSummaryStats = {
+  canonicalField: string
+  count: number
+  min: number
+  max: number
+  sum: number
+  mean: number
+  stdDev: number
+  median: number
+  iqr: number
+}
+
+export type CrossDocumentSynthesisReport = {
+  sources: ReconciledDocumentSource[]
+  canonicalSchema: string[]
+  sharedCanonicalFields: string[]
+  inferredJoinKey: string | null
+  fieldStats: FieldSummaryStats[]
+  anomalies: StatisticalAnomaly[]
+  discrepancies: CrossDocumentDiscrepancy[]
+}
+
+function canonicalizeFieldName(raw: string): string {
+  const cleaned = raw
+    .trim()
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+
+  // Alignement semantique bilingue FR/EN sans hardcoding metier specifique
+  const synonyms: Record<string, string> = {
+    id_client: 'client_id',
+    customer_id: 'client_id',
+    user_id: 'id_user',
+    id_utilisateur: 'id_user',
+    montant: 'amount',
+    montant_ht: 'amount',
+    montant_ttc: 'amount_ttc',
+    total_amount: 'amount',
+    prix: 'price',
+    prix_unitaire: 'unit_price',
+    unit_cost: 'unit_price',
+    quantite: 'quantity',
+    qty: 'quantity',
+    qte: 'quantity',
+    chiffre_d_affaires: 'revenue',
+    ca: 'revenue',
+    nom: 'name',
+    libelle: 'label',
+    titre: 'title',
+  }
+  return synonyms[cleaned] || cleaned || 'col'
+}
+
+function parseNumericCell(val: unknown): number | null {
+  if (typeof val === 'number') return Number.isFinite(val) ? val : null
+  if (typeof val !== 'string') return null
+  const trimmed = val.trim().replace(/\s+/g, '').replace(/[€$£%]/g, '')
+  if (!trimmed) return null
+  const normalized = /^-?\d+,\d+$/.test(trimmed) ? trimmed.replace(',', '.') : trimmed
+  if (!/^-?\d+(?:\.\d+)?(?:e[+-]?\d+)?$/i.test(normalized)) return null
+  const num = Number(normalized)
+  return Number.isFinite(num) ? num : null
+}
+
+function splitCsvLine(line: string, delimiter: string): string[] {
+  const out: string[] = []
+  let cur = ''
+  let inQuotes = false
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i]
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        cur += '"'
+        i += 1
+      } else {
+        inQuotes = !inQuotes
+      }
+    } else if (ch === delimiter && !inQuotes) {
+      out.push(cur.trim())
+      cur = ''
+    } else {
+      cur += ch
+    }
+  }
+  out.push(cur.trim())
+  return out
+}
+
+function tryParseStructuredDocument(
+  id: string,
+  label: string,
+  rawText: string,
+  rawData?: unknown,
+): ReconciledDocumentSource | null {
+  // 1. Donnees JSON structurees deja presentes dans result.data (ex: extract_structured)
+  if (rawData && typeof rawData === 'object') {
+    const items = Array.isArray(rawData)
+      ? rawData
+      : Array.isArray((rawData as { items?: unknown }).items)
+        ? (rawData as { items: unknown[] }).items
+        : null
+    if (items && items.length > 0 && items.every((x) => x && typeof x === 'object' && !Array.isArray(x))) {
+      return buildSourceFromObjectArray(id, label, 'json', items as Array<Record<string, unknown>>)
+    }
+  }
+
+  const text = (rawText || '').replace(/^\uFEFF/, '').trim()
+  if (!text) return null
+
+  // 2. JSON array ou objet contenant un tableau
+  if (text.startsWith('[') || text.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(text) as unknown
+      const arr = Array.isArray(parsed)
+        ? parsed
+        : (parsed && typeof parsed === 'object')
+          ? Object.values(parsed as Record<string, unknown>).find((v) => Array.isArray(v) && v.length > 0) as unknown[] | undefined
+          : undefined
+      if (arr && arr.length > 0 && arr.every((x) => x && typeof x === 'object' && !Array.isArray(x))) {
+        return buildSourceFromObjectArray(id, label, 'json', arr as Array<Record<string, unknown>>)
+      }
+    } catch {
+      // Fallback vers CSV / Markdown
+    }
+  }
+
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+  if (lines.length < 2) return null
+
+  // 3. Tableau Markdown (| col1 | col2 |)
+  const mdLines = lines.filter((l) => l.startsWith('|') && l.endsWith('|'))
+  if (mdLines.length >= 3) {
+    const headerCells = mdLines[0].slice(1, -1).split('|').map((c) => c.trim()).filter(Boolean)
+    const dataLines = mdLines.slice(1).filter((l) => !/^\|[\s:|-]+\|$/.test(l))
+    if (headerCells.length >= 2 && dataLines.length >= 1) {
+      const rows: Array<Record<string, unknown>> = dataLines.slice(0, 500).map((line) => {
+        const cells = line.slice(1, -1).split('|').map((c) => c.trim())
+        const rec: Record<string, unknown> = {}
+        headerCells.forEach((h, idx) => {
+          rec[h] = cells[idx] ?? ''
+        })
+        return rec
+      })
+      return buildSourceFromObjectArray(id, label, 'markdown_table', rows)
+    }
+  }
+
+  // 4. CSV / TSV (delimiteur ',', ';' ou '\t')
+  const candidateDelims = [',', ';', '\t']
+  for (const delim of candidateDelims) {
+    const header = splitCsvLine(lines[0], delim)
+    if (header.length < 2 || header.some((h) => !h || h.length > 80)) continue
+    const second = splitCsvLine(lines[1], delim)
+    if (second.length !== header.length) continue
+
+    const rows: Array<Record<string, unknown>> = []
+    for (let i = 1; i < Math.min(lines.length, 1000); i += 1) {
+      const cells = splitCsvLine(lines[i], delim)
+      if (cells.length !== header.length) continue
+      const rec: Record<string, unknown> = {}
+      header.forEach((h, idx) => {
+        rec[h] = cells[idx] ?? ''
+      })
+      rows.push(rec)
+    }
+    if (rows.length > 0) {
+      return buildSourceFromObjectArray(id, label, 'csv', rows)
+    }
+  }
+
+  return null
+}
+
+function buildSourceFromObjectArray(
+  id: string,
+  label: string,
+  format: ReconciledDocumentSource['format'],
+  items: Array<Record<string, unknown>>,
+): ReconciledDocumentSource {
+  const rawColSet = new Set<string>()
+  for (const item of items.slice(0, 200)) {
+    for (const k of Object.keys(item)) rawColSet.add(k)
+  }
+  const rawColumns = [...rawColSet]
+  const canonicalToRawMap: Record<string, string> = {}
+  for (const rawCol of rawColumns) {
+    const can = canonicalizeFieldName(rawCol)
+    if (!canonicalToRawMap[can]) canonicalToRawMap[can] = rawCol
+  }
+
+  const records = items.slice(0, 500).map((item) => {
+    const normalizedRecord: Record<string, string | number | null> = {}
+    for (const [can, rawCol] of Object.entries(canonicalToRawMap)) {
+      const v = item[rawCol]
+      const num = parseNumericCell(v)
+      if (num !== null) {
+        normalizedRecord[can] = num
+      } else if (v === null || v === undefined || v === '') {
+        normalizedRecord[can] = null
+      } else {
+        normalizedRecord[can] = String(v).trim()
+      }
+    }
+    return normalizedRecord
+  })
+
+  return {
+    id,
+    label,
+    format,
+    rowCount: records.length,
+    rawColumns,
+    canonicalToRawMap,
+    records,
+  }
+}
+
+function computeOrderQuantile(sorted: number[], q: number): number {
+  if (sorted.length === 0) return 0
+  const pos = (sorted.length - 1) * q
+  const base = Math.floor(pos)
+  const rest = pos - base
+  if (sorted[base + 1] !== undefined) {
+    return sorted[base] + rest * (sorted[base + 1] - sorted[base])
+  }
+  return sorted[base]
+}
+
+/**
+ * Reconcilie les schemas de tous les documents structures lus/extraits dans
+ * l historique, calcule les statistiques exactes et detecte :
+ * 1) les anomalies statistiques par Z-score parametrique ET Z-score robuste (MAD / Tukey IQR)
+ * 2) les divergences inter-documents sur les cles de jointure communes.
+ */
+export function synthesizeCrossDocumentCorpus(
+  history: PlannerContext['history'],
+): CrossDocumentSynthesisReport {
+  const sources: ReconciledDocumentSource[] = []
+  const seenLabels = new Set<string>()
+
+  for (let i = 0; i < history.length; i += 1) {
+    const entry = history[i]
+    if (!entry.result.ok) continue
+    const act = entry.action
+    let label = ''
+    if (act.kind === 'read_file') label = act.path
+    else if (act.kind === 'fetch') label = act.url
+    else if (act.kind === 'browser' && act.operation === 'extract_structured') {
+      label = `extract_structured#${i + 1}`
+    } else continue
+
+    const dedupKey = label.toLowerCase()
+    if (seenLabels.has(dedupKey)) continue
+    const parsed = tryParseStructuredDocument(
+      `doc_${sources.length + 1}`,
+      label,
+      entry.result.output || '',
+      entry.result.data,
+    )
+    if (parsed && parsed.rowCount > 0) {
+      seenLabels.add(dedupKey)
+      sources.push(parsed)
+    }
+  }
+
+  if (sources.length === 0) {
+    return {
+      sources: [],
+      canonicalSchema: [],
+      sharedCanonicalFields: [],
+      inferredJoinKey: null,
+      fieldStats: [],
+      anomalies: [],
+      discrepancies: [],
+    }
+  }
+
+  const fieldDocCounts = new Map<string, number>()
+  for (const src of sources) {
+    for (const canField of Object.keys(src.canonicalToRawMap)) {
+      fieldDocCounts.set(canField, (fieldDocCounts.get(canField) ?? 0) + 1)
+    }
+  }
+
+  const canonicalSchema = [...fieldDocCounts.keys()]
+  const sharedCanonicalFields = canonicalSchema.filter((f) => (fieldDocCounts.get(f) ?? 0) >= 2)
+
+  // Infere la cle primaire / de jointure : champ partage (ou id/code/key/name) a forte cardinalite
+  let inferredJoinKey: string | null = null
+  const joinCandidates = (sharedCanonicalFields.length > 0 ? sharedCanonicalFields : canonicalSchema)
+    .filter((f) => /(^|_)(id|code|ref|sku|key|name|email|client|user)($|_)/.test(f))
+  if (joinCandidates.length > 0) {
+    inferredJoinKey = joinCandidates[0]
+  } else if (sharedCanonicalFields.length > 0) {
+    inferredJoinKey = sharedCanonicalFields[0]
+  }
+
+  // Statistiques et detection d anomalies (Z-score + MAD/Tukey IQR)
+  const fieldStats: FieldSummaryStats[] = []
+  const anomalies: StatisticalAnomaly[] = []
+
+  for (const field of canonicalSchema) {
+    const observations: Array<{ sourceId: string; rowIndex: number; entityKey?: string; value: number }> = []
+    for (const src of sources) {
+      src.records.forEach((rec, idx) => {
+        const v = rec[field]
+        if (typeof v === 'number' && Number.isFinite(v)) {
+          const entityKey = inferredJoinKey && rec[inferredJoinKey] !== null && rec[inferredJoinKey] !== undefined
+            ? String(rec[inferredJoinKey])
+            : undefined
+          observations.push({ sourceId: src.id, rowIndex: idx, entityKey, value: v })
+        }
+      })
+    }
+
+    if (observations.length < 3) continue
+    const values = observations.map((o) => o.value)
+    const sorted = [...values].sort((a, b) => a - b)
+    const n = values.length
+    const sum = values.reduce((a, b) => a + b, 0)
+    const mean = sum / n
+    const variance = values.reduce((acc, v) => acc + Math.pow(v - mean, 2), 0) / Math.max(1, n - 1)
+    const stdDev = Math.sqrt(variance)
+    const median = computeOrderQuantile(sorted, 0.5)
+    const q1 = computeOrderQuantile(sorted, 0.25)
+    const q3 = computeOrderQuantile(sorted, 0.75)
+    const iqr = q3 - q1
+    const absDevs = sorted.map((v) => Math.abs(v - median)).sort((a, b) => a - b)
+    const mad = computeOrderQuantile(absDevs, 0.5)
+
+    fieldStats.push({
+      canonicalField: field,
+      count: n,
+      min: sorted[0],
+      max: sorted[sorted.length - 1],
+      sum: Number(sum.toFixed(4)),
+      mean: Number(mean.toFixed(4)),
+      stdDev: Number(stdDev.toFixed(4)),
+      median: Number(median.toFixed(4)),
+      iqr: Number(iqr.toFixed(4)),
+    })
+
+    for (const obs of observations) {
+      const zScore = stdDev > 1e-9 ? Math.abs(obs.value - mean) / stdDev : 0
+      const modifiedZScore = mad > 1e-9 ? (0.6745 * Math.abs(obs.value - median)) / mad : 0
+      const outsideTukeyFence = iqr > 1e-9 && (obs.value < q1 - 1.5 * iqr || obs.value > q3 + 1.5 * iqr)
+
+      const isParametricOutlier = n >= 4 && zScore >= 2.4
+      const isRobustOutlier = (mad > 1e-9 && modifiedZScore >= 3.5) || (outsideTukeyFence && Math.abs(obs.value - median) > Math.abs(median) * 0.5 + 1e-6)
+
+      if (isParametricOutlier || isRobustOutlier) {
+        anomalies.push({
+          canonicalField: field,
+          sourceId: obs.sourceId,
+          rowIndex: obs.rowIndex,
+          entityKey: obs.entityKey,
+          value: obs.value,
+          mean: Number(mean.toFixed(4)),
+          stdDev: Number(stdDev.toFixed(4)),
+          median: Number(median.toFixed(4)),
+          mad: Number(mad.toFixed(4)),
+          zScore: Number(zScore.toFixed(2)),
+          modifiedZScore: Number(modifiedZScore.toFixed(2)),
+          reason: isParametricOutlier && isRobustOutlier
+            ? 'both'
+            : (isParametricOutlier ? 'parametric_z_outlier' : 'robust_mad_iqr_outlier'),
+        })
+      }
+    }
+  }
+
+  // Reconciliation inter-documents sur la cle de jointure (detection de divergences)
+  const discrepancies: CrossDocumentDiscrepancy[] = []
+  if (sources.length >= 2 && inferredJoinKey) {
+    const compareFields = sharedCanonicalFields.filter((f) => f !== inferredJoinKey)
+    for (let i = 0; i < sources.length; i += 1) {
+      for (let j = i + 1; j < sources.length; j += 1) {
+        const left = sources[i]
+        const right = sources[j]
+        const rightByKey = new Map<string, Record<string, string | number | null>>()
+        for (const rRec of right.records) {
+          const kVal = rRec[inferredJoinKey]
+          if (kVal !== null && kVal !== undefined && String(kVal).trim()) {
+            rightByKey.set(String(kVal).trim().toLowerCase(), rRec)
+          }
+        }
+        for (const lRec of left.records) {
+          const rawKey = lRec[inferredJoinKey]
+          if (rawKey === null || rawKey === undefined) continue
+          const normKey = String(rawKey).trim().toLowerCase()
+          const rRec = rightByKey.get(normKey)
+          if (!rRec) continue
+          for (const field of compareFields) {
+            const lv = lRec[field]
+            const rv = rRec[field]
+            if (lv === null || lv === undefined || rv === null || rv === undefined) continue
+            if (typeof lv === 'number' && typeof rv === 'number') {
+              const diff = Math.abs(lv - rv)
+              const denom = Math.max(Math.abs(lv), Math.abs(rv), 1e-9)
+              const relPct = Number(((diff / denom) * 100).toFixed(2))
+              if (diff > 1e-6) {
+                discrepancies.push({
+                  joinKeyField: inferredJoinKey,
+                  entityKeyValue: String(rawKey),
+                  canonicalField: field,
+                  leftSource: left.label,
+                  leftValue: lv,
+                  rightSource: right.label,
+                  rightValue: rv,
+                  relativeDeltaPct: relPct,
+                })
+              }
+            } else if (String(lv).trim().toLowerCase() !== String(rv).trim().toLowerCase()) {
+              discrepancies.push({
+                joinKeyField: inferredJoinKey,
+                entityKeyValue: String(rawKey),
+                canonicalField: field,
+                leftSource: left.label,
+                leftValue: lv,
+                rightSource: right.label,
+                rightValue: rv,
+              })
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return {
+    sources,
+    canonicalSchema,
+    sharedCanonicalFields,
+    inferredJoinKey,
+    fieldStats,
+    anomalies: anomalies.slice(0, 25),
+    discrepancies: discrepancies.slice(0, 25),
+  }
+}
+
+function buildCrossDocumentPromptDigest(history: PlannerContext['history']): string | null {
+  const report = synthesizeCrossDocumentCorpus(history)
+  if (report.sources.length === 0) return null
+  if (report.sources.length === 1 && report.anomalies.length === 0 && report.fieldStats.length === 0) {
+    return null
+  }
+
+  const lines: string[] = [
+    '## Synthese croisee & reconciliation de schemas (pre-calcul formel exact) :',
+    `- Sources structurees analysees (${report.sources.length}) : ${report.sources.map((s) => `${s.label} [${s.format}, ${s.rowCount} lignes]`).join(', ')}`,
+    `- Schema canonique unifie : ${report.canonicalSchema.join(', ')}`,
+  ]
+  if (report.sharedCanonicalFields.length > 0) {
+    lines.push(`- Champs communs reconcilies : ${report.sharedCanonicalFields.join(', ')}${report.inferredJoinKey ? ` (cle de jointure : ${report.inferredJoinKey})` : ''}`)
+  }
+  if (report.fieldStats.length > 0) {
+    lines.push('- Agrégats statistiques exacts :')
+    for (const st of report.fieldStats.slice(0, 8)) {
+      lines.push(`  • ${st.canonicalField} (n=${st.count}) : somme=${st.sum}, moy=${st.mean}, std=${st.stdDev}, mediane=${st.median}, min=${st.min}, max=${st.max}`)
+    }
+  }
+  if (report.discrepancies.length > 0) {
+    lines.push(`- Divergences inter-documents detectees (${report.discrepancies.length}) :`)
+    for (const d of report.discrepancies.slice(0, 6)) {
+      lines.push(`  • [${d.joinKeyField}=${d.entityKeyValue}] champ "${d.canonicalField}" : ${d.leftSource}=${d.leftValue} vs ${d.rightSource}=${d.rightValue}${d.relativeDeltaPct !== undefined ? ` (ecart ${d.relativeDeltaPct}%)` : ''}`)
+    }
+  }
+  if (report.anomalies.length > 0) {
+    lines.push(`- Anomalies statistiques detectees (${report.anomalies.length}) :`)
+    for (const a of report.anomalies.slice(0, 6)) {
+      lines.push(`  • ${a.canonicalField} = ${a.value} (${a.sourceId}, ligne #${a.rowIndex + 1}${a.entityKey ? `, cle=${a.entityKey}` : ''}) -> Z=${a.zScore}, MAD-Z=${a.modifiedZScore} (mediane=${a.median})`)
+    }
+  }
+  return lines.join('\n')
+}
+
+export function buildMultiDocumentReconciliationPlan(ctx: PlannerContext): CoworkPlan | null {
+  const prompt = normalizeIntentText(getEffectiveUserPrompt(ctx))
+  const asksReconciliation = /\b(reconcili|compar|crois|ecart|divergenc|anomalie|incoherenc|consolid)\b/.test(prompt)
+    && /\b(csv|json|tableau|tableur|fichier|document|donnee|source)\b/.test(prompt)
+  if (!asksReconciliation) return null
+
+  const alreadyReplied = ctx.history.some((e) => e.action.kind === 'reply' && e.result.ok)
+  if (alreadyReplied) return null
+
+  const report = synthesizeCrossDocumentCorpus(ctx.history)
+  if (report.sources.length >= 2) {
+    const digest = buildCrossDocumentPromptDigest(ctx.history) || ''
+    return {
+      reasoning: 'Les documents structures ont ete lus et reconcilies formellement. Je restitue la synthese croisee avec les statistiques exactes, divergences de jointure et anomalies detectees.',
+      actions: [
+        {
+          kind: 'reply',
+          message: [
+            '## Synthese Croisee Multi-Documents & Audit Statistique',
+            '',
+            digest,
+          ].join('\n'),
+        },
+        { kind: 'finish', summary: 'Reconciliation multi-documents et detection d anomalies livrees.' },
+      ],
+      expectedOutcome: 'L utilisateur recoit le rapport exact de reconciliation de schemas, les ecarts inter-fichiers et les anomalies statistiques.',
+    }
+  }
+
+  return null
 }

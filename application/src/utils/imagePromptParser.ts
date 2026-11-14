@@ -38,10 +38,18 @@ export interface ParsedImageIntent {
   isEditIntent: boolean
   editMode: ImageEditMode
   editContract: ImageEditContract
+  wantsMaxQuality?: boolean
 }
 
 export interface ParseImageIntentOptions {
   hasReference?: boolean
+  hasExplicitReference?: boolean
+}
+
+const MAX_QUALITY_REQUEST_PATTERN = /\b(qualit[eé]r?\s*(?:max(?:imale|imum)?|ultime|parfaite|extr[eê]me|sup[eé]rieure|au\s*max)|max(?:imum|imale)?\s*(?:de\s*)?qualit[eé]r?|pr[eé]cision\s*(?:max(?:imale|imum)?|au\s*max|nanom[eé]trique|extr[eê]me|ultime)|max(?:imum)?\s*(?:de\s*)?pr[eé]cision|pixel[\s-]?perfect|ultra[\s-]?(?:hd|pr[eé]cis|net|d[eé]taill[eé]|r[eé]aliste)|8k|16k|4k\s*uhd|masterpiece|chef[\s-]?d['’]?(?:oeuvre|œuvre)|meilleure?\s*qualit[eé]r?)(?![\p{L}\p{N}])/iu
+
+export function detectMaxQualityRequest(prompt: string): boolean {
+  return MAX_QUALITY_REQUEST_PATTERN.test(prompt) || MAX_QUALITY_REQUEST_PATTERN.test(normalizeForIntent(prompt))
 }
 
 const REMOVAL_PATTERNS: Array<{ re: RegExp; label: string }> = [
@@ -95,13 +103,15 @@ const EXPLICIT_TEXT_COMMAND_PATTERN = /\b(?:ecrire|ecris|ecrit|write|text saying
 const BACKGROUND_PATTERN = /\b(fond|arri[e\u00e8]re.?plan|background|decor|d[e\u00e9]cor|environnement|nuit\s+[eé]toil[eé]e|ciel\s+[eé]toil[eé]|ciel\s+de\s+nuit|en\s+pleine\s+nuit|coucher\s+de\s+soleil|soleil\s+couchant|soleil\s+levant|lever\s+de\s+soleil|aurore\s+bor[eé]ale|clair\s+de\s+lune|pleine\s+lune|sous\s+la\s+pluie|sous\s+la\s+neige|starry\s+night|night\s+sky|starry\s+sky|sunset|sunrise|moonlight|twilight)\b/i
 const BACKGROUND_PRESERVE_PATTERN = /\b(?:garde|garder|keep|preserve|conserve|conserver)\b.{0,140}\b(?:fond|arriere.?plan|background|decor|environnement)\b/i
 const SCENE_PATTERN = /\b(nouvelle scene|new scene|autre endroit|another place|transporte|teleporte|t[e\u00e9]l[e\u00e9]porte|change le decor|change de decor|nouvel endroit|nouveau lieu|change pose|change clothes|change outfit|autre action)\b/i
-const RESTYLE_PATTERN = /\b(pixel art|pixel-art|sprite|anime|manga|aquarelle|watercolor|peinture a l'huile|oil painting|comic|bd|low poly|isometrique|isometric|flat illustration|concept art|croquis|sketch|style)\b/i
+const RESTYLE_PATTERN = /\b(pixel art|pixel-art|sprite|anime|manga|aquarelle|watercolor|peinture a l'huile|oil painting|comic|bd|low poly|low-poly|isometrique|isometric|flat illustration|concept art|croquis|sketch|style|figurine|funko|chibi|nendoroid|jouet|toy|peluche|plush|clay|claymation|pate a modeler|cubique|cube|cubic|blocky|voxel|lego|origami|cristal|crystal|statue|statuette|sculpture|cartoon|toon|pixar|disney)\b/i
 const COLOR_LIGHT_PATTERN = /\b(couleur|color|colorise|coloriser|colorer|palette|lumiere|lumi\u00e8re|eclairage|eclairage|lighting|eclaire|assombris|contraste|exposition|teinte|hue|saturation)\b/i
 const REPAIR_PATTERN = /\b(corrige|corriger|nettoie|nettoyer|r[e\u00e9]pare|r[e\u00e9]parer|retouche|retoucher|clean up|cleanup|fix|repair|artefact|artifact|defaut|d[e\u00e9]faut|bruit|noise)\b/i
-const UPSCALE_PATTERN = /\b(upscale|haute resolution|haute definition|high resolution|hi.?res|4k|8k|plus net|plus detaille|plus pr[e\u00e9]cis|sharp|sharpen)\b/i
+const UPSCALE_PATTERN = /\b(upscale|agrandi[rs]?|augmente\s+la\s+r[eé]solution|plus\s+net|plus\s+d[eé]taill[eé]|sharpen)\b/i
 const MOVE_PATTERN = /\b(d[e\u00e9]place|d[e\u00e9]placer|repositionne|repositionner|d[e\u00e9]cale|d[e\u00e9]caler|move|reposition|shift)\b/i
 const POSE_PATTERN = /\b(pose|sourire|smile|expression|regard|yeux|main|bras|jambe|tourne|rotation|recadre|crop|zoom|cadre|composition)\b/i
-const GENERIC_EDIT_PATTERN = /\b(modifie|modifier|change|changer|edite|edit|retouche|retoucher|transforme|transformer|transform|fais|faire|rends|rendre|ameliore|ameliorer|enhance|improve|d[e\u00e9]place|d[e\u00e9]placer|repositionne|repositionner|d[e\u00e9]cale|d[e\u00e9]caler|move|reposition|shift|r[eé]plique|r[eé]pliquer|replicate|reproduis|reproduire|reproduce|recr[eé]e|recr[eé]er|recreate|duplique|dupliquer|duplicate|copie|copier|copy|imite|imiter|imitate|clone|cloner)\b/i
+const GENERIC_EDIT_PATTERN = /\b(modifie|modifier|change|changer|edite|edit|retouche|retoucher|transforme|transformer|transform|rends\s+(?:l['\u2019]?image|la\s+photo|le\s+rendu|le\s+sujet|plus)|rendre\s+plus|ameliore|ameliorer|enhance|improve|d[e\u00e9]place|d[e\u00e9]placer|repositionne|repositionner|d[e\u00e9]cale|d[e\u00e9]caler|move|reposition|shift|r[eé]plique|r[eé]pliquer|replicate|reproduis|reproduire|reproduce|recr[eé]e|recr[eé]er|recreate|duplique|dupliquer|duplicate|copie|copier|copy|imite|imiter|imitate|clone|cloner)\b/i
+const PURE_CREATION_OPENING_PATTERN = /^\s*(?:cr[eé](?:e[rz]?|ation)|g[eé]n[eè]r(?:e[rz]?|ation)|dessine[rz]?|peins|peindre|imagine[rz]?|fais(?:-moi|\s+moi)?\s+(?:un|une|des|le|la|les|du|de\s+la|d['\u2019])|create|generate|draw|paint|design)\b/i
+const EXPLICIT_EXISTING_IMAGE_TARGET_PATTERN = /\b(cette\s+(?:image|photo|illustration|sc[eè]ne)|sur\s+(?:l['\u2019]?image|la\s+photo|le\s+rendu)|dans\s+(?:l['\u2019]?image|la\s+photo)|l['\u2019]?image\s+actuelle|la\s+photo\s+actuelle|le\s+m[eê]me\s+(?:personnage|sujet|d[eé]cor)|garder?\s+le\s+m[eê]me)\b/i
 const ADD_COMMAND_PATTERN = /\b(ajoute|ajouter|rajoute|rajouter|mets|met|mettre|place|placer|add|insert|put)\b/i
 const HUMAN_REMOVAL_TARGET_RE = /\b(?:personne|personnage|humain|humaine|homme|femme|garcon|fille|gars|mec|meuf|individu|sujet|ami|amie|copain|copine|person|character|human|man|woman|boy|girl|guy|dude|male|female|subject|friend)\b/i
 const CLOTHING_OR_ACCESSORY_TARGET_RE = /^(?:uniquement|seulement|only|just)?\s*(?:(?:le|la|les|un|une|des|du|de|d'|l'|the|a|an)\s+)?(?:t\s?-?\s?shirt|tee\s?shirt|chemise|shirt|pull|sweat|hoodie|veste|jacket|manteau|coat|cape|cloak|pantalon|pants|short|shorts|robe|dress|jupe|skirt|tenue|outfit|vetement|vetements|clothing|chaussure|chaussures|shoe|shoes|botte|bottes|boots|chapeau|hat|casquette|cap|lunettes|glasses|accessoire|accessory)\b/i
@@ -195,36 +205,45 @@ function collectReplacements(prompt: string): ImageReplacement[] {
 }
 
 const STYLE_PRESERVE_PATTERN = /\b(?:garde|garder|gardant|preserve|conserve|conserver|sans\s+changer|sans\s+modifier|m[eê]me)\b.{0,40}\bstyle\b/iu
-const EXPLICIT_RESTYLE_GENRE = /\b(pixel art|pixel-art|sprite|anime|manga|aquarelle|watercolor|peinture a l'huile|oil painting|comic|bd|low poly|isometrique|isometric|flat illustration|concept art|croquis|sketch)\b/i
+const EXPLICIT_RESTYLE_GENRE = /\b(pixel art|pixel-art|sprite|anime|manga|aquarelle|watercolor|peinture a l'huile|oil painting|comic|bd|low poly|low-poly|isometrique|isometric|flat illustration|concept art|croquis|sketch|figurine|funko|chibi|nendoroid|jouet|toy|peluche|plush|clay|claymation|pate a modeler|cubique|cube|cubic|blocky|voxel|lego|origami|cristal|crystal|statue|statuette|sculpture|cartoon|toon|pixar|disney)\b/i
 const EXPLICIT_REMOVE_COMMAND_PATTERN = /\b(?:enl[eè]ve|enl[eè]ver|retire|retirer|supprime|supprimer|efface|effacer|virer|vire|remove|delete|erase|drop)\b/i
 
 function detectMode(prompt: string, removals: string[], additions: string[], replacements: ImageReplacement[], options: ParseImageIntentOptions): ImageEditMode {
   const normalized = normalizeForIntent(prompt)
-  const isBackgroundEdit = (BACKGROUND_PATTERN.test(normalized) && (GENERIC_EDIT_PATTERN.test(normalized) || options.hasReference || /\b(en|vers|dans|au|sous|ciel|nuit|fond)\b/i.test(normalized))) && !BACKGROUND_PRESERVE_PATTERN.test(normalized)
-  const isRestyleEdit = (EXPLICIT_RESTYLE_GENRE.test(normalized) || (/\bstyle\b/i.test(normalized) && /\b(?:change|changer|nouveau|autre|en\s+style|passe\s+en|transforme\s+en)\b/i.test(normalized))) && !STYLE_PRESERVE_PATTERN.test(normalized)
+  const hasExplicitRef = Boolean(options.hasExplicitReference)
+  const hasAnyRef = Boolean(options.hasReference || options.hasExplicitReference)
+  const targetsExistingImage = hasExplicitRef || EXPLICIT_EXISTING_IMAGE_TARGET_PATTERN.test(normalized) || GENERIC_EDIT_PATTERN.test(normalized)
+  const startsAsPureCreation = PURE_CREATION_OPENING_PATTERN.test(prompt) && !EXPLICIT_EXISTING_IMAGE_TARGET_PATTERN.test(normalized) && !GENERIC_EDIT_PATTERN.test(normalized) && !REPLICATION_PATTERN.test(normalized)
+
+  if (startsAsPureCreation && !hasExplicitRef && removals.length === 0 && replacements.length === 0) {
+    return 'create'
+  }
+
+  const isBackgroundEdit = (BACKGROUND_PATTERN.test(normalized) && (GENERIC_EDIT_PATTERN.test(normalized) || hasExplicitRef || (hasAnyRef && /\b(change|changer|modifie|modifier|remplace|remplacer|mets|mettre|passe)\b/i.test(normalized)))) && !BACKGROUND_PRESERVE_PATTERN.test(normalized)
+  const isRestyleEdit = ((EXPLICIT_RESTYLE_GENRE.test(normalized) && (hasExplicitRef || GENERIC_EDIT_PATTERN.test(normalized) || /\b(passe\s+en|transforme\s+en|convertis\s+en|en\s+version)\b/i.test(normalized))) || (/\b(?:style|facon|version|rendu)\b/i.test(normalized) && /\b(?:change|changer|nouveau|autre|en\s+style|passe\s+en|transforme\s+en|convertis\s+en)\b/i.test(normalized)) || /\b(?:transforme|transformer|convertis|convertir|adapte|adapter)\b[\s\S]{0,60}\ben\s+\w+/i.test(normalized)) && !STYLE_PRESERVE_PATTERN.test(normalized)
   const hasPreservationCue = PRESERVATION_PATTERNS.some((pattern) => pattern.test(prompt))
   const hasReplicationCue = REPLICATION_PATTERN.test(normalized)
   const hasAddCommand = ADD_COMMAND_PATTERN.test(normalized)
 
-  if (removals.length > 0) return 'remove_element'
-  if (isBackgroundEdit && (options.hasReference || GENERIC_EDIT_PATTERN.test(normalized))) return 'background_change'
+  if (removals.length > 0 && (hasAnyRef || EXPLICIT_REMOVE_COMMAND_PATTERN.test(normalized))) return 'remove_element'
+  if (isBackgroundEdit && (hasAnyRef || GENERIC_EDIT_PATTERN.test(normalized))) return 'background_change'
   if (replacements.length > 0) return 'replace_element'
-  if (TEXT_EDIT_PATTERN.test(normalized) && !NEGATED_TEXT_PATTERN.test(normalized) && (options.hasReference || GENERIC_EDIT_PATTERN.test(normalized) || hasAddCommand || EXPLICIT_TEXT_COMMAND_PATTERN.test(normalized))) return 'text_edit'
-  if (SCENE_PATTERN.test(normalized)) return 'scene_transform'
-  if (hasReplicationCue && (options.hasReference || removals.length === 0)) {
-    if (isRestyleEdit && EXPLICIT_RESTYLE_GENRE.test(normalized) && (options.hasReference || GENERIC_EDIT_PATTERN.test(normalized))) return 'restyle'
+  if (TEXT_EDIT_PATTERN.test(normalized) && !NEGATED_TEXT_PATTERN.test(normalized) && (hasExplicitRef || GENERIC_EDIT_PATTERN.test(normalized) || hasAddCommand || EXPLICIT_TEXT_COMMAND_PATTERN.test(normalized))) return 'text_edit'
+  if (SCENE_PATTERN.test(normalized) && (hasAnyRef || GENERIC_EDIT_PATTERN.test(normalized))) return 'scene_transform'
+  if (hasReplicationCue && (hasAnyRef || removals.length === 0)) {
+    if (isRestyleEdit && EXPLICIT_RESTYLE_GENRE.test(normalized) && (hasAnyRef || GENERIC_EDIT_PATTERN.test(normalized))) return 'restyle'
     if (COLOR_LIGHT_PATTERN.test(normalized) && GENERIC_EDIT_PATTERN.test(normalized)) return 'color_lighting'
     return 'replicate'
   }
-  if (additions.length > 0 && (hasAddCommand || options.hasReference)) return 'add_element'
-  if (isRestyleEdit && (options.hasReference || GENERIC_EDIT_PATTERN.test(normalized))) return 'restyle'
+  if (additions.length > 0 && (hasAddCommand || hasExplicitRef)) return 'add_element'
+  if (isRestyleEdit && (hasAnyRef || GENERIC_EDIT_PATTERN.test(normalized))) return 'restyle'
   if (COLOR_LIGHT_PATTERN.test(normalized) && GENERIC_EDIT_PATTERN.test(normalized)) return 'color_lighting'
-  if (REPAIR_PATTERN.test(normalized)) return 'repair_cleanup'
-  if (UPSCALE_PATTERN.test(normalized)) return 'upscale_detail'
-  if (MOVE_PATTERN.test(normalized)) return 'composition_pose'
+  if (REPAIR_PATTERN.test(normalized) && (hasAnyRef || targetsExistingImage)) return 'repair_cleanup'
+  if (UPSCALE_PATTERN.test(normalized) && hasAnyRef && (targetsExistingImage || !/\b(un|une|des)\s+[a-z]{3,}/i.test(normalized))) return 'upscale_detail'
+  if (MOVE_PATTERN.test(normalized) && (hasAnyRef || targetsExistingImage)) return 'composition_pose'
   if (POSE_PATTERN.test(normalized) && GENERIC_EDIT_PATTERN.test(normalized)) return 'composition_pose'
-  if (hasPreservationCue) return 'preserve_refine'
-  if (GENERIC_EDIT_PATTERN.test(normalized)) return 'preserve_refine'
+  if (hasPreservationCue && hasAnyRef) return 'preserve_refine'
+  if (GENERIC_EDIT_PATTERN.test(normalized) && hasAnyRef) return 'preserve_refine'
 
   return 'create'
 }
@@ -340,7 +359,7 @@ function buildEditContract(mode: ImageEditMode, removals: string[], additions: s
     },
     restyle: {
       label: 'changement de style',
-      denoise: 0.62,
+      denoise: 0.74,
       stepsBoost: 10,
       promptLines: ['transformer le style visuel tout en gardant la meme scene et les memes formes principales'],
       negativeLines: ['identite perdue', 'composition inventee', 'elements non demandes'],
@@ -475,6 +494,7 @@ export function parseImageIntent(rawPrompt: string, options: ParseImageIntentOpt
     isEditIntent: editMode !== 'create',
     editMode,
     editContract,
+    wantsMaxQuality: detectMaxQualityRequest(original),
   }
 }
 

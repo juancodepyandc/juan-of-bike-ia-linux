@@ -35,8 +35,8 @@ def diagnose(message,returncode=None):
 def correction(config,diagnosis,repeats):
     """Return a bounded config patch, or None when a remedy is exhausted."""
     action=diagnosis['action']
-    if action=='offload_activations' and repeats<=1 and not config.get('offload_saved_tensors'):
-        return {'offload_saved_tensors':True}
+    if action=='offload_activations' and repeats<=1 and not config.get('_oom_forced_offload'):
+        return {'offload_saved_tensors':True,'_oom_forced_offload':True}
     if action=='rollback_reduce_step' and repeats<=2:
         return {'train_learning_rate':max(1e-7,config['train_learning_rate']*.25),
                 'fp16_initial_scale':max(1.,config.get('fp16_initial_scale',128.)*.125)}
@@ -62,7 +62,10 @@ def supervise(c,records,input_root,output,seconds,callback,check=lambda:None):
     report={'schema':1,'budget_seconds':seconds,'attempts':[], 'corrections':[],
             'best_validation_loss':None,'promotion':'audit_required',
             'note':'Diagnostic automatique par règles explicites, sans intervention de Codex ni modification du code.'}
-    config=dict(c);best_loss=math.inf;best_weights=root/'initial.safetensors'
+    config=dict(c)
+    if not config.get('_oom_forced_offload'):
+        config['offload_saved_tensors']=False
+    best_loss=math.inf;best_weights=root/'initial.safetensors'
     repeats={};global_epoch=0
     child=None
     try:

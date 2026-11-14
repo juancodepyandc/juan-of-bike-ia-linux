@@ -166,8 +166,13 @@ _KNOWN_ICONS = {
     "spiderman", "ironman", "hulk", "thor", "wolverine", "deadpool", "gandalf", "yoda",
     "mickey", "megaman", "ichigo", "saitama", "gojo", "tanjiro", "totoro", "charizard",
     "bulbasaur", "sangoku", "gundam", "mazinger", "voltron", "optimus", "bumblebee",
-    "sonic", "shrek", "buzz", "woody", "elsa", "pikachu", "asuka", "eva", "goldrake",
+    "shrek", "buzz", "woody", "elsa", "asuka", "eva", "goldrake",
     "homer", "bart", "marge", "lisa", "springfield", "magnolia",
+    "zig", "sharko", "bernie", "oggy", "asterix", "obelix", "idefix",
+    "tintin", "milou", "marsupilami", "gaston", "spirou", "fantasio", "titeuf",
+    "spongebob", "patrick", "bugs", "daffy", "donald", "goofy", "dingo",
+    "stitch", "simba", "minion", "minions", "gru", "rick", "morty", "bender",
+    "scooby", "gumball", "rayman", "crash", "spyro", "cuphead", "garfield", "snoopy",
 }
 
 

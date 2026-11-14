@@ -34,6 +34,16 @@ import {
 } from './codeViewShellHelpers.ts'
 import { useCodeViewWorkspacePersistence } from './useCodeViewWorkspacePersistence.ts'
 import { useCodeViewActions } from './useCodeViewActions.ts'
+import {
+  PHYSICAL_SPRING_PRESETS,
+  analyzePromptExcellence,
+  auditCodeExcellence,
+  buildExcellenceEnrichedPrompt,
+  computeSpotlightLighting,
+  computeStaggerChoreography,
+  solveDampedSpring,
+  stepFrameIndependentLerp,
+} from '../services/codeExcellenceEngine.ts'
 
 export default function CodeView() {
   const { codeModel, hardware, installedModels, mainModel, runtimeServices, visionModel } = useAppStore()
@@ -184,13 +194,92 @@ export default function CodeView() {
   // Pipeline label for UI
   const pipelineLabel = useMemo(() => buildCodePipelineLabel(intent), [intent])
 
-  // Cleanup dev server on unmount
+  // Aurora Code Excellence Engine: Explicit/Implicit AGI Synthesis, Physical Spring & Static AST Audit
+  const [springPresetKey, setSpringPresetKey] = useState<'critically_damped' | 'snappy_ui' | 'spatial_reveal'>('critically_damped')
+  const [showExcellenceDetails, setShowExcellenceDetails] = useState(false)
+  const promptSynthesis = useMemo(() => analyzePromptExcellence(prompt, intent), [prompt, intent])
+  const excellenceReport = useMemo(() => auditCodeExcellence(files, prompt, intent), [files, prompt, intent])
+  const activeSpring = useMemo(() => solveDampedSpring(PHYSICAL_SPRING_PRESETS[springPresetKey]), [springPresetKey])
+  const staggerTimings = useMemo(
+    () => computeStaggerChoreography(promptSynthesis.implicitFeatures.length, 3),
+    [promptSynthesis.implicitFeatures.length],
+  )
+  const effectiveDesignReport = useMemo(() => {
+    if (designReport) return designReport
+    if (files.length === 0) return null
+    return {
+      score: excellenceReport.overallScore,
+      missing: excellenceReport.implicitFeatures
+        .filter((f) => !f.detectedInCode)
+        .map((f) => f.title),
+      penalties: excellenceReport.priorityRecommendations,
+    }
+  }, [designReport, excellenceReport, files.length])
+
+  // Physical rAF Lerp Spotlight (60/120fps frame-rate independent, zero React re-render on pointermove)
+  const rootContainerRef = useRef<HTMLDivElement | null>(null)
+  const spotlightOverlayRef = useRef<HTMLDivElement | null>(null)
+  const pointerTargetRef = useRef({ x: 480, y: 220, w: 1280, h: 800, active: false })
+  const pointerCurrentRef = useRef({ x: 480, y: 220 })
+  const rafIdRef = useRef<number | null>(null)
+  const lastFrameTimeRef = useRef<number>(0)
+
+  const stepSpotlightPhysics = useCallback((timestamp: number) => {
+    const dt = lastFrameTimeRef.current > 0 ? timestamp - lastFrameTimeRef.current : 16.67
+    lastFrameTimeRef.current = timestamp
+    const target = pointerTargetRef.current
+    const current = pointerCurrentRef.current
+
+    current.x = stepFrameIndependentLerp(current.x, target.x, dt, 18)
+    current.y = stepFrameIndependentLerp(current.y, target.y, dt, 18)
+
+    if (spotlightOverlayRef.current && rootContainerRef.current) {
+      const light = computeSpotlightLighting(current.x, current.y, target.w, target.h)
+      spotlightOverlayRef.current.style.background = light.backgroundGradient
+      rootContainerRef.current.style.setProperty('--spotlight-x', light.cssVariables['--spotlight-x'])
+      rootContainerRef.current.style.setProperty('--spotlight-y', light.cssVariables['--spotlight-y'])
+      rootContainerRef.current.style.setProperty('--spotlight-intensity', light.cssVariables['--spotlight-intensity'])
+    }
+
+    const dist = Math.hypot(target.x - current.x, target.y - current.y)
+    if (dist > 0.5) {
+      rafIdRef.current = window.requestAnimationFrame(stepSpotlightPhysics)
+    } else {
+      rafIdRef.current = null
+      lastFrameTimeRef.current = 0
+    }
+  }, [])
+
+  const handleContainerPointerMove = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const el = rootContainerRef.current
+      if (!el) return
+      const rect = el.getBoundingClientRect()
+      pointerTargetRef.current = {
+        x: event.clientX - rect.left,
+        y: event.clientY - rect.top,
+        w: rect.width || 1280,
+        h: rect.height || 800,
+        active: true,
+      }
+      if (rafIdRef.current === null && typeof window !== 'undefined') {
+        rafIdRef.current = window.requestAnimationFrame(stepSpotlightPhysics)
+      }
+    },
+    [stepSpotlightPhysics],
+  )
+
+  // Cleanup dev server & rAF on unmount
   useEffect(() => {
     return () => {
       void stopDevServer()
       if (streamTimerRef.current !== null) {
         clearTimeout(streamTimerRef.current)
         streamTimerRef.current = null
+      }
+      if (rafIdRef.current !== null && typeof window !== 'undefined') {
+        window.cancelAnimationFrame(rafIdRef.current)
+        rafIdRef.current = null
       }
       streamBufferRef.current = []
     }
@@ -297,8 +386,36 @@ export default function CodeView() {
     void generate({ resumeMode: 'after_reload', overridePrompt: promptToResume })
   }, [generate, isGenerating, workspacePersistenceReady])
 
+  const handleEnrichPromptWithExcellence = useCallback(() => {
+    if (!prompt.trim()) return
+    setPrompt((prev) => buildExcellenceEnrichedPrompt(prev, intent))
+  }, [intent, prompt])
+
+  const handleTriggerExcellenceOptimization = useCallback(() => {
+    if (isGenerating || excellenceReport.priorityRecommendations.length === 0) return
+    const optimizationBrief = [
+      prompt.trim() || 'Optimiser le projet existant',
+      '',
+      '=== OPTIMISATION CHIRURGICALE D’EXCELLENCE (MOTION PHYSIQUE & ALGORITHMIQUE O(N)) ===',
+      ...excellenceReport.priorityRecommendations.map((rec, idx) => `${idx + 1}. ${rec}`),
+      `Courbe ressort amortie cible : ${activeSpring.cssEasing} (${activeSpring.settlingDurationMs}ms, ζ=${activeSpring.dampingRatio}).`,
+    ].join('\n')
+    void generate({ overridePrompt: optimizationBrief })
+  }, [activeSpring, excellenceReport.priorityRecommendations, generate, isGenerating, prompt])
+
   return (
-    <div data-code-view="true" className="relative min-h-full flex flex-col overflow-hidden">
+    <div
+      ref={rootContainerRef}
+      onPointerMove={handleContainerPointerMove}
+      data-code-view="true"
+      className="relative min-h-full flex flex-col overflow-hidden"
+    >
+      {/* Dynamic Physical rAF Lerp Spotlight Overlay */}
+      <div
+        ref={spotlightOverlayRef}
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 z-0 transition-opacity duration-300"
+      />
       <ClarificationDialog request={clarification} />
       <SaveDialog
         data={saveDialogData}
@@ -324,7 +441,197 @@ export default function CodeView() {
         projectLabel={intent ? formatProjectType(intent.projectType) : undefined}
       />
 
-      <div className="grid gap-3 px-2 pb-6 pt-3 sm:gap-4 sm:px-6 sm:pb-8 sm:pt-4 lg:grid-cols-[20rem_minmax(0,1fr)] xl:grid-cols-[23rem_minmax(0,1fr)]">
+      {/* Aurora Code Excellence HUD: Explicit/Implicit AGI Synthesis, Physical Spring & Static AST Audit */}
+      <section
+        data-code-excellence-hud="true"
+        aria-label="Moteur d'Excellence Code : Précision AGI, Motion Design Physique et Audit Algorithmique"
+        className="relative z-10 mx-2 mt-2 rounded-[1.35rem] px-3.5 py-2.5 backdrop-blur-xl sm:mx-6 sm:px-5 sm:py-3"
+        style={{
+          border: '1px solid var(--line, color-mix(in srgb, var(--ft-ink, #1a140d) 15%, transparent))',
+          background: 'var(--v4code-card-bg, color-mix(in srgb, var(--ft-paper-3, #faf3de) 78%, transparent))',
+          transition: `transform ${activeSpring.settlingDurationMs}ms ${activeSpring.cssEasing}, box-shadow ${activeSpring.settlingDurationMs}ms ${activeSpring.cssEasing}`,
+        }}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2.5">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-aurora-accent/15 px-2.5 py-1 text-[11px] font-semibold text-aurora-accent">
+              <span>Excellence AGI</span>
+              {files.length > 0 && <span>{excellenceReport.overallScore}/100</span>}
+            </span>
+            <span
+              className="rounded-full border border-aurora-border/35 bg-aurora-surface/65 px-2.5 py-1 text-[11px] text-aurora-text"
+              title="Contraintes explicites extraites et piliers implicites synthétisés"
+            >
+              Précision : {promptSynthesis.explicitConstraints.length} explicite(s) · {promptSynthesis.implicitFeatures.length} piliers AGI
+            </span>
+            <span
+              className="rounded-full border border-aurora-border/35 bg-aurora-surface/65 px-2.5 py-1 text-[11px] text-aurora-text"
+              title={`Équation ressort amorti : ζ=${activeSpring.dampingRatio}, ω₀=${activeSpring.naturalFrequency} rad/s, ${activeSpring.cssEasing}`}
+            >
+              Motion : {activeSpring.regime === 'critically_damped' ? ' critique' : ' sous-amorti'} ({activeSpring.settlingDurationMs}ms · ζ={activeSpring.dampingRatio})
+            </span>
+            <span
+              className={`rounded-full border px-2.5 py-1 text-[11px] font-medium ${
+                excellenceReport.algorithmicAudit.quadraticCount === 0 && excellenceReport.zeroPlaceholderPassed
+                  ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-400'
+                  : 'border-amber-500/40 bg-amber-500/10 text-amber-300'
+              }`}
+              title="Complexité algorithmique dominante et vérification Zéro Placeholder/TODO"
+            >
+              Algo : {excellenceReport.algorithmicAudit.dominantComplexity} ·{' '}
+              {excellenceReport.zeroPlaceholderPassed ? 'Zéro Placeholder' : `${excellenceReport.algorithmicAudit.placeholderCount} stub(s)`}
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              aria-label="Profil physique de ressort Motion Design"
+              value={springPresetKey}
+              onChange={(e) => setSpringPresetKey(e.target.value as 'critically_damped' | 'snappy_ui' | 'spatial_reveal')}
+              className="rounded-xl border border-aurora-border/40 bg-aurora-surface-2 px-2.5 py-1 text-[11px] text-aurora-text outline-none focus-visible:ring-2 focus-visible:ring-aurora-accent"
+            >
+              <option value="critically_damped">Ressort Critique (ζ=1.0)</option>
+              <option value="snappy_ui">Micro-Interaction Vive</option>
+              <option value="spatial_reveal">Révélation Spatiale Douce</option>
+            </select>
+
+            {prompt.trim().length > 0 && !prompt.includes('CONTRAT D’EXCELLENCE AURORA CODE') && (
+              <button
+                type="button"
+                onClick={handleEnrichPromptWithExcellence}
+                className="rounded-xl border border-aurora-accent/40 bg-aurora-accent/15 px-2.5 py-1 text-[11px] font-medium text-aurora-accent hover:bg-aurora-accent/25 focus-visible:ring-2 focus-visible:ring-aurora-accent"
+                title="Ajouter explicitement au brief la synthèse AGI implicite (Persistance, Erreurs, WCAG AA, États vides, Recherche O(N), Raccourcis) et le contrat Motion/Algo"
+              >
+                + Synthèse AGI au brief
+              </button>
+            )}
+
+            {files.length > 0 && excellenceReport.priorityRecommendations.length > 0 && !isGenerating && (
+              <button
+                type="button"
+                onClick={handleTriggerExcellenceOptimization}
+                className="rounded-xl border border-emerald-500/40 bg-emerald-500/15 px-2.5 py-1 text-[11px] font-medium text-emerald-300 hover:bg-emerald-500/25 focus-visible:ring-2 focus-visible:ring-emerald-400"
+                title="Lancer une passe d'optimisation chirurgicale sur la complexité algorithmique et le Motion Design"
+              >
+                Optimiser ({excellenceReport.priorityRecommendations.length})
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setShowExcellenceDetails((prev) => !prev)}
+              aria-expanded={showExcellenceDetails}
+              className="rounded-xl border border-aurora-border/40 bg-aurora-surface-2 px-2.5 py-1 text-[11px] text-aurora-text-dim hover:text-aurora-text focus-visible:ring-2 focus-visible:ring-aurora-accent"
+            >
+              {showExcellenceDetails ? 'Masquer audit' : 'Détails AGI & AST'}
+            </button>
+          </div>
+        </div>
+
+        {showExcellenceDetails && (
+          <div className="mt-3 grid gap-3 border-t border-aurora-border/25 pt-3 text-xs lg:grid-cols-3">
+            {/* Column 1: Implicit AGI Pillars with Stagger Choreography */}
+            <div className="space-y-1.5">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-aurora-text-dim">
+                Synthèse AGI Implicite & Contraintes ({excellenceReport.fidelityScore}/100)
+              </p>
+              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                {excellenceReport.implicitFeatures.map((feat, idx) => {
+                  const timing = staggerTimings[idx]
+                  return (
+                    <div
+                      key={feat.pillar}
+                      style={{
+                        transitionDelay: `${timing?.delayMs ?? 0}ms`,
+                        transitionDuration: `${activeSpring.settlingDurationMs}ms`,
+                        transitionTimingFunction: activeSpring.cssEasing,
+                      }}
+                      className="rounded-xl border border-aurora-border/30 bg-aurora-surface/60 px-2.5 py-1.5 transition-all"
+                      title={feat.implementationDirective}
+                    >
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="font-medium text-aurora-text">{feat.title}</span>
+                        {files.length > 0 && (
+                          <span className={feat.detectedInCode ? 'text-emerald-400' : 'text-amber-400'}>
+                            {feat.detectedInCode ? '✓' : '○'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* Column 2: Physical Motion Design Solver */}
+            <div className="space-y-1.5">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-aurora-text-dim">
+                Solveur Motion Design Physique ({excellenceReport.motionScore}/100)
+              </p>
+              <div className="rounded-xl border border-aurora-border/30 bg-aurora-surface/60 p-2.5 space-y-1">
+                <p className="text-[11px] text-aurora-text">
+                  Courbe : <code className="text-aurora-accent">{activeSpring.cssEasing}</code>
+                </p>
+                <p className="text-[11px] text-aurora-text-dim">
+                  Stabilisation : {activeSpring.settlingDurationMs}ms · Dépassement : {activeSpring.overshootPercent}% · rAF Lerp 60fps actif
+                </p>
+                {excellenceReport.motionAudit.warnings.length > 0 ? (
+                  <ul className="mt-1 space-y-0.5 text-[11px] text-amber-300">
+                    {excellenceReport.motionAudit.warnings.slice(0, 2).map((w) => (
+                      <li key={w}>• {w}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-[11px] text-emerald-400">
+                    ✓ Transitions GPU (transform/opacity) & courbes physiques validées.
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Column 3: Static AST Algorithmic & N+1 Audit */}
+            <div className="space-y-1.5">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-aurora-text-dim">
+                Audit Algorithmique & Backend ({excellenceReport.algorithmicScore}/100)
+              </p>
+              <div className="rounded-xl border border-aurora-border/30 bg-aurora-surface/60 p-2.5 space-y-1">
+                <p className="text-[11px] text-aurora-text">
+                  Complexité : <strong>{excellenceReport.algorithmicAudit.dominantComplexity}</strong> · Boucles O(N²) : {excellenceReport.algorithmicAudit.quadraticCount} · N+1 I/O : {excellenceReport.algorithmicAudit.nPlusOneCount} · Fuites : {excellenceReport.algorithmicAudit.leakCount}
+                </p>
+                {excellenceReport.algorithmicAudit.findings.length > 0 ? (
+                  <div className="max-h-24 overflow-y-auto space-y-1 pt-1">
+                    {excellenceReport.algorithmicAudit.findings.slice(0, 4).map((finding) => {
+                      const targetFileIdx = files.findIndex((f) => f.name === finding.file)
+                      return (
+                        <button
+                          key={finding.id}
+                          type="button"
+                          onClick={() => {
+                            if (targetFileIdx >= 0) {
+                              setActiveFile(targetFileIdx)
+                              setBigViewMode('code')
+                            }
+                          }}
+                          className="block w-full text-left rounded-lg bg-aurora-surface-2/80 px-2 py-1 text-[11px] text-amber-300 hover:bg-aurora-surface-2"
+                          title={finding.recommendation}
+                        >
+                          <span className="font-mono text-aurora-accent">{finding.file}:L{finding.line}</span> — {finding.explanation}
+                        </button>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-emerald-400">
+                    ✓ Zéro boucle quadratique évitable, zéro requête N+1, zéro fuite de listener et zéro TODO.
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </section>
+
+      <div className="relative z-10 grid gap-3 px-2 pb-6 pt-3 sm:gap-4 sm:px-6 sm:pb-8 sm:pt-4 lg:grid-cols-[20rem_minmax(0,1fr)] xl:grid-cols-[23rem_minmax(0,1fr)]">
         <CodeViewControlPanel
           assetPack={assetPack}
           canGenerate={canGenerate}
@@ -332,7 +639,7 @@ export default function CodeView() {
           contextFiles={contextFiles}
           conversationTurns={conversationTurns}
           correctionLog={correctionLog}
-          designReport={designReport}
+          designReport={effectiveDesignReport}
           devServerState={devServerState}
           diagnostics={diagnostics}
           error={error}

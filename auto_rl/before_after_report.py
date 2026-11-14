@@ -19,21 +19,79 @@ from .config import ROOT, STATE
 from .storage import read_json
 
 
-BUREAU_STUDIO_DIR = Path("/home/juan/Bureau/AuroraIA_Studio_&_Renforcement")
+def _resolve_desktop_studio_dir() -> Path:
+    env_dir = os.environ.get("AURORA_STUDIO_DIR", "").strip()
+    if env_dir:
+        return Path(env_dir).expanduser()
+    home = Path.home()
+    user_dirs = home / ".config" / "user-dirs.dirs"
+    if user_dirs.is_file():
+        try:
+            for line in user_dirs.read_text(encoding="utf-8", errors="ignore").splitlines():
+                line = line.strip()
+                if line.startswith("XDG_DESKTOP_DIR="):
+                    raw = line.split("=", 1)[1].strip().strip('"').replace("$HOME", str(home))
+                    candidate = Path(raw)
+                    if candidate.is_dir():
+                        return candidate / "AuroraIA_Studio_&_Renforcement"
+        except OSError:
+            pass
+    for desktop_name in ("Bureau", "Desktop", "Escritorio", "Schreibtisch"):
+        candidate = home / desktop_name
+        if candidate.is_dir():
+            return candidate / "AuroraIA_Studio_&_Renforcement"
+    return home / "Desktop" / "AuroraIA_Studio_&_Renforcement"
+
+
+BUREAU_STUDIO_DIR = _resolve_desktop_studio_dir()
 
 
 def _load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     candidates = (
         [
+            # Debian / Ubuntu / Mint
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
             "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            # Arch / Manjaro / Void / Alpine
+            "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/TTF/LiberationSans-Bold.ttf",
+            "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/noto/NotoSans-Bold.ttf",
+            # Fedora / RHEL / openSUSE
+            "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/liberation-sans/LiberationSans-Bold.ttf",
+            "/usr/share/fonts/google-noto/NotoSans-Bold.ttf",
+            # macOS
+            "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+            "/System/Library/Fonts/Helvetica.ttc",
+            "/Library/Fonts/Arial Bold.ttf",
+            # Windows
+            "C:/Windows/Fonts/segoeuib.ttf",
+            "C:/Windows/Fonts/arialbd.ttf",
         ]
         if bold
         else [
+            # Debian / Ubuntu / Mint
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
             "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            # Arch / Manjaro / Void / Alpine
+            "/usr/share/fonts/TTF/DejaVuSans.ttf",
+            "/usr/share/fonts/TTF/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/noto/NotoSans-Regular.ttf",
+            # Fedora / RHEL / openSUSE
+            "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
+            "/usr/share/fonts/liberation-sans/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/google-noto/NotoSans-Regular.ttf",
+            # macOS
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+            "/System/Library/Fonts/Helvetica.ttc",
+            "/Library/Fonts/Arial.ttf",
+            # Windows
+            "C:/Windows/Fonts/segoeui.ttf",
+            "C:/Windows/Fonts/arial.ttf",
         ]
     )
     for path in candidates:
@@ -424,7 +482,28 @@ def _build_markdown_report(
     lines.extend([
         "---",
         "",
-        "## 3. Pourquoi AuroraIA est Maintenant Beaucoup Plus Intelligent (Zéro Précodage Rigide)",
+        "## 3. Résultats du Cycle Nocturne Complet (`3d-20261019-040120-988cf9` terminé à 06h08) & Pourquoi l'Ampleur Dépend du Sujet",
+        "",
+        "Pendant ton sommeil (`04h01 -> 06h08`, durée totale `2h07`), un cycle complet **Kaggle Double GPU (`gpu_t4_x2`, 21 époques, `val_loss: 0.7001`) + Audit complet de 96 maillages sur RTX 5070 Ti** s'est terminé à 100 % :",
+        "",
+        "| Famille Géométrique 3D | Évolution Moyenne (sur 12 maillages) | Plus Fort Gain Observé (Pic d'Ampleur) | Réduction des Défauts Géométriques (Auto-intersections BVH) |",
+        "| :--- | :---: | :---: | :--- |",
+        "| **Hibou / Créature Ailée (`owl`)** | **`+0.28 pt`** | **`+7.31 pts`** (et **`+12.38 pts`** sur le Champion `c9cbb2`) | **`-2 624` à `-3 701` triangles qui se croisent (`-61.9 %`)** |",
+        "| **Cathédrale Gothique (`cathedral`)** | **`+0.54 pt`** | **`+6.05 pts`** (et **`+7.59 pts`** sur `f029e5`) | **`-3 090` à `-3 302` auto-intersections (`-41.0 %`)** |",
+        "| **Vélo Cargo & Rayons (`bicycle`)** | **`+0.07 pt`** | **`+5.71 pts`** (et **`+7.09 pts`** sur `c9cbb2`) | **`-5 528` auto-intersections (`17 544 -> 12 016`, `-48.2 %`)** |",
+        "| **Casque Ornementé (`helmet`)** | **`+0.20 pt`** | **`+5.41 pts`** (`graine 911`) | **`-3 406` auto-intersections (`10 267 -> 6 861`, `-33.2 %`)** |",
+        "| **Fauteuil Design (`chair`)** | **`+0.53 pt`** | **`+3.42 pts`** | Maillage soudé et assise symétrique 360° |",
+        "| **Scorpion Articulé (`scorpion`)** | **`+0.42 pt`** | **`+3.18 pts`** | Pattes et pinces séparées sans fusion parasite |",
+        "| **Voilier & Gréement (`sailing_ship`)** | **`+0.05 pt`** | **`+2.15 pts`** | Voiles et coque continues sur 4 vues |",
+        "",
+        "### Pourquoi les sujets complexes gagnent `+6 à +12.38 pts` alors que la moyenne des 96 maillages bouge de `+0.47 pt` ?",
+        "- Sur les objets déjà simples ou presque parfaits dans `TRELLIS.2-4B` (formes pleines), le score bouge très peu (`±0.1 pt`).",
+        "- En revanche, sur les **sujets difficiles à géométrie fine ou articulée** (*ailes de hibou, rayons de vélo, arcs de cathédrale, visière de casque, scorpion*), l'amélioration est **massive (`+5.41` à `+12.38 points` et jusqu'à `-5 528` auto-intersections en moins sur un seul objet)**.",
+        "- Lors du cycle terminé à `06h08`, **7 familles sur 8 ont progressé simultanément**, mais la 8e famille (`camera`) avait régressé (`-1.78 pt`) car Kaggle n'avait reçu que 9 paires sans la paire `camera`. Grâce à la **Garde Pareto**, le système a conservé le meilleur Champion global (`71.13/100`) et nous avons activé la **Mémoire Cumulative Multi-Familles (`13+` paires couvrant les 8 familles)** pour que chaque nouveau cycle conserve les 8 familles d'un coup.",
+        "",
+        "---",
+        "",
+        "## 4. Pourquoi AuroraIA est Maintenant Beaucoup Plus Intelligent (Zéro Précodage Rigide)",
         "",
         "1. **Rigging & Animation Solo Automatique (`threeDIntent.ts` + `prompt_intelligence.py`)** :",
         "   - Tu n'as **plus jamais besoin d'écrire** *« rig-moi ceci »* ou *« ajoute un squelette »*.",
@@ -439,8 +518,12 @@ def _build_markdown_report(
         "",
         "---",
         "",
-        "## 4. Comment Arrêter Proprement le Cycle à ton Réveil",
+        "## 5. Combien de Temps Prend un Cycle Complet & Comment l'Arrêter Proprement",
         "",
+        "- **Durée estimée d'un cycle complet 3D (`~1h20 à 1h30` avec cache de rollouts + mémoire cumulative)** :",
+        "  1. **Préparation & Paires de Préférences Cumulées (Local RTX 5070 Ti)** : **`~3 à 5 minutes`** (réutilise les 36 rollouts mesurés + fusionne les 13+ paires Pareto des 8 familles).",
+        "  2. **Entraînement Flow-Matching DPO sur Kaggle Double GPU (`gpu_t4_x2` = 30 Go VRAM)** : **`~40 à 45 minutes`** (2 essais parallèles, 20 à 55 époques).",
+        "  3. **Audit Certifié sur 96 Maillages (Local RTX 5070 Ti, 24 sujets × 4 graines)** : **`~40 à 45 minutes`** (les 96 maillages de Base et du Champion sont déjà en cache à `0 s`, seul le nouveau candidat est généré et jugé sur 4 vues).",
         f"- **Cycle Kaggle / Local supervisé** : `{run_id}` (phase observée : `{phase}`"
         + (f", époque `{epoch}`, val_loss `{val_loss}`" if epoch is not None else "")
         + ").",

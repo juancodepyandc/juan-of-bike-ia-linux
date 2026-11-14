@@ -256,12 +256,8 @@ export type HardwareHint = {
   prefer_speed?: boolean        // when true, pick the smallest competent model
 }
 
-function pickModel(hw?: HardwareHint): string {
-  // gemma3:12b q4 ~7-8 GB, fits with one mesh-render context.
-  // qwen3:14b q4 ~9 GB, also fits but slightly slower; reserve for
-  // fallback when gemma response is unparseable.
-  if (hw?.prefer_speed) return 'gemma3:12b'
-  return 'gemma3:12b'
+function pickModel(_hw?: HardwareHint): string {
+  return 'orcarouter/Qwen3.8-27B-Uncensored:latest'
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -504,7 +500,7 @@ export async function classifyMotionIntent(
     const response = await ollamaChat(model, [
       { role: 'system', content: SYSTEM_PROMPT },
       { role: 'user', content: userMessage },
-    ], 0.1, { num_ctx: 4096, signal: options?.signal })
+    ], 0.1, { num_ctx: 32768, num_predict: 4096, signal: options?.signal })
     const text = (response?.message?.content || '').trim()
     const parsed = safeJsonExtract(text)
     const intent = normalizeIntent(parsed, model)
@@ -515,14 +511,14 @@ export async function classifyMotionIntent(
       }
       return intent
     }
-    // first-shot parse failed — try qwen3:14b once before falling back to regex
-    const response2 = await ollamaChat('qwen3:14b', [
+    // first-shot parse failed — try flagship reasoning model once before falling back
+    const response2 = await ollamaChat('deepseek-r1:32b', [
       { role: 'system', content: SYSTEM_PROMPT },
       { role: 'user', content: userMessage },
-    ], 0.1, { num_ctx: 4096, signal: options?.signal })
+    ], 0.1, { num_ctx: 32768, num_predict: 4096, signal: options?.signal })
     const text2 = (response2?.message?.content || '').trim()
     const parsed2 = safeJsonExtract(text2)
-    const intent2 = normalizeIntent(parsed2, 'qwen3:14b')
+    const intent2 = normalizeIntent(parsed2, 'deepseek-r1:32b')
     if (intent2) {
       if (options?.customMotionText && !intent2.custom_motion_text) {
         intent2.custom_motion_text = options.customMotionText.trim().slice(0, 280)

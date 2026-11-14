@@ -256,6 +256,9 @@ def cli_status():
     })
 
 
+_DOCTOR_HW_CACHE = {"ts": 0.0, "gpu_ok": False, "vram_bytes": 0, "mcp": [], "skills": []}
+
+
 @cli_bp.route("/api/cli/doctor", methods=["GET"])
 @_cli_auth_required
 def cli_doctor():
@@ -270,7 +273,7 @@ def cli_doctor():
     ollama_ok = False
     observed_models = []
     try:
-        r = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
+        r = requests.get(f"{OLLAMA_URL}/api/tags", timeout=3)
         ollama_ok = r.ok
         if r.ok:
             observed_models = r.json().get("models", [])
@@ -279,17 +282,27 @@ def cli_doctor():
     checks.append({"name": "Ollama", "ok": ollama_ok, "detail": f"{OLLAMA_URL}"})
     # ComfyUI
     checks.append({"name": "ComfyUI", "ok": _comfyui_is_ready(), "detail": f"{COMFYUI_URL}"})
-    # GPU
-    gpu_ok = False
-    vram_bytes = 0
-    try:
-        memory = subprocess.check_output(["nvidia-smi", "--query-gpu=memory.total",
-            "--format=csv,noheader,nounits"], timeout=5, text=True)
-        capacities = [int(line.strip()) for line in memory.splitlines() if line.strip().isdigit()]
-        vram_bytes = max(capacities, default=0) * 1024 ** 2
-        gpu_ok = vram_bytes > 0
-    except Exception:
-        pass
+    # GPU + MCP + Skills (cached 20s to avoid spawning nvidia-smi & MCP stdio subprocesses on every ping)
+    now_mono = _time.monotonic()
+    if now_mono - _DOCTOR_HW_CACHE["ts"] > 20.0:
+        gpu_ok = False
+        vram_bytes = 0
+        try:
+            memory = subprocess.check_output(["nvidia-smi", "--query-gpu=memory.total",
+                "--format=csv,noheader,nounits"], timeout=3, text=True)
+            capacities = [int(line.strip()) for line in memory.splitlines() if line.strip().isdigit()]
+            vram_bytes = max(capacities, default=0) * 1024 ** 2
+            gpu_ok = vram_bytes > 0
+        except Exception:
+            pass
+        _DOCTOR_HW_CACHE["gpu_ok"] = gpu_ok
+        _DOCTOR_HW_CACHE["vram_bytes"] = vram_bytes
+        _DOCTOR_HW_CACHE["mcp"] = _cli_discover_mcp(WORKSPACE)
+        _DOCTOR_HW_CACHE["skills"] = _cli_discover_skills(WORKSPACE)
+        _DOCTOR_HW_CACHE["ts"] = now_mono
+    else:
+        gpu_ok = _DOCTOR_HW_CACHE["gpu_ok"]
+        vram_bytes = _DOCTOR_HW_CACHE["vram_bytes"]
     checks.append({"name": "GPU", "ok": gpu_ok})
     ram_total, ram_available = None, None
     try:
@@ -326,10 +339,10 @@ def cli_doctor():
     checks.append({"name": "Permissions", "ok": True,
                    "detail": f"{len(_CLI_PERMISSION_LEVELS)} niveaux disponibles"})
     # MCP
-    mcp = _cli_discover_mcp(WORKSPACE)
+    mcp = _DOCTOR_HW_CACHE["mcp"]
     checks.append({"name": "MCP Servers", "ok": len(mcp) > 0, "detail": f"{len(mcp)} serveur(s)"})
     # Skills
-    skills = _cli_discover_skills(WORKSPACE)
+    skills = _DOCTOR_HW_CACHE["skills"]
     checks.append({"name": "Skills", "ok": True, "detail": f"{len(skills)} skill(s)"})
     # Version
     checks.append({"name": "Version serveur", "ok": True, "detail": _CLI_VERSION})
@@ -664,25 +677,79 @@ def cli_dynamic_agent_create():
     except (ValueError, requests.RequestException) as exc:
         return jsonify({"ok": False, "error_kind": "model_unavailable",
                         "error": str(exc) or "Modèle d'agent indisponible"}), 503
-    agent = {
-        "id": "dyn_" + _secrets.token_hex(6),
-        "name": data.get("name", "Agent"),
-        "role": data.get("role", ""),
-        "type": data.get("type", "temporary"),
-        "created_at": datetime.datetime.utcnow().isoformat() + "Z",
-        "created_by": data.get("mission_id", "manual"),
-        "model": model,
-        "system_prompt": data.get("system_prompt", ""),
-        "tools": data.get("tools", []),
-        "permissions": data.get("permissions", "STANDARD"),
-        "status": "idle",
-        "runtime_seconds": 0,
-        "results": [],
-    }
-    store = _cli_load_json(_CLI_DYNAMIC_AGENTS_PATH)
-    store.setdefault("agents", []).append(agent)
-    _cli_save_json(_CLI_DYNAMIC_AGENTS_PATH, store)
-    return jsonify({"ok": True, "agent": agent})
+    try:
+        from agi_core.agent_forge import forge_autonomous_agent
+        agent = forge_autonomous_agent(
+            name=data.get("name", "Agent"),
+            role=data.get("role", "Autonomous specialist agent"),
+            model=model,
+            permissions=data.get("permissions", "STANDARD"),
+            mission_id=data.get("mission_id", "manual"),
+            preferred_tools=data.get("tools") or data.get("preferred_tools"),
+            verification_focus=data.get("verification_focus", ""),
+            domain=data.get("domain", ""),
+            module=data.get("module", ""),
+            parent_agent=data.get("parent_agent", ""),
+            can_create_subagents=bool(data.get("can_create_subagents", True)),
+            invariants=data.get("invariants"),
+            never_touch=data.get("never_touch"),
+            files_owned=data.get("files_owned"),
+            routes_owned=data.get("routes_owned"),
+            workspace=data.get("workspace") or WORKSPACE,
+        )
+        if data.get("type") in ("temporary", "saved"):
+            agent["type"] = data["type"]
+        if data.get("system_prompt"):
+            agent["system_prompt"] = data["system_prompt"]
+        return jsonify({"ok": True, "agent": agent})
+    except Exception:
+        agent = {
+            "id": "dyn_" + _secrets.token_hex(6),
+            "name": data.get("name", "Agent"),
+            "role": data.get("role", ""),
+            "type": data.get("type", "temporary"),
+            "created_at": datetime.datetime.utcnow().isoformat() + "Z",
+            "created_by": data.get("mission_id", "manual"),
+            "model": model,
+            "system_prompt": data.get("system_prompt", ""),
+            "tools": data.get("tools", []),
+            "permissions": data.get("permissions", "STANDARD"),
+            "status": "idle",
+            "runtime_seconds": 0,
+            "results": [],
+        }
+        store = _cli_load_json(_CLI_DYNAMIC_AGENTS_PATH)
+        store.setdefault("agents", []).append(agent)
+        _cli_save_json(_CLI_DYNAMIC_AGENTS_PATH, store)
+        return jsonify({"ok": True, "agent": agent})
+
+
+@cli_bp.route("/api/cli/agents/dynamic/forge_swarm", methods=["POST"])
+@_cli_auth_required
+def cli_dynamic_agent_forge_swarm():
+    data = request.get_json(silent=True) or {}
+    goal = (data.get("goal") or "").strip()
+    if not goal:
+        return jsonify({"ok": False, "error": "goal is required"}), 400
+    try:
+        model = data.get("model") or _ext_default_model()
+    except Exception:
+        model = "qwen3.5:9b"
+    try:
+        from agi_core.agent_forge import forge_subagent_swarm
+        result = forge_subagent_swarm(
+            goal=goal,
+            parent_agent=data.get("parent_agent", ""),
+            module=data.get("module", ""),
+            model=model,
+            permissions=data.get("permissions", "AUTONOMOUS"),
+            mission_id=data.get("mission_id", "manual_swarm"),
+            subtasks=data.get("subtasks"),
+            workspace=data.get("workspace") or WORKSPACE,
+        )
+        return jsonify({"ok": True, **result})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
 
 
 @cli_bp.route("/api/cli/agents/dynamic/<agent_id>", methods=["GET"])
@@ -735,110 +802,17 @@ def cli_dynamic_agent_save(agent_id):
 # --- MCP Servers ---
 
 def _cli_discover_mcp(workspace_path):
-    """Discover MCP server configs from .aurora/mcp_config.json and .mcp.json files."""
-    servers = []
-    search_paths = [
-        os.path.join(workspace_path, ".aurora", "mcp_config.json"),
-        os.path.join(workspace_path, ".mcp.json"),
-        os.path.join(os.path.dirname(workspace_path), ".aurora", "mcp_config.json"),
-        os.path.join(os.path.dirname(workspace_path), ".mcp.json"),
-    ]
-    seen = set()
-    for p in search_paths:
-        if not os.path.isfile(p):
-            continue
-        try:
-            with open(p, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            for name, cfg in data.get("mcpServers", {}).items():
-                if name in seen or not isinstance(cfg, dict):
-                    continue
-                seen.add(name)
-                declared_tools = cfg.get("tools", [])
-                servers.append({
-                    "name": name, "command": cfg.get("command", ""),
-                    "args": cfg.get("args", []), "env": cfg.get("env", {}),
-                    "source": p, "tools": declared_tools if isinstance(declared_tools, list) else [],
-                })
-        except Exception:
-            continue
-    return servers
+    """Use the same discovery, disabled flag and session policy as mission workers."""
+    from agi_core.context import discover_mcp
+    return discover_mcp(workspace_path)
 
 
 _CLI_MCP_SPAWN_TIMEOUT = 12.0  # seconds for init + one JSON-RPC round-trip
 
 def _cli_mcp_rpc(server, method, params, timeout=_CLI_MCP_SPAWN_TIMEOUT, cwd=None):
-    """Run one JSON-RPC request against an MCP stdio server with a bounded wait.
-
-    Never leaves a spawned process alive on failure and never blocks a Flask
-    thread indefinitely. Returns (result_or_None, error_or_None)."""
-    cmd = [server["command"]] + list(server.get("args", []))
-    if not cmd or not cmd[0]:
-        return None, "MCP server command is empty"
-    env = {**os.environ, **server.get("env", {})}
-    proc = None
-    reader = None
-    try:
-        import errno as _errno
-        import select as _select
-        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                stderr=subprocess.DEVNULL, env=env, cwd=cwd or os.getcwd())
-        reader = proc.stdout
-        reader_fd = reader.fileno()
-        deadline = time.monotonic() + timeout
-
-        def request(mid, method, params):
-            payload = json.dumps({"jsonrpc": "2.0", "id": mid, "method": method,
-                                  "params": params}) + "\n"
-            if proc.stdin is None or proc.stdin.closed:
-                raise OSError("MCP stdin closed")
-            proc.stdin.write(payload.encode())
-            proc.stdin.flush()
-
-        request(1, "initialize", {"protocolVersion": "2024-11-05", "capabilities": {},
-                                  "clientInfo": {"name": "aurora-cli", "version": _CLI_VERSION}})
-        request(2, method, params)
-        buf = b""
-        while True:
-            while b"\n" in buf:
-                line, _, buf = buf.partition(b"\n")
-                try:
-                    msg = json.loads(line.decode("utf-8", errors="replace"))
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(msg, dict) and msg.get("id") == 2:
-                    return msg, None
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return None, "MCP server timed out (no response)"
-            ready, _, _ = _select.select([reader_fd], [], [], min(remaining, 5.0))
-            if not ready:
-                continue
-            chunk = os.read(reader_fd, 65536)
-            if not chunk:
-                return None, "MCP server closed while waiting for response"
-            buf += chunk
-            if len(buf) > 1_000_000:
-                return None, "MCP server response too large"
-    except OSError as e:
-        return None, f"MCP request failed: {e}"
-    finally:
-        try:
-            if reader is not None and not reader.closed:
-                reader.close()
-        except Exception:
-            pass
-        try:
-            if proc is not None:
-                if proc.poll() is None:
-                    proc.terminate()
-                    try:
-                        proc.wait(timeout=2.0)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
-                        proc.wait(timeout=2.0)
-        except Exception:
-            pass
+    """Shared bounded transport; persistent servers keep state across HTTP calls."""
+    from agi_core.context import call_mcp_stdio
+    return call_mcp_stdio(server, method, params, timeout=timeout, cwd=cwd)
 
 
 @cli_bp.route("/api/cli/mcp/list", methods=["GET"])
@@ -846,36 +820,29 @@ def _cli_mcp_rpc(server, method, params, timeout=_CLI_MCP_SPAWN_TIMEOUT, cwd=Non
 def cli_mcp_list():
     workspace = request.args.get("workspace", WORKSPACE)
     servers = _cli_discover_mcp(workspace)
-    return jsonify({"ok": True, "servers": servers, "total": len(servers)})
+    public = [{k: v for k, v in server.items() if k not in {"args", "env"}} for server in servers]
+    for item, server in zip(public, servers):
+        item["argument_count"] = len(server.get("args", []))
+        item["environment_keys"] = sorted(server.get("env", {}))
+    return jsonify({"ok": True, "servers": public, "total": len(public)})
 
 
 @cli_bp.route("/api/cli/mcp/tools", methods=["GET"])
 @_cli_auth_required
 def cli_mcp_tools():
-    """List tools from all MCP servers (spawns each, sends tools/list)."""
+    """Discover all bounded pages, without executing MCP processes for SAFE keys."""
+    from agi_core.context import probe_mcp_tools
     workspace = request.args.get("workspace") or WORKSPACE
-    servers = _cli_discover_mcp(workspace)
-    all_tools = []
-    errors = []
-    for srv in servers:
-        resp, err = _cli_mcp_rpc(srv, "tools/list", {}, cwd=workspace)
-        if err:
-            errors.append({"server": srv["name"], "error": err})
-            continue
-        try:
-            for t in resp.get("result", {}).get("tools", []):
-                all_tools.append({"server": srv["name"], "name": t.get("name", ""),
-                                  "description": t.get("description", ""),
-                                  "schema": t.get("inputSchema", {})})
-        except AttributeError:
-            pass
-    return jsonify({"ok": True, "tools": all_tools, "total": len(all_tools), "errors": errors})
+    execute_probe = g.cli_key_rec.get("permissions") != "SAFE"
+    return jsonify({"ok": True, **probe_mcp_tools(workspace, probe=execute_probe)})
 
 
 @cli_bp.route("/api/cli/mcp/call", methods=["POST"])
 @_cli_auth_required
 def cli_mcp_call():
     """Call an MCP tool by server name + tool name."""
+    if g.cli_key_rec.get("permissions") == "SAFE":
+        return jsonify(ok=False, error="MCP execution requires STANDARD permissions"), 403
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         return jsonify({"ok": False, "error": "JSON object required"}), 400
@@ -889,13 +856,80 @@ def cli_mcp_call():
     srv = next((s for s in servers if s["name"] == server_name), None)
     if not srv:
         return jsonify({"ok": False, "error": f"MCP server '{server_name}' not found"}), 404
+    timeout = data.get("timeout_seconds", _CLI_MCP_SPAWN_TIMEOUT)
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 1 <= timeout <= 180:
+        return jsonify(ok=False, error="MCP timeout must be between 1 and 180 seconds"), 400
     resp, err = _cli_mcp_rpc(srv, "tools/call", {"name": tool_name, "arguments": arguments},
-                             cwd=workspace)
+                             cwd=workspace, timeout=timeout)
     if err:
         return jsonify({"ok": False, "error": err}), 504
     if resp is None:
         return jsonify({"ok": False, "error": "empty MCP response"}), 502
-    return jsonify({"ok": True, "result": resp.get("result", {})})
+    result = resp.get("result", {})
+    return jsonify({"ok": not bool(result.get("isError")), "result": result})
+
+
+def _cli_mcp_read_operation(operation, data):
+    if g.cli_key_rec.get("permissions") == "SAFE":
+        return jsonify(ok=False, error="MCP execution requires STANDARD permissions"), 403
+    from agi_core.context import list_mcp_catalog, read_mcp_resource, get_mcp_prompt, close_mcp_session
+    workspace, server = data.get("workspace") or WORKSPACE, data.get("server", "")
+    try:
+        if operation == "catalog":
+            result = list_mcp_catalog(workspace, server, data.get("kind", "tools"), data.get("cursor"))
+        elif operation == "resource":
+            result = read_mcp_resource(workspace, server, data.get("uri"))
+        elif operation == "prompt":
+            result = get_mcp_prompt(workspace, server, data.get("name"), data.get("arguments"))
+        else:
+            result = close_mcp_session(workspace, server)
+        return jsonify(ok=True, result=result)
+    except ValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+    except TimeoutError as exc:
+        return jsonify(ok=False, error=str(exc)), 409
+    except RuntimeError as exc:
+        return jsonify(ok=False, error=str(exc)), 502
+
+
+@cli_bp.route("/api/cli/mcp/catalog", methods=["GET"])
+@_cli_auth_required
+def cli_mcp_catalog():
+    return _cli_mcp_read_operation("catalog", request.args)
+
+
+@cli_bp.route("/api/cli/mcp/resource", methods=["POST"])
+@cli_bp.route("/api/cli/mcp/prompt", methods=["POST"])
+@cli_bp.route("/api/cli/mcp/close", methods=["POST"])
+@_cli_auth_required
+def cli_mcp_context_operation():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(ok=False, error="JSON object required"), 400
+    return _cli_mcp_read_operation(request.path.rsplit("/", 1)[-1], data)
+
+
+@cli_bp.route("/api/cli/mcp/create", methods=["POST"])
+@_cli_auth_required
+def cli_mcp_create():
+    """Autonomously synthesize, AST-audit, register, and live-probe a new JSON-RPC 2.0 stdio MCP server."""
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"ok": False, "error": "JSON object required"}), 400
+    workspace = data.get("workspace") or WORKSPACE
+    try:
+        from agi_core.mcp_forge import forge_and_register_mcp_server
+        result = forge_and_register_mcp_server(
+            workspace,
+            server_name=data.get("name") or data.get("server", ""),
+            description=data.get("description", ""),
+            tools_spec=data.get("tools", []),
+            code=data.get("code", ""),
+            auto_probe=bool(data.get("probe", True)),
+        )
+        return jsonify({"ok": True, **result})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
 
 
 # --- Skills ---
@@ -1033,9 +1067,10 @@ triggers:
 @cli_bp.route("/api/cli/skills/discover", methods=["POST"])
 @_cli_auth_required
 def cli_skills_discover():
-    """Auto-discover which skills are relevant for a workspace."""
+    """Auto-discover and semantically rank/compose skills for a workspace and optional goal."""
     data = request.get_json(silent=True) or {}
     workspace = data.get("workspace", WORKSPACE)
+    goal = (data.get("goal") or "").strip()
     skills = _cli_discover_skills(workspace)
     # Match triggers against workspace files
     extensions = set()
@@ -1059,8 +1094,87 @@ def cli_skills_discover():
             if t in names:
                 matched.append(skill)
                 break
+    semantic_composition = None
+    if goal:
+        try:
+            from agi_core.skills_engine import rank_and_compose_skills
+            semantic_composition = rank_and_compose_skills(skills, goal, workspace=workspace)
+            if not matched and semantic_composition.get("ranked_skills"):
+                matched = semantic_composition["ranked_skills"]
+        except Exception:
+            pass
     return jsonify({"ok": True, "matched": matched, "total_skills": len(skills),
-                    "extensions_found": sorted(extensions)[:30]})
+                    "extensions_found": sorted(extensions)[:30],
+                    "semantic_composition": semantic_composition})
+
+
+@cli_bp.route("/api/cli/skills/distill", methods=["POST"])
+@_cli_auth_required
+def cli_skills_distill():
+    """Distill a reusable skill and optional companion script from a verified trajectory."""
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"ok": False, "error": "JSON object required"}), 400
+    workspace = data.get("workspace") or WORKSPACE
+    try:
+        from agi_core.skills_engine import distill_skill_from_trajectory
+        result = distill_skill_from_trajectory(
+            workspace,
+            goal=data.get("goal", ""),
+            evidence=data.get("evidence", []),
+            verified_criteria=data.get("verified_criteria", []),
+            skill_name=data.get("name", ""),
+            companion_script_code=data.get("companion_script_code", ""),
+        )
+        return jsonify({"ok": True, **result})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@cli_bp.route("/api/cli/epistemic/evaluate", methods=["POST"])
+@_cli_auth_required
+def cli_epistemic_evaluate():
+    """Run neuro-symbolic System 2 first-principles invariant extraction and Best-of-N hypothesis tree verification."""
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"ok": False, "error": "JSON object required"}), 400
+    workspace = data.get("workspace") or WORKSPACE
+    mode = str(data.get("mode") or "").strip().lower()
+    goal = str(data.get("goal") or data.get("problem") or data.get("prompt") or data.get("hypothesis") or "").strip()
+    try:
+        from agi_core.epistemic_engine import evaluate_hypothesis_tree, extract_first_principles_invariants
+        if mode in {"math", "cyber", "optimize"}:
+            import scientific_oracle
+            if mode == "math":
+                res = scientific_oracle.verify_math_hypothesis(
+                    str(data.get("conjecture") or goal),
+                    domain=str(data.get("domain") or "int"),
+                    hypothesis=str(data.get("hypothesis") or goal),
+                )
+            elif mode == "cyber":
+                res = scientific_oracle.verify_cyber_hypothesis(
+                    str(data.get("code") or ""),
+                    hypothesis=str(data.get("hypothesis") or goal),
+                )
+            else:
+                res = scientific_oracle.verify_optimization_hypothesis(
+                    str(data.get("baseline_code") or ""),
+                    str(data.get("candidate_code") or ""),
+                    entry_function=str(data.get("entry_function") or ""),
+                    test_inputs=data.get("test_inputs") if isinstance(data.get("test_inputs"), list) else None,
+                    hypothesis=str(data.get("hypothesis") or goal),
+                )
+            res["first_principles"] = extract_first_principles_invariants(goal or mode, workspace=workspace)
+            return jsonify({"ok": True, **res})
+        result = evaluate_hypothesis_tree(
+            goal=goal or "Epistemic hypothesis evaluation",
+            hypotheses=data.get("hypotheses", []),
+            workspace=workspace,
+            observations=data.get("observations", []),
+        )
+        return jsonify({"ok": True, **result})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
 
 
 # --- Service Connections ---

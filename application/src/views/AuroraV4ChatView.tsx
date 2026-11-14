@@ -15,6 +15,7 @@ import SourcesPanel from '../components/chat/SourcesPanel.tsx'
 import { MediaStrip } from '../components/chat/MediaEmbed.tsx'
 import { extractRichMedia } from '../utils/mediaLinks.ts'
 import AuroraMascot from '../components/generationFx/mascots.tsx'
+import ReinforcedModelBar from '../components/ReinforcedModelBar.tsx'
 import VoicePushToTalk from '../components/VoicePushToTalk.tsx'
 import { useChatViewLogic, stripThink, WELCOME, type Attachment } from '../hooks/useChatViewLogic.ts'
 import { useChatStore } from '../stores/chatStore.ts'
@@ -751,10 +752,11 @@ export default function AuroraV4ConversationView() {
             boxShadow: `0 0 12px ${ACCENT}59`,
           }} />
           <div style={LABEL}>
-            agent lumo · persona {personaName} · {shortModel}
+            agent lumo · persona {personaName} · modèle renforcé ↔ modèle de base · exécution 100 % locale pc
           </div>
         </div>
         <span style={{ flex: 1 }} />
+        <ReinforcedModelBar activeModule="conversation" />
         <Chip active={L.isStreaming} title={L.isStreaming ? 'Génération en cours' : 'Copilote prêt'}>
           <span style={{
             width: 7,

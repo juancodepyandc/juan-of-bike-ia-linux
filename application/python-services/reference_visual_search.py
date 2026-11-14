@@ -24,7 +24,7 @@ from typing import Iterable
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/133.0.0.0 Safari/537.36 AuroraIA/2.0"
+    "Chrome/133.0.0.0 Safari/537.36"
 )
 SEARCH_ENDPOINT = "https://html.duckduckgo.com/html/?q={query}"
 # Endpoint ASYNC de Bing Images : c'est celui que le JS de la page appelle. Il
@@ -75,14 +75,14 @@ def clean_text(value: str) -> str:
 
 
 def request_bytes(url: str, max_bytes: int, accept: str = "*/*") -> tuple[bytes, str]:
-    request = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": USER_AGENT,
-            "Accept": accept,
-            "Accept-Language": "en-US,en;q=0.9,fr;q=0.8",
-        },
-    )
+    safe_url = "".join(ch if ord(ch) < 128 else urllib.parse.quote(ch) for ch in url)
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Accept": accept,
+        "Accept-Language": "en-US,en;q=0.9,fr;q=0.8",
+        "Referer": "https://www.bing.com/",
+    }
+    request = urllib.request.Request(safe_url, headers=headers)
     with urllib.request.urlopen(request, timeout=12) as response:
         content_type = response.headers.get("Content-Type", "")
         data = response.read(max_bytes + 1)
@@ -145,8 +145,31 @@ def looks_like_real_image(url: str) -> bool:
     lowered = url.lower()
     if not lowered.startswith(("http://", "https://")):
         return False
+    parsed_path = urllib.parse.urlparse(lowered).path
+    if parsed_path.endswith((
+        ".pdf",
+        ".djvu",
+        ".svg",
+        ".ogv",
+        ".webm",
+        ".ogg",
+        ".mp4",
+        ".tif",
+        ".tiff",
+        ".doc",
+        ".docx",
+        ".zip",
+        ".html",
+        ".htm",
+        ".php",
+    )):
+        return False
     if any(marker in lowered for marker in [
         ".svg",
+        ".pdf",
+        ".djvu",
+        ".ogv",
+        ".webm",
         "logo",
         "sprite",
         "avatar",
@@ -246,12 +269,33 @@ def inspect_page(result: dict) -> list[dict]:
 
 
 def download_image(url: str) -> dict:
-    data, content_type = request_bytes(url, MAX_IMAGE_BYTES, accept="image/*,*/*;q=0.8")
-    return {
-        "ok": True,
-        "contentType": content_type or "application/octet-stream",
-        "base64": base64.b64encode(data).decode("ascii"),
-    }
+    if not looks_like_real_image(url):
+        return {"ok": False, "error": "URL rejected (non-raster extension)"}
+    data, content_type = request_bytes(url, MAX_IMAGE_BYTES, accept="image/png,image/jpeg,image/webp,image/*;q=0.8")
+    if not data or len(data) < 64:
+        return {"ok": False, "error": "Empty payload"}
+    if data[:16].startswith(b"%PDF-") or data[:16].lstrip().startswith((b"<!DOC", b"<html", b"<HTML", b"<?xml", b"<svg")):
+        return {"ok": False, "error": "Non-raster payload (PDF/HTML/SVG)"}
+    try:
+        import io
+        from PIL import Image, ImageOps
+        with Image.open(io.BytesIO(data)) as img:
+            img.load()
+            img = ImageOps.exif_transpose(img)
+            if img.width < 64 or img.height < 64:
+                return {"ok": False, "error": f"Image too small ({img.width}x{img.height})"}
+            if img.mode not in ("RGB", "RGBA"):
+                img = img.convert("RGBA" if "A" in img.mode else "RGB")
+            buf = io.BytesIO()
+            img.save(buf, format="PNG", compress_level=1)
+            png_bytes = buf.getvalue()
+        return {
+            "ok": True,
+            "contentType": "image/png",
+            "base64": base64.b64encode(png_bytes).decode("ascii"),
+        }
+    except Exception as exc:
+        return {"ok": False, "error": f"PIL decode failed: {exc}"}
 
 
 def search_via_crawl4ai(query: str, limit: int) -> list[dict]:
@@ -308,6 +352,7 @@ def search_bing_images(query: str, limit: int) -> list[dict]:
             "title": clean_text(str(meta.get("t") or meta.get("desc") or query)),
             "pageUrl": str(meta.get("purl") or meta.get("surl") or ""),
             "imageUrl": image_url,
+            "thumbUrl": str(meta.get("turl") or "").strip(),
             "width": int(meta.get("ow") or meta.get("w") or 0),
             "height": int(meta.get("oh") or meta.get("h") or 0),
             "query": query,

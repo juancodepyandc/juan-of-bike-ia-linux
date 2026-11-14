@@ -226,6 +226,39 @@ def score_color_richness(mesh, mesh_path: Path | None = None) -> tuple[int, dict
         return material_score, detail
     vc = getattr(visual, "vertex_colors", None)
     if vc is None or len(vc) == 0:
+        mat = getattr(visual, "material", None)
+        bct = getattr(mat, "baseColorTexture", None) if mat is not None else None
+        if bct is not None:
+            try:
+                tex_arr = np.asarray(bct.convert("RGB"), dtype=np.float32)
+                if tex_arr.ndim == 3 and tex_arr.shape[0] > 0 and tex_arr.shape[1] > 0:
+                    step_y = max(1, tex_arr.shape[0] // 128)
+                    step_x = max(1, tex_arr.shape[1] // 128)
+                    sampled = tex_arr[::step_y, ::step_x, :3].reshape(-1, 3) / 255.0
+                    non_empty = sampled[sampled.sum(axis=-1) > 0.02]
+                    if len(non_empty) >= 256:
+                        sampled = non_empty
+                    rounded = np.round(sampled * 255).astype(int)
+                    unique = len(np.unique(rounded.view([("", rounded.dtype)] * rounded.shape[1])))
+                    var = float(sampled.var(axis=0).sum())
+                    tex_score = min(65, int(unique / 20)) + min(35, int(var * 1000))
+                    if getattr(mat, "normalTexture", None) is not None:
+                        tex_score += 8
+                    if getattr(mat, "metallicRoughnessTexture", None) is not None:
+                        tex_score += 8
+                    if mesh_path is not None:
+                        gltf_doc = _read_gltf_json(mesh_path)
+                        mats_doc = gltf_doc.get("materials") or []
+                        if any(m_d.get("occlusionTexture") is not None for m_d in mats_doc):
+                            tex_score += 5
+                        if len(gltf_doc.get("extensionsUsed") or []) >= 2:
+                            tex_score += 5
+                    detail["unique_colors"] = int(unique)
+                    detail["variance"] = round(var, 4)
+                    detail["texture_pixel_score"] = min(100, tex_score)
+                    return max(material_score, detail["texture_pixel_score"]), detail
+            except Exception:
+                pass
         return material_score, detail
 
     detail["has_vertex_colors"] = True
@@ -293,6 +326,17 @@ def _aspect_depuis_references(mesh_path: Path) -> tuple[float, float, float] | N
     try:
         faces = sorted(mesh_path.parent.glob("*_reference.png"))
         cotes = sorted(mesh_path.parent.glob("*_reference_v2.png"))
+        if not faces and mesh_path.parent.parent.is_dir():
+            faces = sorted(mesh_path.parent.parent.glob("*_reference.png"))
+            cotes = sorted(mesh_path.parent.parent.glob("*_reference_v2.png"))
+        if not faces and (mesh_path.parent.parent / "travail").is_dir():
+            faces = sorted((mesh_path.parent.parent / "travail").glob("*_reference.png"))
+            cotes = sorted((mesh_path.parent.parent / "travail").glob("*_reference_v2.png"))
+        if not faces and (mesh_path.parent.parent / "reference").is_dir():
+            ref_dir = mesh_path.parent.parent / "reference"
+            faces = sorted(ref_dir.glob("*reference*.png")) or sorted(ref_dir.glob("face*.png"))
+            if not cotes:
+                cotes = sorted(ref_dir.glob("profil*.png")) or sorted(ref_dir.glob("*_v2.png"))
         if not faces:
             return None
         wh = _bbox_sujet(faces[0])
@@ -305,7 +349,8 @@ def _aspect_depuis_references(mesh_path: Path) -> tuple[float, float, float] | N
             if wh2:
                 prof = wh2[0] / wh2[1]
         if prof is None:
-            prof = larg * 0.55   # profil inconnu: creuse comme la plupart des sujets
+            m = max(larg, 1.0)
+            return (round(larg / m, 3), round(1.0 / m, 3), -1.0)
         trio = (larg, 1.0, prof)
         m = max(trio)
         return tuple(round(v / m, 3) for v in trio)
@@ -333,13 +378,23 @@ def score_silhouette_aspect(mesh, kind: str,
         return 100, detail
 
     detail["expected"] = list(expected)
-    # L1 distance, but try all 6 axis permutations because the export axis may
-    # differ from canonical (rare, but happens).
     from itertools import permutations
-    best_dist = min(
-        sum(abs(a - b) for a, b in zip(perm, expected))
-        for perm in permutations(norm)
-    )
+    if len(expected) == 3 and expected[2] < 0:
+        # Single front-view reference: width and height ratio are known (expected[0], expected[1]),
+        # while the 3D depth axis is open as long as the mesh is not paper-thin (< 0.12).
+        exp_ratio = expected[0] / max(expected[1], 1e-6)
+        best_dist = 999.0
+        for perm in permutations(norm):
+            cur_ratio = perm[0] / max(perm[1], 1e-6)
+            depth_penalty = max(0.0, (0.12 - perm[2]) * 4.0)
+            d = abs(cur_ratio - exp_ratio) + depth_penalty
+            if d < best_dist:
+                best_dist = d
+    else:
+        best_dist = min(
+            sum(abs(a - b) for a, b in zip(perm, expected))
+            for perm in permutations(norm)
+        )
     detail["aspect_l1_distance"] = round(best_dist, 3)
     # 0.0 → 100, 1.0 → 0
     score = max(0, int(100 * (1.0 - best_dist / 1.5)))
@@ -349,7 +404,27 @@ def score_silhouette_aspect(mesh, kind: str,
 def score_manifold_health(mesh) -> tuple[int, dict]:
     detail = {"is_watertight": False, "euler_number": None, "broken_faces": 0}
     try:
+        import numpy as np
         detail["is_watertight"] = bool(mesh.is_watertight)
+        if not detail["is_watertight"]:
+            # In glTF 2.0, UV island seams split vertex indices even when the 3D surface is closed.
+            # Check geometric watertightness by welding 3D positions on a 4e-4 relative grid.
+            v = np.asarray(mesh.vertices)
+            f = np.asarray(mesh.faces)
+            if len(v) > 0 and len(f) > 0:
+                taille = float(np.linalg.norm(v.max(0) - v.min(0))) or 1.0
+                grille = np.round(v / (taille * 4e-4)).astype(np.int64)
+                _, inv = np.unique(grille, axis=0, return_inverse=True)
+                fs = inv[f]
+                fs = fs[(fs[:, 0] != fs[:, 1]) & (fs[:, 1] != fs[:, 2]) & (fs[:, 0] != fs[:, 2])]
+                if len(fs) > 0:
+                    e = np.sort(np.concatenate([fs[:, (0, 1)], fs[:, (1, 2)], fs[:, (0, 2)]]), axis=1)
+                    _, c = np.unique(e, axis=0, return_counts=True)
+                    bords = int((c == 1).sum())
+                    detail["open_boundary_edges"] = bords
+                    if bords == 0:
+                        detail["is_watertight"] = True
+                        detail["watertight_mode"] = "geometric_uv_seam_welded"
         detail["euler_number"] = int(mesh.euler_number)
         broken = getattr(mesh, "broken_faces", None)
         if broken is not None:

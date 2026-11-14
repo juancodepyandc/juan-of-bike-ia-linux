@@ -117,7 +117,12 @@ def replay_tasks(tasks, config, state):
         if task.get('base_prompt'):task['prompt']=task.pop('base_prompt')
         signature=_signature(task)
         if signature in used or signature in audit_signatures:continue
-        if task.get('image') and not Path(task['image']).is_file():continue
+        if task.get('image') and not Path(task['image']).is_file():
+            relocated = Path(state) / 'radical_references' / Path(task['image']).parent.name / Path(task['image']).name
+            if relocated.is_file():
+                task['image'] = str(relocated)
+            else:
+                continue
         # Keep the exact instruction: appending diagnostics corrupts speech,
         # image/text alignment and the conditioning of diffusion generators.
         used.add(signature)

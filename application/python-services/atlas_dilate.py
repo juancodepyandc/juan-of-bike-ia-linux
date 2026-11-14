@@ -67,12 +67,81 @@ def _uv_valid_mask(g, mesh_img_idx: int, taille: tuple[int, int]) -> np.ndarray:
     return masque.astype(bool)
 
 
+def _dilater_sans_pygltflib(glb_path: str, out_path: str) -> dict:
+    """Fallback sans pygltflib utilisant glb_io + trimesh + OpenCV."""
+    import cv2
+    from PIL import Image
+    import trimesh
+    import glb_io
+
+    m = trimesh.load(glb_path, force="mesh", process=False)
+    vis = getattr(m, "visual", None)
+    uv = getattr(vis, "uv", None)
+    f = getattr(m, "faces", None)
+    if uv is None or f is None or len(f) == 0:
+        return {"ok": True, "note": "pas d'UV a dilater"}
+    uv = np.asarray(uv, dtype=np.float64)
+    f = np.asarray(f, dtype=np.int64)
+
+    j, blob = glb_io.load(glb_path)
+    images = j.get("images") or []
+    if not images:
+        return {"ok": True, "note": "aucune image dans le GLB"}
+
+    rapport = {"ok": True, "images": [], "backend": "glb_io"}
+    tris = uv[f]
+    for idx_img in range(len(images)):
+        try:
+            raw_bytes = glb_io.image_bytes(j, blob, idx_img)
+            im = Image.open(io.BytesIO(raw_bytes)).convert("RGB")
+            a = np.asarray(im, dtype=np.uint8).copy()
+            H, W = a.shape[:2]
+            masque = np.zeros((H, W), dtype=np.uint8)
+            pts = np.empty_like(tris, dtype=np.float64)
+            pts[..., 0] = tris[..., 0] * (W - 1)
+            pts[..., 1] = (1.0 - tris[..., 1]) * (H - 1)
+            cv2.fillPoly(masque, list(np.round(pts).astype(np.int32)), 1)
+            valide = masque.astype(bool)
+            couverture = float(valide.mean())
+            if couverture < 0.02 or couverture > 0.995:
+                continue
+            _med = cv2.medianBlur(a, 5)
+            _ecart = np.abs(a.astype(np.int16) - _med.astype(np.int16)).max(axis=2)
+            _mouchetures = valide & (_ecart > 40)
+            if _mouchetures.any():
+                a = np.where(_mouchetures[..., None], _med, a).astype(np.uint8)
+            _, labels = cv2.distanceTransformWithLabels(
+                (~valide).astype(np.uint8), cv2.DIST_L2, 3, labelType=cv2.DIST_LABEL_PIXEL
+            )
+            plats = np.flatnonzero(valide.ravel())
+            corresp = np.zeros(labels.max() + 1, dtype=np.int64)
+            corresp[labels.ravel()[plats]] = plats
+            rempli = a.reshape(-1, 3)[corresp[labels.ravel()]].reshape(a.shape)
+            sortie = np.where(valide[..., None], a, rempli).astype(np.uint8)
+            buf = io.BytesIO()
+            Image.fromarray(sortie).save(buf, format="PNG")
+            # Remplacer uniquement la premiere image (baseColorTexture) ou via trimesh si unique
+            if idx_img == 0 and getattr(vis, "material", None) is not None:
+                vis.material.baseColorTexture = Image.fromarray(sortie)
+                rapport["images"].append({"image": idx_img, "couverture": round(couverture, 3)})
+        except Exception:
+            continue
+    if rapport["images"]:
+        m.export(out_path)
+    elif out_path != glb_path:
+        import shutil
+        shutil.copyfile(glb_path, out_path)
+    return rapport
+
+
 def dilater(glb_path: str, out_path: str | None = None) -> dict:
     import cv2
     from PIL import Image
-    from pygltflib import GLTF2
-
     out_path = out_path or glb_path
+    try:
+        from pygltflib import GLTF2
+    except ImportError:
+        return _dilater_sans_pygltflib(glb_path, out_path)
     g = GLTF2().load(glb_path)
     blob = g.binary_blob()
     rapport = {"ok": True, "images": []}
@@ -98,14 +167,6 @@ def dilater(glb_path: str, out_path: str | None = None) -> dict:
                 if _m.mean() > 0.05:
                     valide = _m
                     break
-        # LES TROUS SONT AUSSI *DANS* LES ILOTS (27/07, mesure): le bake ne
-        # peint pas tous les texels de micro-ilots -> 40,9%% des sommets
-        # echantillonnaient du NOIR alors que l'atlas contient un jaune
-        # parfait. Le masque des texels REELLEMENT PEINTS (non noirs) est le
-        # bon critere: on remplit tout le reste, dedans comme dehors.
-        _peint = a.max(axis=2) > 18
-        if _peint.mean() > 0.02:
-            valide = valide & _peint if valide.mean() > 0.02 else _peint
         couverture = float(valide.mean())
         if couverture < 0.02 or couverture > 0.995:
             rapport["images"].append({"image": i, "saut": True,

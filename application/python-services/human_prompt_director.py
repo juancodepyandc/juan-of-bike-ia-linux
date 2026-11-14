@@ -11,9 +11,25 @@ Eliminates robotic tag stuffing in favor of coherent artistic prose.
 """
 
 from __future__ import annotations
+from pathlib import Path
 import re
+import sys
 from typing import Dict, Any, List, Optional
 import unicodedata
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+try:
+    from agi_core.prompt_intelligence import (
+        detect_subject_ontology,
+        extract_strict_prompt_constraints,
+    )
+except Exception:  # pragma: no cover
+    detect_subject_ontology = None  # type: ignore[assignment]
+    extract_strict_prompt_constraints = None  # type: ignore[assignment]
+
 
 def strip_accents(s: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
@@ -31,18 +47,35 @@ def detect_category(raw_text: str) -> str:
     # Tileable texture (excluding organic skin/hair/cloth textures)
     if re.search(r"\b(seamless|tileable|motif repetable|sol carrelage|pbr texture|albedo map|texture de sol|texture de mur|texture 3d repetable)\b", text):
         return "game_asset_texture"
-    if re.search(r"\b(texture)\b", text) and not re.search(r"\b(texture de peau|skin texture|texture du visage|texture des cheveux|texture du tissu)\b", text) and re.search(r"\b(sol|mur|pave|pierre|bois|metal|pbr|seamless|tile)\b", text):
+    if re.search(r"\b(texture)\b", text) and not re.search(r"\b(texture de peau|skin texture|texture du visage|texture des cheveux|texture du tissu|textures? de personne|textures? reelles?|real.*textures?)\b", text) and re.search(r"\b(sol|mur|pave|pierre|bois|metal|pbr|seamless|tile)\b", text):
         return "game_asset_texture"
     if re.search(r"\b(asset 3d|game prop|low poly prop|game asset|asset jeu|modele pour jeu)\b", text):
         return "game_asset_3d_prop"
         
-    # 2. Stylized & Animation
+    # 2. Stylized & Animation + Canonical Ontology Detection
+    if re.search(r"\b(figurine|statuette|nendoroid|funko|amiibo|vinyle|vinyl toy|collector figure|jouet 3d)\b", text):
+        return "stylized_figurine_collector"
+    if re.search(r"\b(cubique|voxel|minecraft|blocky|lego|roblox|low poly cube)\b", text):
+        return "stylized_voxel_cubic"
+    if re.search(r"\b(zig et sharko|zig and sharko|xilam|oggy|dalton|lucky luke|tex avery|looney tunes|cartoon 2d|franco belge|bob l eponge|spongebob|simpsons|tom et jerry|asterix|obelix|tintin)\b", text):
+        return "stylized_cartoon_2d"
     if re.search(r"\b(pixar|disney|animation 3d|dreamworks|personnage 3d stylise|caricature 3d)\b", text):
         return "stylized_pixar_3d"
-    if re.search(r"\b(anime|ghibli|shinkai|makoto|cel.?shad|cleankey|japonais animation|dessin anime)\b", text):
-        return "stylized_anime_ghibli"
-    if re.search(r"\b(manga|noir et blanc|encre|screentone|trame|planche manga|shonen|seinen)\b", text):
+    if re.search(r"\b(manga|noir et blanc|encre|screentone|trame|planche manga)\b", text):
         return "stylized_manga_ink"
+
+    if detect_subject_ontology is not None:
+        ontology = detect_subject_ontology(raw_text)
+        if ontology.get("effective_render_mode") == "hybrid_anime_with_real_textures":
+            return "photo_realistic"
+        if (
+            ontology.get("effective_render_mode") in {"native_anime_stylized", "hybrid_real_to_stylized"}
+            or ontology.get("style_category") == "stylized_anime_ghibli"
+        ):
+            return "stylized_anime_ghibli"
+
+    if re.search(r"\b(anime|ghibli|shinkai|makoto|cel.?shad|cleankey|japonais animation|dessin anime|shonen|seinen)\b", text):
+        return "stylized_anime_ghibli"
     if re.search(r"\b(cyberpunk|neon noir|futuriste neon|blade runner|synthwave)\b", text):
         return "stylized_cyberpunk"
     if re.search(r"\b(huile|oil painting|peinture a l huile|toile de maitre|caravaggio|rembrandt)\b", text):
@@ -368,6 +401,70 @@ def _style_prompt(raw_input: str, cat: str) -> Dict[str, Any]:
             ]
         }
 
+    elif cat == "stylized_cartoon_2d":
+        return {
+            "category": "stylized_cartoon_2d",
+            "title": f"Cartoon 2D Officiel - {subj[:32]}",
+            "human_prompt": (f"An official 2D cartoon character model sheet illustration of {subj}. Authentic Franco-Belgian / Xilam "
+                             "2D animation style with thick continuous closed black ink outlines completely enclosing the eyes and white sclera, "
+                             "cheerful closed or smiling white toothy grin without any giant black gaping mouth cavity, vibrant flat cel colors, "
+                             "full body standing upright facing forward directly on its feet without any pedestal or stand, on a pure solid white studio background."),
+            "negative_prompt": "open unclosed eye rims, white sclera merging into background, giant black gaping mouth cavity, 3d pedestal, display stand, photorealistic skin pores, watermark",
+            "aspect_ratio": "1:1",
+            "width": 1024,
+            "height": 1024,
+            "steps": 50,
+            "guidance": 4.2,
+            "suggested_directory": "stylized",
+            "quality_checklist": [
+                "Contours d'encre noire fermés autour des yeux et de la sclère",
+                "Sourire net sans cavité buccale noire géante",
+                "Personnage en pied de face sans socle sur fond blanc pur"
+            ]
+        }
+
+    elif cat == "stylized_figurine_collector":
+        return {
+            "category": "stylized_figurine_collector",
+            "title": f"Figurine Collector 3D - {subj[:32]}",
+            "human_prompt": (f"A high-end 3D collector vinyl and painted resin figurine of {subj}. Smooth tactile satin PVC material finish, "
+                             "crisp sculpted facial features and closed eye contours, vibrant collector colors, full body standing directly on flat ground "
+                             "on its feet without any circular pedestal, base, or stand, on a pure solid white studio background."),
+            "negative_prompt": "circular pedestal, black base, display stand, plinth, wet latex glare, flat 2d cutout, photorealistic human pores, watermark",
+            "aspect_ratio": "1:1",
+            "width": 1024,
+            "height": 1024,
+            "steps": 50,
+            "guidance": 4.2,
+            "suggested_directory": "stylized",
+            "quality_checklist": [
+                "Matière vinyle/résine satinée réaliste",
+                "Debout directement sur ses pieds sans socle parasite",
+                "Silhouette nette prête pour la reconstruction 3D"
+            ]
+        }
+
+    elif cat == "stylized_voxel_cubic":
+        return {
+            "category": "stylized_voxel_cubic",
+            "title": f"Style Cubique Voxel - {subj[:32]}",
+            "human_prompt": (f"An authentic 3D cubic voxel block character render of {subj}. Crisp 90-degree orthogonal cube geometry, "
+                             "clean pixel-art block textures without organic rounding, full body standing directly on its feet without any pedestal "
+                             "or stand, on a pure solid white studio background."),
+            "negative_prompt": "smooth organic curves, spherical head, circular pedestal, display stand, blurry textures, photorealistic skin, watermark",
+            "aspect_ratio": "1:1",
+            "width": 1024,
+            "height": 1024,
+            "steps": 50,
+            "guidance": 4.5,
+            "suggested_directory": "stylized",
+            "quality_checklist": [
+                "Géométrie orthogonale en cubes à 90° sans arrondis",
+                "Textures voxel nettes",
+                "Sans socle sur fond blanc pur"
+            ]
+        }
+
     raise ValueError(f"Unsupported image category: {cat}")
 
 
@@ -386,6 +483,9 @@ _FOREGROUND_STYLES = {
     "stylized_oil_painting": "An oil painting with visible brushwork and textured pigments",
     "stylized_watercolor": "A watercolor illustration with delicate transparent washes",
     "concept_art_production": "A detailed production concept illustration",
+    "stylized_cartoon_2d": "An official 2D cartoon character illustration with closed black ink contours and vibrant cel colors",
+    "stylized_figurine_collector": "A high-end 3D collector vinyl and resin figurine standing directly on its feet without a pedestal",
+    "stylized_voxel_cubic": "A crisp 3D cubic voxel block character with 90-degree orthogonal geometry",
 }
 
 
@@ -415,6 +515,13 @@ def direct_prompt(raw_input: str, force_category: Optional[str] = None) -> Dict[
     # The former prop category had no template and silently lost the user's brief.
     spec = _style_prompt(raw_input, cat)
     spec["category"] = cat
+    ontology = detect_subject_ontology(raw_input) if detect_subject_ontology is not None else {}
+    constraints = extract_strict_prompt_constraints(raw_input) if extract_strict_prompt_constraints is not None else {}
+    if ontology:
+        spec["subject_ontology"] = ontology
+    if constraints:
+        spec["strict_constraints"] = constraints
+
     background = _uniform_background(raw_input)
     if background:
         spec["human_prompt"] = (
@@ -428,13 +535,40 @@ def direct_prompt(raw_input: str, force_category: Optional[str] = None) -> Dict[
             "Cadrage et visibilité conformes à la demande",
         ]
         spec["requested_background"] = background
+
+    # Canonical visual identity & hybrid anime-real-texture lock
+    extra_clauses: List[str] = []
+    if ontology.get("canonical_subject_en"):
+        extra_clauses.append(f"Canonical character visual identity: {ontology['canonical_subject_en']}")
+    if ontology.get("effective_render_mode") == "hybrid_anime_with_real_textures":
+        extra_clauses.append(
+            "Preserve the iconic anime character silhouette, hairstyle and costume while rendering with "
+            "photorealistic human skin pores and tactile real-world fabric textures"
+        )
+        spec["negative_prompt"] = re.sub(r"\bcartoon,\s*", "", spec.get("negative_prompt", ""))
+    if constraints.get("affirmative_replacements_en"):
+        extra_clauses.append("Anatomy & garment state: " + ", ".join(constraints["affirmative_replacements_en"]))
+    if constraints.get("mandatory_attributes_en"):
+        extra_clauses.append("Mandatory attributes: " + ", ".join(constraints["mandatory_attributes_en"]))
+    if constraints.get("excluded_items_en"):
+        excluded_str = ", ".join(constraints["excluded_items_en"])
+        extra_clauses.append(f"Strictly exclude: {excluded_str}")
+        existing_neg = spec.get("negative_prompt", "").strip(" ,")
+        spec["negative_prompt"] = f"{excluded_str}, {existing_neg}" if existing_neg else excluded_str
+
+    if extra_clauses:
+        spec["human_prompt"] = spec["human_prompt"].rstrip(" .") + ". " + ". ".join(extra_clauses) + "."
+
     text = strip_accents(raw_input.lower())
     full_body = bool(re.search(r"\b(full[- ]body|head[- ]to[- ]toe|en pied|corps entier)\b", text))
     explicit_ratio = re.search(r"\b(1\s*:\s*1|2\s*:\s*3|3\s*:\s*2|16\s*:\s*9|9\s*:\s*16)\b", text)
     dimensions = {"1:1": (1024, 1024), "2:3": (832, 1216), "3:2": (1216, 832),
                   "16:9": (1344, 768), "9:16": (768, 1344)}
     ratio = re.sub(r"\s", "", explicit_ratio.group()) if explicit_ratio else None
-    upright_character = bool(re.search(r"\b(character|personnage|personne|woman|man|femme|homme|girl|boy)\b", text))
+    upright_character = bool(
+        ontology.get("canonical_character_id")
+        or re.search(r"\b(character|personnage|personne|woman|man|femme|homme|girl|boy|heros|guerrier|mage)\b", text)
+    )
     if ratio is None and full_body and upright_character and not re.search(r"\b(landscape|horizontal|panorami\w*|wide[- ]screen)\b", text):
         ratio = "2:3"
     if ratio:

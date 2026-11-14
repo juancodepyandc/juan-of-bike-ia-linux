@@ -101,12 +101,12 @@ const UI_TO_BACKEND_MODULE: Record<string, string> = {
 
 const MODULE_SWITCH_CARDS: Array<{ id: ModuleId; backend: string; label: string; icon: string; accent: string }> = [
   { id: 'conversation', backend: 'conversation', label: 'Chat & Recherche', icon: '💬', accent: '#8B5CF6' },
-  { id: 'image', backend: 'image', label: 'Image FLUX.2', icon: '🎨', accent: '#F472B6' },
+  { id: 'image', backend: 'image', label: 'Image', icon: '🎨', accent: '#F472B6' },
   { id: 'code', backend: 'code', label: 'Code & Sandbox', icon: '💻', accent: '#22D3EE' },
   { id: 'drawing', backend: 'drawing', label: 'Dessin & Forge', icon: '✏️', accent: '#FB923C' },
   { id: '3d', backend: '3d', label: '3D & CAO', icon: '🧊', accent: '#60A5FA' },
   { id: 'learning', backend: 'learning', label: 'Académie', icon: '🎓', accent: '#A78BFA' },
-  { id: 'cyber', backend: 'cyber', label: 'Cyber & Z3', icon: '🛡️', accent: '#34D399' },
+  { id: 'cyber', backend: 'cyber', label: 'Cyber & Preuve', icon: '🛡️', accent: '#34D399' },
   { id: 'business', backend: 'business', label: 'Business Lab', icon: '📈', accent: '#F59E0B' },
   { id: 'voice', backend: 'audio', label: 'Voix Duplex', icon: '🎙️', accent: '#2DD4BF' },
 ]
@@ -220,6 +220,25 @@ export default function ReinforcedModelBar({ activeModule }: { activeModule: str
     }
   }
 
+  const selectAllVariants = async (variant: 'base' | 'renforce') => {
+    if (!overview?.modules) return
+    setSwitching(`all:${variant}`)
+    try {
+      await Promise.all(
+        Object.keys(overview.modules).map((modKey) =>
+          fetch(`${getBridgeUrl()}/api/models/reinforced-select`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ module: modKey, variant }),
+          }),
+        ),
+      )
+      await fetchOverview()
+    } finally {
+      setSwitching(null)
+    }
+  }
+
   const stopTraining = async (action: 'stop_after_cycle' | 'stop' = 'stop_after_cycle') => {
     setStopping(true)
     try {
@@ -235,8 +254,8 @@ export default function ReinforcedModelBar({ activeModule }: { activeModule: str
   }
 
   const modInfo = overview?.modules?.[backendMod]
-  const activeVariant = modInfo?.selected_variant || 'base'
-  const hasReinforced = Boolean(modInfo?.reinforced_available)
+  const activeVariant = modInfo?.selected_variant || 'renforce'
+  const hasReinforced = modInfo ? Boolean(modInfo.reinforced_available) : true
   const gainPts = modInfo?.gain_points_100 ?? 0
   const training = overview?.training
 
@@ -262,37 +281,33 @@ export default function ReinforcedModelBar({ activeModule }: { activeModule: str
           type="button"
           onClick={() => void selectVariant(backendMod, 'base')}
           disabled={switching !== null}
-          title={`Modèle de Base Intouchable (${modInfo?.base_model || 'Poids originaux SHA-256'})`}
+          title="Utiliser le Modèle de base sur ce PC"
           style={{
-            padding: '4px 8px',
+            padding: '4px 10px',
             borderRadius: 8,
             border: activeVariant === 'base' ? '1px solid rgba(56, 189, 248, 0.65)' : '1px solid transparent',
             background: activeVariant === 'base' ? 'rgba(14, 165, 233, 0.22)' : 'transparent',
             color: activeVariant === 'base' ? '#E0F2FE' : '#94A3B8',
             fontWeight: activeVariant === 'base' ? 700 : 500,
-            fontSize: 10.5,
+            fontSize: 11,
             cursor: 'pointer',
             display: 'inline-flex',
             alignItems: 'center',
-            gap: 4,
+            gap: 5,
             whiteSpace: 'nowrap',
             transition: 'all .18s ease',
           }}
         >
-          <span>🛡️ Base</span>
+          <span>Modèle de base</span>
         </button>
 
         <button
           type="button"
           onClick={() => void selectVariant(backendMod, 'renforce')}
           disabled={switching !== null}
-          title={
-            hasReinforced
-              ? `Modèle Renforcé actif (${gainPts >= 0 ? '+' : ''}${gainPts.toFixed(3)} pts / 100 — ${modInfo?.axes_cibles})`
-              : `Activer la branche Modèle Renforcé pour ${modInfo?.label || backendMod}`
-          }
+          title="Utiliser le Modèle renforcé local sur ce PC"
           style={{
-            padding: '4px 8px',
+            padding: '4px 10px',
             borderRadius: 8,
             border:
               activeVariant === 'renforce'
@@ -304,7 +319,7 @@ export default function ReinforcedModelBar({ activeModule }: { activeModule: str
                 : 'transparent',
             color: activeVariant === 'renforce' ? '#ECFDF5' : '#94A3B8',
             fontWeight: activeVariant === 'renforce' ? 700 : 500,
-            fontSize: 10.5,
+            fontSize: 11,
             cursor: 'pointer',
             display: 'inline-flex',
             alignItems: 'center',
@@ -313,23 +328,7 @@ export default function ReinforcedModelBar({ activeModule }: { activeModule: str
             transition: 'all .18s ease',
           }}
         >
-          <span>⚡ Renforcé</span>
-          {hasReinforced && (
-            <span
-              style={{
-                padding: '1px 5px',
-                borderRadius: 99,
-                background: 'rgba(16, 185, 129, 0.28)',
-                border: '1px solid rgba(52, 211, 153, 0.5)',
-                color: '#6EE7B7',
-                fontFamily: "'Cascadia Code',Consolas,monospace",
-                fontSize: 9.5,
-                fontWeight: 700,
-              }}
-            >
-              +{gainPts.toFixed(2)}
-            </span>
-          )}
+          <span>Modèle renforcé</span>
         </button>
 
         <button
@@ -485,28 +484,64 @@ export default function ReinforcedModelBar({ activeModule }: { activeModule: str
               >
                 <div>
                   <h2 style={{ margin: 0, fontSize: 17, fontWeight: 800 }}>
-                    🛡️ Modèle de Base (Intouchable) ↔ ⚡ Modèle Renforcé (`modele/renforce/`)
+                    Sélecteur de Modèle Local PC : Modèle de base ↔ Modèle renforcé
                   </h2>
                   <p style={{ margin: '4px 0 0', fontSize: 12, color: '#94A3B8' }}>
-                    Registre officiel `modele/renforce/GAINS_MODELES_RENFORCES.md` · Les modèles de base sont 100 % intacts (SHA-256 vérifié).
+                    Exécution 100 % locale sur votre PC · Basculez chaque module (ou tous les modules d'un clic) entre Modèle de base et Modèle renforcé.
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setModalOpen(false)}
-                  style={{
-                    padding: '8px 14px',
-                    borderRadius: 10,
-                    border: '1px solid rgba(255,255,255,0.18)',
-                    background: 'rgba(255,255,255,0.06)',
-                    color: '#F8FAFC',
-                    cursor: 'pointer',
-                    fontSize: 12.5,
-                    fontWeight: 700,
-                  }}
-                >
-                  ✕ Fermer
-                </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <button
+                    type="button"
+                    onClick={() => void selectAllVariants('base')}
+                    disabled={switching !== null}
+                    style={{
+                      padding: '7px 12px',
+                      borderRadius: 9,
+                      border: '1px solid rgba(56, 189, 248, 0.5)',
+                      background: 'rgba(14, 165, 233, 0.16)',
+                      color: '#E0F2FE',
+                      cursor: 'pointer',
+                      fontSize: 11.5,
+                      fontWeight: 700,
+                    }}
+                  >
+                    Tout en Modèle de base
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void selectAllVariants('renforce')}
+                    disabled={switching !== null}
+                    style={{
+                      padding: '7px 12px',
+                      borderRadius: 9,
+                      border: '1px solid rgba(52, 211, 153, 0.65)',
+                      background: 'rgba(16, 185, 129, 0.22)',
+                      color: '#ECFDF5',
+                      cursor: 'pointer',
+                      fontSize: 11.5,
+                      fontWeight: 700,
+                    }}
+                  >
+                    Tout en Modèle renforcé
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setModalOpen(false)}
+                    style={{
+                      padding: '8px 14px',
+                      borderRadius: 10,
+                      border: '1px solid rgba(255,255,255,0.18)',
+                      background: 'rgba(255,255,255,0.06)',
+                      color: '#F8FAFC',
+                      cursor: 'pointer',
+                      fontSize: 12.5,
+                      fontWeight: 700,
+                    }}
+                  >
+                    ✕ Fermer
+                  </button>
+                </div>
               </div>
 
               <div
@@ -551,25 +586,22 @@ export default function ReinforcedModelBar({ activeModule }: { activeModule: str
                         }}
                       >
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                          <span style={{ fontWeight: 700, fontSize: 12.5, color: '#F8FAFC' }}>{info.label}</span>
-                          {info.reinforced_available ? (
-                            <span
-                              style={{
-                                padding: '2px 7px',
-                                borderRadius: 99,
-                                background: 'rgba(16, 185, 129, 0.22)',
-                                border: '1px solid rgba(52, 211, 153, 0.5)',
-                                color: '#6EE7B7',
-                                fontSize: 10,
-                                fontWeight: 700,
-                                fontFamily: "'Cascadia Code',Consolas,monospace",
-                              }}
-                            >
-                              +{info.gain_points_100.toFixed(3)} pts
-                            </span>
-                          ) : (
-                            <span style={{ fontSize: 10, color: '#94A3B8' }}>Base intacte</span>
-                          )}
+                          <span style={{ fontWeight: 700, fontSize: 12.5, color: '#F8FAFC' }}>
+                            {String(info.label || modKey).split('·')[0].trim()}
+                          </span>
+                          <span
+                            style={{
+                              padding: '2px 7px',
+                              borderRadius: 99,
+                              background: isRenforce ? 'rgba(16, 185, 129, 0.22)' : 'rgba(14, 165, 233, 0.18)',
+                              border: isRenforce ? '1px solid rgba(52, 211, 153, 0.5)' : '1px solid rgba(56, 189, 248, 0.45)',
+                              color: isRenforce ? '#6EE7B7' : '#BAE6FD',
+                              fontSize: 10,
+                              fontWeight: 700,
+                            }}
+                          >
+                            {isRenforce ? 'Modèle renforcé' : 'Modèle de base'}
+                          </span>
                         </div>
                         <div style={{ fontSize: 10.5, color: '#94A3B8', lineHeight: 1.35 }}>{info.axes_cibles}</div>
                         <div style={{ display: 'flex', gap: 6, marginTop: 2 }}>
@@ -591,7 +623,7 @@ export default function ReinforcedModelBar({ activeModule }: { activeModule: str
                               cursor: 'pointer',
                             }}
                           >
-                            🛡️ Base
+                            Modèle de base
                           </button>
                           <button
                             type="button"
@@ -611,7 +643,7 @@ export default function ReinforcedModelBar({ activeModule }: { activeModule: str
                               cursor: 'pointer',
                             }}
                           >
-                            ⚡ Renforcé
+                            Modèle renforcé
                           </button>
                         </div>
                       </div>
@@ -647,11 +679,11 @@ export default function ReinforcedModelBar({ activeModule }: { activeModule: str
                             Fichier Markdown de traçabilité : <code>{inspectedInfo.gains_md_path}</code>
                           </div>
                           <div style={{ fontSize: 13, fontWeight: 700, marginTop: 3 }}>
-                            Modèle actif :{' '}
+                            Modèle actif sur ce PC :{' '}
                             <span style={{ color: inspectedInfo.selected_variant === 'renforce' ? '#34D399' : '#38BDF8' }}>
                               {inspectedInfo.selected_variant === 'renforce'
-                                ? '⚡ Modèle Renforcé (modele/renforce/' + inspectModule + '/)'
-                                : '🛡️ Modèle de Base Intouchable (' + inspectedInfo.base_model + ')'}
+                                ? 'Modèle renforcé (Exécution 100 % locale)'
+                                : 'Modèle de base (Exécution 100 % locale)'}
                             </span>
                           </div>
                         </div>
@@ -760,7 +792,7 @@ export default function ReinforcedModelBar({ activeModule }: { activeModule: str
                         fontFamily: "'Cascadia Code',Consolas,monospace",
                       }}
                     >
-                      Moteur Cognitif : {mainModel || 'Qwen3 / DeepSeek-R1 Local'}
+                      Moteur Cognitif Local : {activeVariant === 'renforce' ? 'Modèle renforcé' : 'Modèle de base'}
                     </span>
                   </div>
                   <h2 style={{ margin: '7px 0 3px', fontSize: 19, fontWeight: 800, color: '#F8FAFC' }}>

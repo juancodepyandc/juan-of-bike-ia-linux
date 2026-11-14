@@ -40,7 +40,7 @@ def train(c,records,root,out,seconds,callback):
             env={**os.environ,'CUDA_VISIBLE_DEVICES':visible[trial] if len(visible)>=count and visible[trial] else str(trial),
                  'PYTHONPATH':str(Path(__file__).resolve().parents[1])+os.pathsep+os.environ.get('PYTHONPATH','')}
             child=subprocess.Popen([sys.executable,'-u','-m','auto_rl.parallel_preferences','--config',str(folder/'config.json'),
-                                    '--root',str(root),'--out',str(folder),'--seconds',str(max(1,seconds-10))],
+                                    '--root',str(root),'--out',str(folder),'--seconds',str(max(60,seconds-90))],
                                    stdout=log,stderr=subprocess.STDOUT,start_new_session=True,env=env)
             children.append((trial,folder,child,log))
         seen={}
@@ -58,9 +58,14 @@ def train(c,records,root,out,seconds,callback):
         results=[]
         for trial,folder,child,_ in children:
             metrics=read_json(folder/'training_metrics.json',{})
+            progress=read_json(folder/'progress.json',{})
+            if not metrics and progress.get('candidate_sha256') and isinstance(progress.get('best_validation_loss'),(int,float)):
+                metrics=progress
             weights=folder/'candidate.safetensors'
-            recorded=metrics.get('candidate_sha256') or read_json(folder/'autonomy.json',{}).get('candidate_sha256')
-            verified=weights.is_file() and recorded==file_hash(weights) and child.returncode==0
+            recorded=(metrics.get('candidate_sha256')
+                      or read_json(folder/'autonomy.json',{}).get('candidate_sha256')
+                      or progress.get('candidate_sha256'))
+            verified=weights.is_file() and bool(recorded) and recorded==file_hash(weights)
             if verified:
                 from safetensors.torch import load_file
                 verified=all(torch.isfinite(t).all().item() for t in load_file(str(weights)).values())

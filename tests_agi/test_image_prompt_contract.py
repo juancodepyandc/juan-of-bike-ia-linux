@@ -90,6 +90,45 @@ class PromptContractTests(unittest.TestCase):
         self.assertEqual(route("game_asset_icon_ui", "icon of a character"), "assets")
         self.assertEqual(route("stylized_anime_ghibli", "city landscape"), "decor")
 
+    def test_french_character_spelling_sangoku_and_transformation_adaptation(self):
+        result = self.director.direct_prompt("Sangoku en Super Saiyan Blue")
+        self.assertEqual(result["category"], "stylized_anime_ghibli")
+        self.assertIn("Super Saiyan Blue", result["human_prompt"])
+        self.assertIn("cyan-blue", result["human_prompt"])
+        self.assertNotIn("jet-black hair", result["human_prompt"])
+        self.assertIn("realistic skin pores", result["negative_prompt"])
+
+    def test_explicit_real_textures_override_switches_anime_character_to_hybrid_photoreal(self):
+        result = self.director.direct_prompt("Sangoku avec des textures de personne réelle")
+        self.assertEqual(result["category"], "photo_realistic")
+        self.assertEqual(result["subject_ontology"]["effective_render_mode"], "hybrid_anime_with_real_textures")
+        self.assertIn("photorealistic human skin pores", result["human_prompt"])
+        self.assertNotIn("cartoon,", result["negative_prompt"])
+
+    def test_negative_exclusion_clause_strips_forbidden_item_and_locks_negative_prompt(self):
+        result = self.director.direct_prompt("Luffy sans chapeau tenant un sabre dans la main droite")
+        self.assertEqual(result["category"], "stylized_anime_ghibli")
+        self.assertIn("bareheaded", result["human_prompt"])
+        self.assertIn("specifically in the right hand", result["human_prompt"])
+        self.assertIn("hat", result["negative_prompt"])
+        self.assertIn("straw hat", result["negative_prompt"])
+
+    def test_open_world_entity_grounding_resolves_unhardcoded_characters(self):
+        from agi_core.prompt_intelligence import analyze_and_direct_prompt
+
+        spike = analyze_and_direct_prompt("fais-moi Spike Spiegel", target_module="image", open_world_grounding=True)
+        self.assertEqual(spike["subject_ontology"], "anime_manga_character")
+        self.assertEqual(spike["effective_render_mode"], "native_anime_stylized")
+        self.assertIsNotNone(spike.get("open_world_entity"))
+
+        rudeus = analyze_and_direct_prompt(
+            "Rudeus Greyrat avec des textures de personne réelle",
+            target_module="image",
+            open_world_grounding=True,
+        )
+        self.assertEqual(rudeus["subject_ontology"], "anime_manga_character")
+        self.assertEqual(rudeus["effective_render_mode"], "hybrid_anime_with_real_textures")
+
 
 if __name__ == "__main__":
     unittest.main()

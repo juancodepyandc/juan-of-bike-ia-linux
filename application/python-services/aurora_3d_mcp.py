@@ -788,7 +788,54 @@ async def run() -> None:
         await server.run(rx, tx, server.create_initialization_options())
 
 
+def _run_jsonrpc_stdio_fallback() -> None:
+    """Boucle JSON-RPC 2.0 stdio autonome sans dependance externe au paquet `mcp`."""
+    for raw_line in sys.stdin:
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            msg = json.loads(line)
+        except Exception:
+            continue
+        mid = msg.get("id")
+        method = msg.get("method", "")
+        params = msg.get("params") or {}
+        if mid is None:
+            continue
+        if method == "initialize":
+            res = {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "aurora-3d-audit", "version": "2.0.0"},
+            }
+        elif method == "tools/list":
+            res = {
+                "tools": [
+                    {"name": name, "description": desc, "inputSchema": schema}
+                    for name, desc, schema, _ in _TOOLS
+                ]
+            }
+        elif method == "tools/call":
+            tname = params.get("name", "")
+            targs = params.get("arguments") or {}
+            impl = next((fn for n, _, _, fn in _TOOLS if n == tname), None)
+            if impl is None:
+                res = {"isError": True, "content": [{"type": "text", "text": json.dumps({"ok": False, "error": f"unknown tool: {tname}"})}]}
+            else:
+                try:
+                    out = impl(**targs)
+                    res = {"isError": False, "content": [{"type": "text", "text": json.dumps(out, ensure_ascii=False)}]}
+                except Exception as exc:
+                    res = {"isError": True, "content": [{"type": "text", "text": json.dumps({"ok": False, "error": str(exc)})}]}
+        else:
+            res = {}
+        sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": mid, "result": res}, ensure_ascii=False) + "\n")
+        sys.stdout.flush()
+
+
 if __name__ == "__main__":
     if not MCP_DISPONIBLE:
-        raise SystemExit("paquet mcp absent: audits importables, transport indisponible")
-    asyncio.run(run())
+        _run_jsonrpc_stdio_fallback()
+    else:
+        asyncio.run(run())

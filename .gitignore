@@ -245,3 +245,19 @@ _dev/
 !/ARCHITECTURE_MAITRE.md
 !/AGENTS.md
 venv/
+
+# Etat d'execution local de la boucle auto_rl (verrous, caches, journaux de runs) : jamais versionne.
+auto_rl/state/
+
+# Preuves locales de l'activation MCP du 6 novembre (copies de sources, roue, archive) : conservees sur disque.
+scripts/audit/computer-use-mcp-2026-11-06/
+
+# Vues d'organisation locales faites de liens symboliques : seules les vraies sources sont versionnees.
+/output
+/scripts/tests_agi
+/scripts/tests_auto_rl
+/interface/*/*
+!/interface/cli/aurora_cli.py
+!/interface/extension/extension_chrome/
+/mcp/*/*
+!/mcp/*/server.py

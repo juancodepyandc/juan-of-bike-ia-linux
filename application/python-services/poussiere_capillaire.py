@@ -23,7 +23,7 @@ import argparse
 import json
 
 
-def balayer(input_glb: str, output_glb: str, min_faces: int = 100) -> dict:
+def balayer(input_glb: str, output_glb: str, min_faces: int = 450) -> dict:
     import numpy as np
     import trimesh
 
@@ -74,6 +74,6 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--input", required=True)
     ap.add_argument("--output", required=True)
-    ap.add_argument("--min-faces", type=int, default=100)
+    ap.add_argument("--min-faces", type=int, default=450)
     a = ap.parse_args()
     print(json.dumps(balayer(a.input, a.output, a.min_faces), ensure_ascii=False))

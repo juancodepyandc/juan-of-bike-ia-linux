@@ -107,11 +107,18 @@ def train_preferences(c, records, input_root, output, epochs, seconds, callback,
         if sequence_tokens > c.get("training_context_length", 3072):
             raise ValueError(f"Préférence {record['task_id']} trop longue ({sequence_tokens} tokens) : augmenter explicitement training_context_length. Aucun texte n'est tronqué.")
         ids = torch.tensor([prompt_ids + response_ids], device="cuda")
-        logits = model(input_ids=ids, use_cache=False).logits[:, len(prompt_ids)-1:-1]
-        labels = ids[:, len(prompt_ids):]
-        # Fused cross entropy avoids a retained float32 vocabulary log-softmax.
-        nll = F.cross_entropy(logits.reshape(-1, logits.shape[-1]), labels.reshape(-1), reduction="sum")
-        return -nll.float()
+        out_logits = model(input_ids=ids, use_cache=False).logits[:, len(prompt_ids)-1:-1]
+        labels = ids[:, len(prompt_ids):].reshape(-1)
+        flat_logits = out_logits.reshape(-1, out_logits.shape[-1])
+        # Calcul par tranches de 128 tokens pour diviser par 16 l'empreinte VRAM du vocabulaire (151 936) sur T4 15 Go
+        nll_chunks = []
+        for start_idx in range(0, flat_logits.shape[0], 128):
+            end_idx = min(flat_logits.shape[0], start_idx + 128)
+            nll_chunks.append(
+                F.cross_entropy(flat_logits[start_idx:end_idx], labels[start_idx:end_idx], reduction="sum").float()
+            )
+        total_nll = torch.stack(nll_chunks).sum() if nll_chunks else flat_logits.sum() * 0.0
+        return -total_nll
 
     def loss_for(record, seed):
         torch.manual_seed(seed)
@@ -135,53 +142,66 @@ def train_preferences(c, records, input_root, output, epochs, seconds, callback,
             data = tensor_cache[tensor_name]
             chosen_z, rejected_z = data["chosen"].cuda(), data["rejected"].cuda()
             cond = data["cond"].cuda()
-            # Stratified timestep in [0.10, 0.90] covering both fine geometry
-            # (thin walls, spokes, cables) and global 360° back-view structure.
+            # Antithetic Stratified Dual-Timestep Coupling:
+            # t1 in [0.12, 0.48] targets fine structural geometry (spokes, feathers, thin arches)
+            # t2 = 1.0 - t1 in [0.52, 0.88] targets global 360° silhouette and back-view volume.
+            # Evaluating both antithetic strata per pair halves gradient variance and prevents
+            # fine-detail updates from drifting the global 3D structure (or vice versa).
             u = torch.rand((1,), device="cuda")
-            t = (0.10 + 0.80 * u).clamp(0.05, 0.95)
-            noise = torch.randn_like(chosen_z)
+            t1 = (0.12 + 0.36 * u).clamp(0.08, 0.49)
+            t2 = (1.0 - t1).clamp(0.51, 0.92)
+            base_noise = torch.randn_like(chosen_z)
             sigma = 1e-5
-            def sample(z):
-                x = (1-t) * z + (sigma + (1-sigma)*t) * noise
-                target = (1-sigma) * noise - z
-                return x, target
-            chosen_x, chosen_target = sample(chosen_z)
-            rejected_x, rejected_target = sample(rejected_z)
-            with torch.no_grad(),adapter.frozen_reference():
-                adapter.enabled = c.get('reference_policy')=='parent'
-                ref_c = model(chosen_x, t*1000, cond).detach()
-                ref_r = model(rejected_x, t*1000, cond).detach()
-                ref_c_loss = F.mse_loss(ref_c.float(), chosen_target)
-                ref_r_loss = F.mse_loss(ref_r.float(), rejected_target)
-            adapter.enabled = True
-            current_c = model(chosen_x, t*1000, cond)
-            current_r = model(rejected_x, t*1000, cond)
-            c_loss = F.mse_loss(current_c.float(), chosen_target)
-            r_loss = F.mse_loss(current_r.float(), rejected_target)
-            # 3D Spatial Velocity Continuity Regularization: penalize finite-difference
-            # discontinuities across adjacent 3D voxels (D, H, W) on the chosen trajectory
-            # to suppress self-intersections, non-manifold edges, and detached islands.
-            if current_c.ndim == 5 and current_c.shape[-1] > 1:
-                err_c = current_c.float() - chosen_target.float()
-                ref_err_c = ref_c.float() - chosen_target.float()
-                grad_c = (
-                    (err_c[:, :, 1:, :, :] - err_c[:, :, :-1, :, :]).square().mean()
-                    + (err_c[:, :, :, 1:, :] - err_c[:, :, :, :-1, :]).square().mean()
-                    + (err_c[:, :, :, :, 1:] - err_c[:, :, :, :, :-1]).square().mean()
-                ) / 3.0
-                grad_ref_c = (
-                    (ref_err_c[:, :, 1:, :, :] - ref_err_c[:, :, :-1, :, :]).square().mean()
-                    + (ref_err_c[:, :, :, 1:, :] - ref_err_c[:, :, :, :-1, :]).square().mean()
-                    + (ref_err_c[:, :, :, :, 1:] - ref_err_c[:, :, :, :, :-1]).square().mean()
-                ) / 3.0
-                w_sp = float(c.get("spatial_continuity_weight", 0.08))
-                c_loss = c_loss + w_sp * grad_c
-                ref_c_loss = ref_c_loss + w_sp * grad_ref_c
+            w_sp = float(c.get("spatial_continuity_weight", 0.08))
+
+            def _eval_stratum(t_val, noise_tensor):
+                def sample(z):
+                    x = (1 - t_val) * z + (sigma + (1 - sigma) * t_val) * noise_tensor
+                    target = (1 - sigma) * noise_tensor - z
+                    return x, target
+
+                chosen_x, chosen_target = sample(chosen_z)
+                rejected_x, rejected_target = sample(rejected_z)
+                with torch.no_grad(), adapter.frozen_reference():
+                    adapter.enabled = c.get("reference_policy") == "parent"
+                    ref_c = model(chosen_x, t_val * 1000, cond).detach()
+                    ref_r = model(rejected_x, t_val * 1000, cond).detach()
+                    ref_c_l = F.mse_loss(ref_c.float(), chosen_target)
+                    ref_r_l = F.mse_loss(ref_r.float(), rejected_target)
+                adapter.enabled = True
+                cur_c = model(chosen_x, t_val * 1000, cond)
+                cur_r = model(rejected_x, t_val * 1000, cond)
+                c_l = F.mse_loss(cur_c.float(), chosen_target)
+                r_l = F.mse_loss(cur_r.float(), rejected_target)
+                if cur_c.ndim == 5 and cur_c.shape[-1] > 1:
+                    err_c = cur_c.float() - chosen_target.float()
+                    ref_err_c = ref_c.float() - chosen_target.float()
+                    grad_c = (
+                        (err_c[:, :, 1:, :, :] - err_c[:, :, :-1, :, :]).square().mean()
+                        + (err_c[:, :, :, 1:, :] - err_c[:, :, :, :-1, :]).square().mean()
+                        + (err_c[:, :, :, :, 1:] - err_c[:, :, :, :, :-1]).square().mean()
+                    ) / 3.0
+                    grad_ref_c = (
+                        (ref_err_c[:, :, 1:, :, :] - ref_err_c[:, :, :-1, :, :]).square().mean()
+                        + (ref_err_c[:, :, :, 1:, :] - ref_err_c[:, :, :, :-1, :]).square().mean()
+                        + (ref_err_c[:, :, :, :, 1:] - ref_err_c[:, :, :, :, :-1]).square().mean()
+                    ) / 3.0
+                    c_l = c_l + w_sp * grad_c
+                    ref_c_l = ref_c_l + w_sp * grad_ref_c
+                anc = F.mse_loss(cur_c.float(), ref_c.float()) + F.mse_loss(cur_r.float(), ref_r.float())
+                return c_l, r_l, ref_c_l, ref_r_l, anc
+
+            c1, r1, rc1, rr1, anc1 = _eval_stratum(t1, base_noise)
+            c2, r2, rc2, rr2, anc2 = _eval_stratum(t2, -base_noise)
+            c_loss = 0.5 * (c1 + c2)
+            r_loss = 0.5 * (r1 + r2)
+            ref_c_loss = 0.5 * (rc1 + rc2)
+            ref_r_loss = 0.5 * (rr1 + rr2)
+            anchor = 0.5 * (anc1 + anc2)
             score_gap = max(0.0, float(record.get("chosen_score", 0.0)) - float(record.get("rejected_score", 0.0)))
             strict_bonus = 1.12 if (record.get("selection") or {}).get("strict") else 1.0
             margin_weight = min(1.5, max(0.9, (1.0 + 2.5 * score_gap) * strict_bonus))
-            preference_logit = c["dpo_beta"] * margin_weight * ((ref_c_loss-c_loss) - (ref_r_loss-r_loss))
-            anchor = F.mse_loss(current_c.float(), ref_c.float()) + F.mse_loss(current_r.float(), ref_r.float())
+            preference_logit = c["dpo_beta"] * margin_weight * ((ref_c_loss - c_loss) - (ref_r_loss - r_loss))
         supervised=(-chosen/max(1,response_lengths[(record['task_id'],'chosen')]) if c['module'] in TEXT_MODULES else c_loss)
         return F.softplus(-preference_logit) + c["anchor_penalty"] * anchor + c.get('sft_weight',0)*supervised
 
@@ -202,14 +222,29 @@ def train_preferences(c, records, input_root, output, epochs, seconds, callback,
                 check()
                 for retry in range(12):
                     optimizer.zero_grad(set_to_none=True)
+                    is_t4_class_vram = (torch.cuda.get_device_properties(0).total_memory < 22 * (1024 ** 3))
+                    use_cpu_offload = (
+                        bool(c.get('_oom_forced_offload'))
+                        or (c.get('module') in TEXT_MODULES and is_t4_class_vram)
+                        or (bool(c.get('offload_saved_tensors')) if c.get('module') != '3d' else False)
+                    )
                     offload = (torch.autograd.graph.save_on_cpu(pin_memory=False)
-                               if c.get('offload_saved_tensors') else nullcontext())
-                    with offload:
-                        with torch.autocast("cuda", dtype=device_dtype):
-                            loss = loss_for(record, c["seed"] + c.get('noise_seed_offset',0) + epoch * 1000 + i)
-                        if not torch.isfinite(loss):
-                            raise RuntimeError("Loss non finie : candidat non publiable")
-                        scaler.scale(loss).backward()
+                               if use_cpu_offload else nullcontext())
+                    try:
+                        with offload:
+                            with torch.autocast("cuda", dtype=device_dtype):
+                                loss = loss_for(record, c["seed"] + c.get('noise_seed_offset',0) + epoch * 1000 + i)
+                            if not torch.isfinite(loss):
+                                raise RuntimeError("Loss non finie : candidat non publiable")
+                            scaler.scale(loss).backward()
+                    except torch.cuda.OutOfMemoryError:
+                        c['_oom_forced_offload'] = True
+                        optimizer.zero_grad(set_to_none=True)
+                        gc.collect()
+                        torch.cuda.empty_cache()
+                        if retry >= 11:
+                            raise
+                        continue
                     scaler.unscale_(optimizer)
                     finite = all(p.grad is None or torch.isfinite(p.grad).all() for p in adapter.parameters())
                     if finite:

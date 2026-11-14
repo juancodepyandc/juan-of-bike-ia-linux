@@ -78,14 +78,18 @@ STACK_HINTS: dict[str, str] = {
 }
 
 QUALITY_BAR = (
-    "Code must be production-clean, ultra-premium, and visually stunning. ABSOLUTELY NO SIMPLISTIC MVPs. "
-    "You MUST implement high-end graphics: glassmorphism, deep shadows, complex micro-interactions, "
-    "smooth parallax or scroll-reveals, responsive fluid layouts, and state-of-the-art animations. "
-    "Use top-tier applications only as independent quality benchmarks. Create an original information "
-    "architecture, layout, wording, interaction model, and visual system suited to the requested product. "
-    "No TODOs, no lorem-ipsum, no broken links. Comments only when the WHY is non-obvious. "
-    "Accessible, responsive (works 360px to 1920px). Prefer optimized local asset files with responsive sources. "
-    "The UI must be breathtaking and structurally flawless."
+    "Code must be production-clean, ultra-premium, PIXEL-PERFECT (sub-pixel aligned on 1x/2x/4K HiDPI displays), "
+    "and visually stunning. ABSOLUTELY NO SIMPLISTIC MVPs, NO STUBS, NO PLACEHOLDERS. "
+    "You MUST implement: "
+    "(1) Pixel-Perfect Optical Rendering: use window.devicePixelRatio scaling on every 2D/WebGL <canvas> "
+    "(renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2)), antialias: true, ACESFilmicToneMapping), "
+    "font-variant-numeric: tabular-nums on all live counters/metrics/tables (0.00px layout jitter), and "
+    "1px specular hairline borders (inset 0 1px 0 rgba(255,255,255,0.12)); "
+    "(2) 120Hz Critically-Damped Spring Motion: cubic-bezier(0.22, 1, 0.36, 1) micro-interactions, rAF Lerp damping, "
+    "glassmorphism, and zero Cumulative Layout Shift; "
+    "(3) Proactive AGI Implicit Features: spontaneously include keyboard shortcuts, state persistence/export, "
+    "live telemetry/diagnostics, deterministic error handling, and interactive parameter controls even if not explicitly requested. "
+    "No TODOs, no lorem-ipsum, no broken links. Accessible (WCAG AAA / APCA contrast, works 360px to 3840px)."
 )
 
 NEGATIVE_HINTS = (

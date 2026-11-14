@@ -68,6 +68,8 @@ KIND_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         r"gar[cç]on|fille|enfant|child|boy|girl|personne|person|humain|human|"
         r"adulte|adult|vieillard|soldat|soldier|policier|pompier|docteur|"
         r"m[ée]decin|infirmi[èe]re|chef|cuisinier|danseur|danseuse|athl[èe]te|"
+        r"combattant|combattante|boxeur|boxeuse|ma[îi]tre|sportif|sportive|"
+        r"lutteur|karat[ée]ka|judoka|escrimeur|archer|arch[èe]re|"
         # METIERS ET ROLES. Ils manquaient entierement : « un entrepreneur
         # assis a son bureau » ressortait en `generic` avec une confiance de
         # 0,0 — le sujet de la phrase n etait tout simplement pas reconnu comme
@@ -133,7 +135,10 @@ KIND_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     )),
     ("product", re.compile(
         r"\b(product|produit|packshot|consumer product|item|object commercial|"
-        r"mockup|maquette|presentation produit)\b",
+        r"mockup|maquette|presentation produit|vase|vases|flacon|carafe|coupe|"
+        r"calice|bol|pot|urne|bocal|tasse|bouteille|bijou|bague|pendentif|"
+        r"collier|m[eé]daillon|troph[eé]e|coffret|bougie|chandelier|lampe|"
+        r"miroir|sablier)\b",
         re.IGNORECASE,
     )),
     ("gadget", re.compile(

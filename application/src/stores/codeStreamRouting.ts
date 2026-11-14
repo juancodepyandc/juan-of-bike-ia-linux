@@ -12,20 +12,17 @@ type CodeModelRoute = {
 }
 
 const PREFERRED_GENERAL_SPEED = [
-  'qwen3:14b', 'gemma3:27b', 'mistral-small3.1:24b',
-  'gemma3:12b', 'qwen3:32b', 'llama3.3',
-  'qwen2.5:7b', 'qwen3-vl:30b', 'qwen3-vl:8b',
+  'orcarouter/Qwen3.8-27B-Uncensored:latest', 'orcarouter/Qwen3.8-27B-Uncensored',
+  'deepseek-r1:32b', 'qwen3-vl:30b', 'qwen3-coder:30b',
 ]
 const PREFERRED_GENERAL_QUALITY = [
-  'qwen3:14b', 'gemma3:27b', 'mistral-small3.1:24b',
-  'gemma3:12b', 'qwen3:32b', 'llama3.3',
-  'qwen3-vl:30b', 'qwen2.5:7b', 'qwen3-vl:8b',
+  'orcarouter/Qwen3.8-27B-Uncensored:latest', 'orcarouter/Qwen3.8-27B-Uncensored',
+  'deepseek-r1:32b', 'qwen3-vl:30b', 'qwen3-coder-next:q4_K_M', 'qwen3-coder:30b',
 ]
 const PREFERRED_CODER = [
   'qwen3-coder-next:q8_0', 'qwen3-coder-next:q4_K_M',
   'qwen3-coder:30b-a3b-q8_0', 'qwen3-coder:30b-a3b-q4_K_M', 'qwen3-coder:30b',
-  'qwen2.5-coder:32b', 'qwen2.5-coder:14b', 'deepseek-coder-v2:16b',
-  'qwen2.5-coder:7b', 'codellama:13b',
+  'deepseek-r1:32b', 'orcarouter/Qwen3.8-27B-Uncensored:latest',
 ]
 
 const BRAND_HINT_RE = /\b([A-Z][a-zA-Z]{2,}(?:[\s-][A-Z][a-zA-Z]{2,})?)\b/
@@ -51,7 +48,7 @@ export function routeCodeStreamModel({ baseModel, installed, isVisual, text }: C
 
   if (isVisual && isCoderModel) {
     const list = brandHint ? PREFERRED_GENERAL_QUALITY : PREFERRED_GENERAL_SPEED
-    model = pickFirstInstalled(installed, list, 'qwen3:14b')
+    model = pickFirstInstalled(installed, list, 'orcarouter/Qwen3.8-27B-Uncensored:latest')
     routeReason = `visual${brandHint ? '+brand' : ''} needs general LLM`
   } else if (isVisual && brandHint) {
     const upgrade = pickFirstInstalled(installed, PREFERRED_GENERAL_QUALITY, baseModel)

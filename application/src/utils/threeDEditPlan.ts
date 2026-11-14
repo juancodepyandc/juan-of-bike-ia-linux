@@ -3,9 +3,10 @@ export type RigSubject = 'humanoid' | 'quadruped' | 'existing' | 'none'
 export type SourceContext = { subjectKind?: string; rigSubject?: RigSubject; description?: string }
 export function planThreeDEdit(hasMesh: boolean, relation: ThreeDRelation | null, motionEnabled: boolean, hasAttachments: boolean) {
   const continuation = hasMesh && relation?.continuation === true
-  // A static pose is a visual edit. It must not depend on an animation skin.
-  const articulate = continuation && motionEnabled && relation.mesh_edit !== 'none' && !relation.reference_edit && !hasAttachments
-  return { continuation, articulate, reconstructFromSource: continuation && !articulate, mode: motionEnabled ? 'animation' as const : 'static_pose' as const }
+  const articulate = continuation && relation.mesh_edit !== 'none' && !relation.reference_edit && !hasAttachments
+  const deltaModify = continuation && !articulate && Boolean(relation?.delta_edit) && !hasAttachments
+  const mode = (motionEnabled || relation?.mesh_edit === 'motion') ? 'animation' as const : 'static_pose' as const
+  return { continuation, articulate, deltaModify, reconstructFromSource: continuation && !articulate, mode }
 }
 export function sourceRig(context: SourceContext | null, relation: ThreeDRelation | null): RigSubject | 'auto' {
   return context?.rigSubject || relation?.source_rig || (context?.subjectKind === 'character' ? 'humanoid' : 'auto')

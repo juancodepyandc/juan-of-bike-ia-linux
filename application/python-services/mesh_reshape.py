@@ -35,7 +35,7 @@ from pathlib import Path
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from mesh_quality_score import KIND_ASPECT  # noqa: E402
+from mesh_quality_score import KIND_ASPECT, _aspect_depuis_references  # noqa: E402
 
 
 def find_best_axis_mapping(extents_norm, expected):
@@ -65,7 +65,9 @@ def reshape(mesh_path: Path, output_path: Path, kind: str = "generic",
         return {"ok": False, "error": f"mesh not found: {mesh_path}"}
 
     kind_norm = (kind or "generic").lower().strip()
-    expected = KIND_ASPECT.get(kind_norm, KIND_ASPECT["generic"])
+    expected = _aspect_depuis_references(Path(mesh_path))
+    if expected is None:
+        expected = KIND_ASPECT.get(kind_norm, KIND_ASPECT["generic"])
     if expected[0] < 0:  # open ratio kinds — skip reshape
         return {
             "ok": True, "skipped": True,
@@ -74,7 +76,7 @@ def reshape(mesh_path: Path, output_path: Path, kind: str = "generic",
         }
 
     try:
-        mesh = trimesh.load(str(mesh_path), force="mesh")
+        mesh = trimesh.load(str(mesh_path), force="mesh", process=False)
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"mesh load failed: {exc}"}
 

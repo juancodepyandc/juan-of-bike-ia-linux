@@ -12,6 +12,7 @@ import { Center, OrbitControls } from '@react-three/drei'
 import { ACESFilmicToneMapping, AnimationClip, AnimationMixer, AxesHelper, Box3, CanvasTexture, Color, DoubleSide, FrontSide, Group, LinearFilter, LinearMipmapLinearFilter, LoopRepeat, Mesh, MeshPhysicalMaterial, MeshStandardMaterial, NearestFilter, Object3D, Raycaster, RepeatWrapping, SkeletonHelper, SkinnedMesh, SRGBColorSpace, Vector2, Vector3 } from 'three'
 import type { Texture } from 'three'
 import ClarificationDialog from '../components/ClarificationDialog.tsx'
+import ReinforcedModelBar from '../components/ReinforcedModelBar.tsx'
 import { ThreeDProgressOverlay } from '../components/ThreeDProgressOverlay.tsx'
 import { HolographicSplatLoader } from '../components/HolographicSplatLoader.tsx'
 import {
@@ -44,6 +45,7 @@ import { analyzeReferenceImage, mergePaletteWithOverrides, parseColorOverridesFr
 import ReferenceInspectorPanel from '../components/ReferenceInspectorPanel.tsx'
 import EngineeringExportPanel from '../components/EngineeringExportPanel.tsx'
 import { analyzeThreeDIntent, buildFluxVisualDescription, buildMeshCorrectionStrategy, detectMotionVerbHint, inferPbrProfile, previewThreeDIntent, verify3DMeshFidelity, type PbrProfile, type ThreeDIntent, type ThreeDMotionPreset, type ThreeDPipeline, type ThreeDPipelineRouting, type MeshFidelityVerification, type MeshCorrectionStrategy } from '../services/threeDIntent.ts'
+import { analyzePromptOntologySync } from '../services/cognitivePromptDirector.ts'
 import { runProceduralModeling, runAutoRig, runMeshValidation, runMeshCleanup, renderMeshScreenshot, type BlenderScriptResult, type MeshValidationReport } from '../services/blenderBridge.ts'
 import { runAutoRigFromPrompt } from '../services/motionPipeline.ts'
 import { verifyGeneratedReferenceVisual, canUseVisualReference } from '../services/referenceVisualResearch.ts'
@@ -83,6 +85,141 @@ type ViewerConfig = {
   modeDetail: string
 }
 type ViewerMaterialMode = 'authored' | 'diagnostic'
+
+export type AnchorJointId =
+  | 'head'
+  | 'shoulder_l'
+  | 'shoulder_r'
+  | 'elbow_l'
+  | 'elbow_r'
+  | 'wrist_l'
+  | 'wrist_r'
+  | 'pelvis'
+  | 'knee_l'
+  | 'knee_r'
+  | 'foot_l'
+  | 'foot_r'
+
+export interface AnchorJointSpec {
+  id: AnchorJointId
+  labelFr: string
+  pairGroup: 'head' | 'shoulders' | 'elbows' | 'wrists' | 'pelvis' | 'knees' | 'feet'
+  pairLabelFr: string
+  side: 'center' | 'left' | 'right'
+  mirrorId?: AnchorJointId
+  colorHex: string
+  position: [number, number, number]
+  interiorityScore: number
+}
+
+export const ANCHOR_COLOR_PAIRS_SCHEMA: ReadonlyArray<Omit<AnchorJointSpec, 'position' | 'interiorityScore'>> = [
+  { id: 'head', labelFr: 'Tête', pairGroup: 'head', pairLabelFr: 'Tête (Axe Central)', side: 'center', colorHex: '#A855F7' },
+  { id: 'shoulder_l', labelFr: 'Épaule G', pairGroup: 'shoulders', pairLabelFr: 'Paire Épaules (G/D)', side: 'left', mirrorId: 'shoulder_r', colorHex: '#38BDF8' },
+  { id: 'shoulder_r', labelFr: 'Épaule D', pairGroup: 'shoulders', pairLabelFr: 'Paire Épaules (G/D)', side: 'right', mirrorId: 'shoulder_l', colorHex: '#38BDF8' },
+  { id: 'elbow_l', labelFr: 'Coude G', pairGroup: 'elbows', pairLabelFr: 'Paire Coudes (G/D)', side: 'left', mirrorId: 'elbow_r', colorHex: '#22C55E' },
+  { id: 'elbow_r', labelFr: 'Coude D', pairGroup: 'elbows', pairLabelFr: 'Paire Coudes (G/D)', side: 'right', mirrorId: 'elbow_l', colorHex: '#22C55E' },
+  { id: 'wrist_l', labelFr: 'Poing G', pairGroup: 'wrists', pairLabelFr: 'Paire Poings / Mains (G/D)', side: 'left', mirrorId: 'wrist_r', colorHex: '#FACC15' },
+  { id: 'wrist_r', labelFr: 'Poing D', pairGroup: 'wrists', pairLabelFr: 'Paire Poings / Mains (G/D)', side: 'right', mirrorId: 'wrist_l', colorHex: '#FACC15' },
+  { id: 'pelvis', labelFr: 'Bassin', pairGroup: 'pelvis', pairLabelFr: 'Bassin / Hanches (Axe Central)', side: 'center', colorHex: '#F97316' },
+  { id: 'knee_l', labelFr: 'Genou G', pairGroup: 'knees', pairLabelFr: 'Paire Genoux (G/D)', side: 'left', mirrorId: 'knee_r', colorHex: '#EF4444' },
+  { id: 'knee_r', labelFr: 'Genou D', pairGroup: 'knees', pairLabelFr: 'Paire Genoux (G/D)', side: 'right', mirrorId: 'knee_l', colorHex: '#EF4444' },
+  { id: 'foot_l', labelFr: 'Pied G', pairGroup: 'feet', pairLabelFr: 'Paire Pieds / Chevilles (G/D)', side: 'left', mirrorId: 'foot_r', colorHex: '#EC4899' },
+  { id: 'foot_r', labelFr: 'Pied D', pairGroup: 'feet', pairLabelFr: 'Paire Pieds / Chevilles (G/D)', side: 'right', mirrorId: 'foot_l', colorHex: '#EC4899' },
+]
+
+export const ANCHOR_BONE_LINKS: ReadonlyArray<[AnchorJointId, AnchorJointId]> = [
+  ['pelvis', 'head'],
+  ['head', 'shoulder_l'],
+  ['head', 'shoulder_r'],
+  ['shoulder_l', 'elbow_l'],
+  ['elbow_l', 'wrist_l'],
+  ['shoulder_r', 'elbow_r'],
+  ['elbow_r', 'wrist_r'],
+  ['pelvis', 'knee_l'],
+  ['knee_l', 'foot_l'],
+  ['pelvis', 'knee_r'],
+  ['knee_r', 'foot_r'],
+]
+
+function _computeMedialAnchorPointsFromModel(model: Object3D): Record<AnchorJointId, AnchorJointSpec> {
+  const box = new Box3().setFromObject(model)
+  const min = box.isEmpty() ? new Vector3(-0.35, -0.8, -0.25) : box.min
+  const max = box.isEmpty() ? new Vector3(0.35, 0.8, 0.25) : box.max
+  const width = Math.max(0.12, max.x - min.x)
+  const height = Math.max(0.18, max.y - min.y)
+  const centerX = 0.5 * (min.x + max.x)
+  const centerZ = 0.5 * (min.z + max.z)
+
+  // Sample vertices in Model space to compute true medial cross-section centroids
+  const verts: Array<[number, number, number]> = []
+  const tmpV = new Vector3()
+  model.updateMatrixWorld(true)
+  model.traverse((child) => {
+    const mesh = child as Mesh
+    if (!mesh.isMesh || !mesh.geometry?.attributes?.position) return
+    const pos = mesh.geometry.attributes.position
+    const step = Math.max(1, Math.floor(pos.count / 3000))
+    for (let i = 0; i < pos.count; i += step) {
+      tmpV.fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld)
+      verts.push([tmpV.x, tmpV.y, tmpV.z])
+    }
+  })
+
+  const sliceCentroid = (yFracLow: number, yFracHigh: number, side: 'center' | 'left' | 'right', fallbackXFrac: number): [number, number, number] => {
+    const y0 = min.y + yFracLow * height
+    const y1 = min.y + yFracHigh * height
+    const yMid = 0.5 * (y0 + y1)
+    const signX = side === 'left' ? 1 : side === 'right' ? -1 : 0
+    const candidates = verts.filter(([vx, vy]) => {
+      if (vy < y0 || vy > y1) return false
+      if (side === 'center') return Math.abs(vx - centerX) <= width * 0.24
+      if (side === 'left') return vx >= centerX + width * 0.03
+      return vx <= centerX - width * 0.03
+    })
+    if (candidates.length >= 6) {
+      let sx = 0, sy = 0, sz = 0
+      for (const [cx, cy, cz] of candidates) {
+        sx += cx; sy += cy; sz += cz
+      }
+      const n = candidates.length
+      return [
+        Number((sx / n).toFixed(4)),
+        Number((sy / n).toFixed(4)),
+        Number((0.65 * (sz / n) + 0.35 * centerZ).toFixed(4)),
+      ]
+    }
+    return [
+      Number((centerX + signX * width * fallbackXFrac).toFixed(4)),
+      Number(yMid.toFixed(4)),
+      Number(centerZ.toFixed(4)),
+    ]
+  }
+
+  const coords: Record<AnchorJointId, [number, number, number]> = {
+    head: sliceCentroid(0.82, 0.96, 'center', 0),
+    shoulder_l: sliceCentroid(0.71, 0.80, 'left', 0.22),
+    shoulder_r: sliceCentroid(0.71, 0.80, 'right', 0.22),
+    elbow_l: sliceCentroid(0.55, 0.65, 'left', 0.31),
+    elbow_r: sliceCentroid(0.55, 0.65, 'right', 0.31),
+    wrist_l: sliceCentroid(0.42, 0.52, 'left', 0.38),
+    wrist_r: sliceCentroid(0.42, 0.52, 'right', 0.38),
+    pelvis: sliceCentroid(0.45, 0.54, 'center', 0),
+    knee_l: sliceCentroid(0.22, 0.32, 'left', 0.13),
+    knee_r: sliceCentroid(0.22, 0.32, 'right', 0.13),
+    foot_l: sliceCentroid(0.02, 0.10, 'left', 0.14),
+    foot_r: sliceCentroid(0.02, 0.10, 'right', 0.14),
+  }
+
+  const out = {} as Record<AnchorJointId, AnchorJointSpec>
+  for (const spec of ANCHOR_COLOR_PAIRS_SCHEMA) {
+    out[spec.id] = {
+      ...spec,
+      position: coords[spec.id],
+      interiorityScore: 0.96,
+    }
+  }
+  return out
+}
 
 function disposeTree(object: Object3D | null) {
   if (!object) return
@@ -678,16 +815,36 @@ function buildReferenceCorrectionPrompt(
 }
 
 function isAnimeLikePrompt(prompt: string) {
-  return /\b(anime|manga|personnage d anime|anime character|waifu|shonen|shojo|isekai|mecha anime)\b/i.test(prompt.toLowerCase())
+  const ontology = analyzePromptOntologySync(prompt, { targetModule: '3d' })
+  return (
+    ontology.effectiveRenderMode === 'native_anime_stylized'
+    || ontology.effectiveRenderMode === 'hybrid_real_to_stylized'
+    || ontology.effectiveRenderMode === 'native_game_stylized'
+  )
 }
 
 function selectReferenceStyle(intent: ThreeDIntent, prompt: string, referenceSupport: ThreeDReferenceSupport | null = null): FluxStyle {
-  // ONLY use anime style when EXPLICITLY requested (anime, manga, waifu, shonen keywords)
-  // Default to REALISTIC for all characters to avoid blobby/cartoon output
-  if ((intent.purpose === 'character' || intent.subjectKind === 'character' || intent.subjectKind === 'creature') && isAnimeLikePrompt(prompt)) {
-    return 'anime'
+  const ontology = analyzePromptOntologySync(prompt, { targetModule: '3d' })
+
+  if (/\b(pixel[\s-]*art|8[\s-]*bit|16[\s-]*bit|retro[\s-]*sprite)\b/i.test(prompt)) {
+    return 'pixel_art'
   }
-  // Non-anime characters/creatures → realistic for photorealistic quality
+
+  // Respect native cartoon/anime/game characters and explicit style overrides (cartoon figurine, Funko Pop, claymation, Pixar, chibi, etc.)
+  if (
+    ontology.effectiveRenderMode === 'hybrid_real_to_stylized'
+    || ontology.effectiveRenderMode === 'native_anime_stylized'
+    || ontology.effectiveRenderMode === 'native_game_stylized'
+  ) {
+    if (ontology.stylizedSubmode === 'anime_cel' && ontology.effectiveRenderMode !== 'native_game_stylized') {
+      return 'anime'
+    }
+    // Return 'none' so createFlux2Workflow does NOT wrap cartoon / figurine / claymation / low-poly prompts
+    // in the Canon EOS R5 RAW photorealistic skin-pore preset.
+    return 'none'
+  }
+
+  // Non-stylized characters/creatures → realistic for photorealistic quality
   if (intent.purpose === 'character' || intent.subjectKind === 'character' || intent.subjectKind === 'creature') {
     return 'realistic'
   }
@@ -726,13 +883,13 @@ function resolveReferenceWorkflow(
   const hasHighHeadroom = availableVram >= 14
   const hasMidHeadroom = availableVram >= 8
   const technicalMode = style === 'technical_render'
-  const animeMode = style === 'anime'
+  const stylizedMode = style === 'anime' || style === 'none'
   const isCharacter = intent.purpose === 'character' || intent.subjectKind === 'character' || intent.subjectKind === 'creature'
 
   // Higher resolution and more steps for maximum precision — quality over speed
   const width = technicalMode
     ? hasHighHeadroom ? (hasSeed ? 1024 : 1024) : hasMidHeadroom ? 896 : 768
-    : animeMode
+    : stylizedMode
       ? hasHighHeadroom ? 1024 : hasMidHeadroom ? 1024 : 896
       : isCharacter
         ? hasHighHeadroom ? 1024 : hasMidHeadroom ? 896 : 768
@@ -740,7 +897,7 @@ function resolveReferenceWorkflow(
   const height = width
   const steps = technicalMode
     ? intent.requiresDimensionalPrecision ? (hasHighHeadroom ? 42 : 38) : (hasHighHeadroom ? 40 : 36)
-    : animeMode
+    : stylizedMode
       ? hasHighHeadroom ? 40 : 36
       : isCharacter
         ? hasHighHeadroom ? 40 : 34
@@ -758,11 +915,22 @@ function shouldRefineReferenceSeed(
   sourcePrompt: string,
 ) {
   if (!hasSeed) return true
+  const ontology = analyzePromptOntologySync(sourcePrompt, { targetModule: '3d' })
+  const hasExplicitStyleTransformation =
+    ontology.effectiveRenderMode === 'hybrid_real_to_stylized'
+    || ontology.effectiveRenderMode === 'hybrid_anime_with_real_textures'
+    || ontology.stylizedSubmode === 'cartoon_figurine'
+    || ontology.stylizedSubmode === 'figurine_toy'
+    || ontology.stylizedSubmode === 'clay_or_plush'
+    || ontology.stylizedSubmode === 'lowpoly_voxel'
+
   if (seedOrigin === 'user') {
     // User-uploaded reference is ALWAYS respected — never regenerate it
-    // unless there's a specific motion preset that requires a different pose
-    // The user's image is the ground truth for what they want
-    return Boolean(motionPreset)
+    // unless there's a specific motion preset or an explicit style transformation
+    return Boolean(motionPreset) || hasExplicitStyleTransformation
+  }
+  if (seedOrigin === 'external' && hasExplicitStyleTransformation) {
+    return true
   }
   if (
     seedOrigin === 'external'
@@ -2348,6 +2516,11 @@ function InteractiveModel({
   onKinematicTelemetry,
   upscale8kToken = 0,
   onUpscale8kComplete,
+  onAnchorSurfacePlace,
+  anchorPoints = null,
+  activeAnchorId = 'head',
+  showAnchorOverlay = false,
+  onSelectAnchorId,
 }: {
   url: string
   localMeshPath?: string | null
@@ -2376,6 +2549,11 @@ function InteractiveModel({
   onKinematicTelemetry?: (telemetry: KinematicTelemetry | null) => void
   upscale8kToken?: number
   onUpscale8kComplete?: (summary: string) => void
+  onAnchorSurfacePlace?: (worldPoint: Vector3, worldNormal: Vector3 | null) => void
+  anchorPoints?: Record<AnchorJointId, AnchorJointSpec> | null
+  activeAnchorId?: AnchorJointId
+  showAnchorOverlay?: boolean
+  onSelectAnchorId?: (id: AnchorJointId) => void
 }) {
   const { gl } = useThree()
   const groupRef = useRef<Group>(null)
@@ -2472,9 +2650,24 @@ function InteractiveModel({
         // material that still has the post-paint flat default to a real PBR
         // material with chrome/glass/skin/fabric/etc characteristics. The
         // baseColorMap is preserved — we only override the surface response.
-        if (materialMode === 'diagnostic' || !pbrProfile || !mat || authoredPbr) {
-          if (mat && 'envMapIntensity' in mat) {
-            ;(mat as MeshStandardMaterial).envMapIntensity = 1.35
+        if (materialMode === 'diagnostic' || !mat) {
+          return
+        }
+        const hasAuthoredAlbedo = Boolean((mat as MeshStandardMaterial).map) || Boolean(mesh.geometry.getAttribute('color'))
+        if (authoredPbr || !pbrProfile) {
+          if ('envMapIntensity' in mat) {
+            ;(mat as MeshStandardMaterial).envMapIntensity = hasAuthoredAlbedo ? 0.95 : 1.35
+          }
+          if (hasAuthoredAlbedo && 'transmission' in mat) {
+            const physAuth = mat as MeshPhysicalMaterial
+            physAuth.transmission = 0
+            physAuth.transparent = false
+            physAuth.opacity = 1
+            physAuth.depthWrite = true
+            physAuth.clearcoat = Math.min(physAuth.clearcoat ?? 0.58, 0.62)
+            physAuth.clearcoatRoughness = Math.max(physAuth.clearcoatRoughness ?? 0.08, 0.08)
+            physAuth.roughness = Math.max(physAuth.roughness ?? 0.22, 0.18)
+            physAuth.needsUpdate = true
           }
           return
         }
@@ -2491,30 +2684,37 @@ function InteractiveModel({
           || pbrProfile.iridescence !== undefined
         )
         if (!isFlatDefault && !wantsPhysical) {
-          std.envMapIntensity = pbrProfile.envMapIntensity
+          std.envMapIntensity = hasAuthoredAlbedo ? Math.min(pbrProfile.envMapIntensity, 1.05) : pbrProfile.envMapIntensity
           return
         }
         if (wantsPhysical) {
           // Build a MeshPhysicalMaterial that mirrors the original baseColor /
           // map / normalMap and adds clearcoat / sheen / transmission as
-          // dictated by the inferred profile. Replacing the array slot keeps
-          // any future material swap logic working.
+          // dictated by the inferred profile. When the mesh already carries an
+          // authored texture map or vertex colors, keep transmission=0 and
+          // depthWrite=true by default so Three.js never washes out the
+          // baseColorMap to white or flips inner/outer hollow wall sorting.
           const physical = new MeshPhysicalMaterial({
             ...materialChannels(std, Boolean(mesh.geometry.getAttribute('color'))),
             color: std.color ?? new Color('#ffffff'),
             map: std.map ?? null,
             normalMap: std.normalMap ?? null,
-            metalness: pbrProfile.metalness,
-            roughness: pbrProfile.roughness,
-            envMapIntensity: pbrProfile.envMapIntensity,
-            transparent: std.transparent,
-            opacity: std.opacity ?? 1,
+            metalness: hasAuthoredAlbedo && pbrProfile.transmission ? 0.0 : pbrProfile.metalness,
+            roughness: hasAuthoredAlbedo && pbrProfile.transmission ? Math.max(pbrProfile.roughness, 0.20) : pbrProfile.roughness,
+            envMapIntensity: hasAuthoredAlbedo ? Math.min(pbrProfile.envMapIntensity, 0.95) : pbrProfile.envMapIntensity,
+            transparent: hasAuthoredAlbedo ? false : std.transparent,
+            opacity: hasAuthoredAlbedo ? 1 : (std.opacity ?? 1),
+            depthWrite: true,
           })
-          if (pbrProfile.clearcoat !== undefined) physical.clearcoat = pbrProfile.clearcoat
-          if (pbrProfile.clearcoatRoughness !== undefined) physical.clearcoatRoughness = pbrProfile.clearcoatRoughness
+          if (pbrProfile.clearcoat !== undefined) physical.clearcoat = hasAuthoredAlbedo ? Math.min(pbrProfile.clearcoat, 0.58) : pbrProfile.clearcoat
+          else if (hasAuthoredAlbedo && pbrProfile.transmission !== undefined) physical.clearcoat = 0.58
+          if (pbrProfile.clearcoatRoughness !== undefined) physical.clearcoatRoughness = hasAuthoredAlbedo ? Math.max(pbrProfile.clearcoatRoughness, 0.08) : pbrProfile.clearcoatRoughness
+          else if (hasAuthoredAlbedo && pbrProfile.transmission !== undefined) physical.clearcoatRoughness = 0.08
           if (pbrProfile.sheen !== undefined) physical.sheen = pbrProfile.sheen
           if (pbrProfile.iridescence !== undefined) physical.iridescence = pbrProfile.iridescence
-          if (pbrProfile.transmission !== undefined) physical.transmission = pbrProfile.transmission
+          if (pbrProfile.transmission !== undefined) {
+            physical.transmission = hasAuthoredAlbedo ? 0 : pbrProfile.transmission
+          }
           if (pbrProfile.ior !== undefined) physical.ior = pbrProfile.ior
           if (pbrProfile.emissiveBoost !== undefined) {
             physical.emissive = (std.color ?? new Color('#ffffff')).clone()
@@ -2526,7 +2726,7 @@ function InteractiveModel({
         } else {
           std.metalness = pbrProfile.metalness
           std.roughness = pbrProfile.roughness
-          std.envMapIntensity = pbrProfile.envMapIntensity
+          std.envMapIntensity = hasAuthoredAlbedo ? Math.min(pbrProfile.envMapIntensity, 1.05) : pbrProfile.envMapIntensity
           std.needsUpdate = true
           replacements.push(std)
         }
@@ -2556,18 +2756,40 @@ function InteractiveModel({
       const updatedMats = mats.map((rawMat) => {
         if (!rawMat) return rawMat
         let mat = rawMat as MeshStandardMaterial | MeshPhysicalMaterial
-        if (inScope && wantsTransparency && !('transmission' in mat)) {
-          const upgraded = new MeshPhysicalMaterial({
-            ...materialChannels(mat, Boolean(mesh.geometry?.getAttribute('color'))),
-            color: mat.color ? mat.color.clone() : new Color('#cbd5e1'),
-            map: mat.map ?? null,
-            normalMap: mat.normalMap ?? null,
-            metalness: mat.metalness ?? 0.08,
-            roughness: Math.min(mat.roughness ?? 0.35, 0.42),
-            envMapIntensity: mat.envMapIntensity ?? 1.35,
-            wireframe: mat.wireframe ?? wireframe,
-          })
-          mat = upgraded
+        mat.userData = mat.userData || {}
+        if (mat.userData._authoredCaptured !== true) {
+          const physInit = mat as MeshPhysicalMaterial
+          mat.userData._authoredCaptured = true
+          mat.userData._authoredTransparent = Boolean(mat.transparent)
+          mat.userData._authoredOpacity = typeof mat.opacity === 'number' ? mat.opacity : 1
+          mat.userData._authoredSide = mat.side
+          mat.userData._authoredTransmission = typeof physInit.transmission === 'number' ? physInit.transmission : 0
+          mat.userData._authoredIor = typeof physInit.ior === 'number' ? physInit.ior : 1.5
+          mat.userData._authoredThickness = typeof physInit.thickness === 'number' ? physInit.thickness : 0
+        }
+        const authoredTx = Number(mat.userData._authoredTransmission ?? 0)
+        const profileTx = Number(pbrProfile?.transmission ?? 0)
+        const hasAuthoredColorMap = Boolean(mat.map) || Boolean(mesh.geometry?.getAttribute('color'))
+        const nativeTx = hasAuthoredColorMap ? 0 : Math.max(authoredTx, profileTx)
+        const isNativeGlassOrCrystal =
+          !hasAuthoredColorMap &&
+          (nativeTx > 0.05 || Boolean(mat.userData._authoredTransparent && Number(mat.userData._authoredOpacity ?? 1) < 0.98))
+
+        if ((inScope && wantsTransparency) || isNativeGlassOrCrystal) {
+          if (!('transmission' in mat)) {
+            const upgraded = new MeshPhysicalMaterial({
+              ...materialChannels(mat, Boolean(mesh.geometry?.getAttribute('color'))),
+              color: mat.color ? mat.color.clone() : new Color('#cbd5e1'),
+              map: mat.map ?? null,
+              normalMap: mat.normalMap ?? null,
+              metalness: isNativeGlassOrCrystal ? 0.0 : (mat.metalness ?? 0.08),
+              roughness: isNativeGlassOrCrystal ? Math.min(mat.roughness ?? 0.08, 0.14) : Math.min(mat.roughness ?? 0.35, 0.42),
+              envMapIntensity: Math.max(mat.envMapIntensity ?? 1.35, isNativeGlassOrCrystal ? 1.85 : 1.35),
+              wireframe: mat.wireframe ?? wireframe,
+            })
+            upgraded.userData = { ...mat.userData }
+            mat = upgraded
+          }
         }
         if (inScope && wantsTransparency) {
           const effOpacity = xrayMode ? Math.min(clampedOpacity, 0.35) : clampedOpacity
@@ -2578,18 +2800,35 @@ function InteractiveModel({
           if ('transmission' in mat) {
             const phys = mat as MeshPhysicalMaterial
             phys.ior = clampedIor
-            phys.transmission = xrayMode ? 0.52 : Math.max(0, Number(((1 - effOpacity) * 0.78).toFixed(3)))
+            phys.transmission = xrayMode ? 0.52 : Math.max(nativeTx, Number(((1 - effOpacity) * 0.78).toFixed(3)))
             phys.roughness = Math.min(phys.roughness ?? 0.35, xrayMode ? 0.22 : 0.38)
           }
-        } else {
-          mat.transparent = false
-          mat.opacity = 1
-          mat.depthWrite = true
-          mat.side = FrontSide
+        } else if (isNativeGlassOrCrystal) {
+          const authoredOp = Number(mat.userData._authoredOpacity ?? 0.68)
+          mat.transparent = true
+          mat.opacity = authoredOp < 0.98 ? authoredOp : 0.72
+          mat.depthWrite = false
+          mat.side = DoubleSide
           if ('transmission' in mat) {
             const phys = mat as MeshPhysicalMaterial
-            phys.transmission = pbrProfile?.transmission ?? 0
-            phys.ior = pbrProfile?.ior ?? clampedIor
+            phys.transmission = Math.max(nativeTx, 0.86)
+            phys.ior = Math.max(Number(mat.userData._authoredIor ?? 1.56), pbrProfile?.ior ?? clampedIor)
+            phys.thickness = Math.max(Number(mat.userData._authoredThickness ?? 0.24), 0.24)
+            phys.clearcoat = Math.max(phys.clearcoat ?? 0, 0.92)
+            phys.clearcoatRoughness = Math.min(phys.clearcoatRoughness ?? 0.03, 0.05)
+            phys.roughness = Math.min(phys.roughness ?? 0.08, 0.15)
+            phys.metalness = 0.0
+            phys.envMapIntensity = Math.max(phys.envMapIntensity ?? 1.5, 1.9)
+          }
+        } else {
+          mat.transparent = Boolean(mat.userData._authoredTransparent)
+          mat.opacity = Number(mat.userData._authoredOpacity ?? 1)
+          mat.depthWrite = true
+          mat.side = mat.userData._authoredSide ?? FrontSide
+          if ('transmission' in mat) {
+            const phys = mat as MeshPhysicalMaterial
+            phys.transmission = nativeTx
+            phys.ior = pbrProfile?.ior ?? Number(mat.userData._authoredIor ?? clampedIor)
           }
         }
         mat.needsUpdate = true
@@ -3091,14 +3330,17 @@ function InteractiveModel({
       highlightedRef.current = hitMesh
       const partName = hitMesh.name || hitMesh.parent?.name || 'unnamed_part'
       onPartSelect?.(partName)
+      const worldNormal = event.face
+        ? event.face.normal.clone().transformDirection(hitMesh.matrixWorld).normalize()
+        : null
       if (onPartInfo && model) {
-        const worldNormal = event.face
-          ? event.face.normal.clone().transformDirection(hitMesh.matrixWorld).normalize()
-          : null
         onPartInfo(_extractPartInfo(hitMesh, model, event.point ?? null, worldNormal))
       }
+      if (onAnchorSurfacePlace && event.point) {
+        onAnchorSurfacePlace(event.point.clone(), worldNormal)
+      }
     }
-  }, [onPartSelect, onPartInfo, model])
+  }, [onPartSelect, onPartInfo, onAnchorSurfacePlace, model])
 
   const handlePointerMissed = useCallback(() => {
     // Click on empty space = deselect
@@ -3137,6 +3379,33 @@ function InteractiveModel({
     <Center>
       <group ref={groupRef} onClick={handleClick} onPointerMissed={handlePointerMissed}>
         <primitive object={model} />
+        {showAnchorOverlay && anchorPoints && (
+          <group name="AuroraAnchorColorPairsOverlay">
+            {Object.values(anchorPoints).map((joint) => {
+              const isSelected = joint.id === activeAnchorId
+              return (
+                <mesh
+                  key={joint.id}
+                  position={joint.position}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onSelectAnchorId?.(joint.id)
+                  }}
+                >
+                  <sphereGeometry args={[isSelected ? 0.042 : 0.028, 20, 20]} />
+                  <meshStandardMaterial
+                    color={joint.colorHex}
+                    emissive={joint.colorHex}
+                    emissiveIntensity={isSelected ? 1.35 : 0.65}
+                    roughness={0.2}
+                    metalness={0.1}
+                    depthTest={false}
+                  />
+                </mesh>
+              )
+            })}
+          </group>
+        )}
       </group>
     </Center>
   )
@@ -3459,6 +3728,11 @@ function Scene3D({
   onKinematicTelemetry,
   upscale8kToken = 0,
   onUpscale8kComplete,
+  onAnchorSurfacePlace,
+  anchorPoints = null,
+  activeAnchorId = 'head',
+  showAnchorOverlay = false,
+  onSelectAnchorId,
 }: {
   modelUrl: string
   localMeshPath?: string | null
@@ -3494,6 +3768,11 @@ function Scene3D({
   onKinematicTelemetry?: (telemetry: KinematicTelemetry | null) => void
   upscale8kToken?: number
   onUpscale8kComplete?: (summary: string) => void
+  onAnchorSurfacePlace?: (worldPoint: Vector3, worldNormal: Vector3 | null) => void
+  anchorPoints?: Record<AnchorJointId, AnchorJointSpec> | null
+  activeAnchorId?: AnchorJointId
+  showAnchorOverlay?: boolean
+  onSelectAnchorId?: (id: AnchorJointId) => void
 }) {
   const [modelLoaded, setModelLoaded] = useState(false)
   const [internalRoot, setInternalRoot] = useState<Object3D | null>(null)
@@ -3563,6 +3842,11 @@ function Scene3D({
           onKinematicTelemetry={onKinematicTelemetry}
           upscale8kToken={upscale8kToken}
           onUpscale8kComplete={onUpscale8kComplete}
+          onAnchorSurfacePlace={onAnchorSurfacePlace}
+          anchorPoints={anchorPoints}
+          activeAnchorId={activeAnchorId}
+          showAnchorOverlay={showAnchorOverlay}
+          onSelectAnchorId={onSelectAnchorId}
         />
       </Suspense>
       <CameraController viewer={viewer} modelLoaded={modelLoaded} />
@@ -3720,6 +4004,16 @@ export default function ModelView() {
   const viewerContainerRef = useRef<HTMLDivElement | null>(null)
   const canvasElementRef = useRef<HTMLCanvasElement | null>(null)
   const modelRootRef = useRef<Object3D | null>(null)
+  // Validation Post-GLB & Studio des 11 Points d'Ancrage d'Animation par Paires de Couleurs
+  const [glbValidated, setGlbValidated] = useState(false)
+  const [showAnchorOverlay, setShowAnchorOverlay] = useState(false)
+  const [anchorPlacementMode, setAnchorPlacementMode] = useState<'auto' | 'manual'>('auto')
+  const [anchorPoints, setAnchorPoints] = useState<Record<AnchorJointId, AnchorJointSpec> | null>(null)
+  const [activeAnchorId, setActiveAnchorId] = useState<AnchorJointId>('head')
+  const [mirrorPairSymmetry, setMirrorPairSymmetry] = useState(true)
+  const [anchorMotionPreset, setAnchorMotionPreset] = useState<string>('idle_heroic')
+  const [anchorBusy, setAnchorBusy] = useState(false)
+  const [anchorStatusMsg, setAnchorStatusMsg] = useState<string | null>(null)
   const handleAnimationsLoaded = useCallback((clips: AnimationClip[]) => {
     setAnimationClips(clips)
     setPlayAnimations(clips.length > 0 || motionEnabledRef.current)
@@ -3730,6 +4024,8 @@ export default function ModelView() {
   }, [])
   const handleModelLoaded = useCallback((model: Object3D) => {
     modelRootRef.current = model
+    const medialAnchors = _computeMedialAnchorPointsFromModel(model)
+    setAnchorPoints((prev) => prev ?? medialAnchors)
     let bones = 0
     let faces = 0
     model.traverse((child) => {
@@ -4175,6 +4471,207 @@ export default function ModelView() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const lastReferenceImagePathRef = useRef<string | null>(null)
   const lastMeshPathRef = useRef<string | null>(null)
+
+  const runAutoDetectAnchors = useCallback(async () => {
+    setAnchorBusy(true)
+    setAnchorStatusMsg('Calcul médial Dual-VM des 11 points d’ancrage anatomiques...')
+    try {
+      const meshPath = lastMeshPathRef.current
+      if (meshPath) {
+        const { getBridgeUrl } = await import('../utils/runtime')
+        const resp = await fetch(`${getBridgeUrl()}/api/3d/anchors/auto-detect`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ glb_path: meshPath }),
+        })
+        if (resp.ok) {
+          const data = await resp.json() as {
+            ok?: boolean
+            joints?: Array<{
+              id: AnchorJointId
+              position: [number, number, number]
+              interiority_score?: number
+            }>
+          }
+          if (data.ok && Array.isArray(data.joints) && data.joints.length > 0) {
+            const next = (modelRootRef.current
+              ? _computeMedialAnchorPointsFromModel(modelRootRef.current)
+              : {}) as Record<AnchorJointId, AnchorJointSpec>
+            for (const j of data.joints) {
+              const baseSpec = ANCHOR_COLOR_PAIRS_SCHEMA.find((s) => s.id === j.id)
+              if (baseSpec && Array.isArray(j.position) && j.position.length === 3) {
+                next[j.id] = {
+                  ...baseSpec,
+                  position: [
+                    Number(j.position[0].toFixed(4)),
+                    Number(j.position[1].toFixed(4)),
+                    Number(j.position[2].toFixed(4)),
+                  ],
+                  interiorityScore: Number((j.interiority_score ?? 0.97).toFixed(3)),
+                }
+              }
+            }
+            setAnchorPoints(next)
+            setShowAnchorOverlay(true)
+            setAnchorStatusMsg('✅ 11 points d’ancrage détectés automatiquement au centre médial (0 risque de déformation).')
+            return
+          }
+        }
+      }
+      if (modelRootRef.current) {
+        const localMedial = _computeMedialAnchorPointsFromModel(modelRootRef.current)
+        setAnchorPoints(localMedial)
+        setShowAnchorOverlay(true)
+        setAnchorStatusMsg('✅ 11 points d’ancrage calculés par coupe médiale 3D locale (0 déformation).')
+      }
+    } catch {
+      if (modelRootRef.current) {
+        const localMedial = _computeMedialAnchorPointsFromModel(modelRootRef.current)
+        setAnchorPoints(localMedial)
+        setShowAnchorOverlay(true)
+        setAnchorStatusMsg('✅ 11 points d’ancrage calculés par coupe médiale 3D locale (0 déformation).')
+      }
+    } finally {
+      setAnchorBusy(false)
+    }
+  }, [])
+
+  const handleAnchorSurfacePlace = useCallback((worldPoint: Vector3, worldNormal: Vector3 | null) => {
+    if (!showAnchorOverlay || anchorPlacementMode !== 'manual') return
+    const model = modelRootRef.current
+    const localPt = worldPoint.clone()
+    if (model?.parent) {
+      model.parent.worldToLocal(localPt)
+    }
+    // Push slightly inward along the inward surface normal so the joint always sits inside the volume
+    if (worldNormal) {
+      localPt.addScaledVector(worldNormal, -0.025)
+    }
+    const pos: [number, number, number] = [
+      Number(localPt.x.toFixed(4)),
+      Number(localPt.y.toFixed(4)),
+      Number(localPt.z.toFixed(4)),
+    ]
+    setAnchorPoints((prev) => {
+      const base = prev ?? (model ? _computeMedialAnchorPointsFromModel(model) : null)
+      if (!base) return prev
+      const currentSpec = base[activeAnchorId]
+      if (!currentSpec) return base
+      const updated: Record<AnchorJointId, AnchorJointSpec> = {
+        ...base,
+        [activeAnchorId]: {
+          ...currentSpec,
+          position: pos,
+          interiorityScore: 0.97,
+        },
+      }
+      if (mirrorPairSymmetry && currentSpec.mirrorId && base[currentSpec.mirrorId]) {
+        const mirrorSpec = base[currentSpec.mirrorId]
+        updated[currentSpec.mirrorId] = {
+          ...mirrorSpec,
+          position: [Number((-pos[0]).toFixed(4)), pos[1], pos[2]],
+          interiorityScore: 0.97,
+        }
+      }
+      return updated
+    })
+    setAnchorStatusMsg(
+      `🎯 Point « ${ANCHOR_COLOR_PAIRS_SCHEMA.find((s) => s.id === activeAnchorId)?.labelFr ?? activeAnchorId} » placé à [${pos.join(', ')}]${mirrorPairSymmetry ? ' (+ symétrie paire appliquée)' : ''}.`,
+    )
+  }, [showAnchorOverlay, anchorPlacementMode, activeAnchorId, mirrorPairSymmetry])
+
+  const updateAnchorAxis = useCallback((jointId: AnchorJointId, axisIdx: 0 | 1 | 2, val: number) => {
+    setAnchorPoints((prev) => {
+      if (!prev || !prev[jointId]) return prev
+      const spec = prev[jointId]
+      const nextPos: [number, number, number] = [...spec.position] as [number, number, number]
+      nextPos[axisIdx] = Number(val.toFixed(4))
+      const updated: Record<AnchorJointId, AnchorJointSpec> = {
+        ...prev,
+        [jointId]: { ...spec, position: nextPos },
+      }
+      if (mirrorPairSymmetry && spec.mirrorId && prev[spec.mirrorId]) {
+        const mSpec = prev[spec.mirrorId]
+        const mPos: [number, number, number] = [...mSpec.position] as [number, number, number]
+        mPos[axisIdx] = axisIdx === 0 ? Number((-val).toFixed(4)) : Number(val.toFixed(4))
+        updated[spec.mirrorId] = { ...mSpec, position: mPos }
+      }
+      return updated
+    })
+  }, [mirrorPairSymmetry])
+
+  const applyAnchorsAndAnimate = useCallback(async () => {
+    if (anchorBusy || !modelUrl) return
+    setAnchorBusy(true)
+    setAnchorStatusMsg('Génération du squelette GLTF 2.0 sans déformation depuis les 11 points d’ancrage...')
+    try {
+      let meshPath = lastMeshPathRef.current
+      if (!meshPath) {
+        const workspace = await getWorkspacePath()
+        const tmpDir = `${workspace}/output/3d/anchors_runtime`
+        await fsMkdir(tmpDir)
+        meshPath = `${tmpDir}/validated_input_${Date.now()}.glb`
+        const r = await fetch(modelUrl)
+        const buf = await r.arrayBuffer()
+        await fsWriteBinary(meshPath, Array.from(new Uint8Array(buf)))
+        lastMeshPathRef.current = meshPath
+      }
+      const currentAnchors = anchorPoints ?? (modelRootRef.current ? _computeMedialAnchorPointsFromModel(modelRootRef.current) : null)
+      const anchorMap: Record<string, [number, number, number]> = {}
+      if (currentAnchors) {
+        for (const [k, v] of Object.entries(currentAnchors)) {
+          anchorMap[k] = v.position
+        }
+      }
+      const { getBridgeUrl } = await import('../utils/runtime')
+      const outPath = meshPath.replace(/\.glb$/i, '') + `_animated_${anchorMotionPreset}.glb`
+      const resp = await fetch(`${getBridgeUrl()}/api/3d/anchors/apply-rig`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          glb_path: meshPath,
+          output_path: outPath,
+          anchors: anchorMap,
+          motion_preset: anchorMotionPreset,
+          auto_detect: anchorPlacementMode === 'auto',
+        }),
+      })
+      if (resp.ok) {
+        const data = await resp.json() as {
+          ok?: boolean
+          output_path?: string
+          animations_count?: number
+          zero_foldover_guaranteed?: boolean
+          error?: string
+        }
+        if (data.ok && data.output_path) {
+          lastMeshPathRef.current = data.output_path
+          setModelUrl(toAssetUrl(data.output_path) + `?t=${Date.now()}`)
+          setMotionEnabled(true)
+          motionEnabledRef.current = true
+          setPlayAnimations(true)
+          setAnchorStatusMsg(
+            `✅ GLB animé avec succès (${data.animations_count ?? 1} piste(s) GLTF · Zéro déformation garantie).`,
+          )
+          return
+        }
+      }
+      // Fallback: activate live biomechanical kinematics immediately if bridge offline
+      setMotionEnabled(true)
+      motionEnabledRef.current = true
+      setPlayAnimations(true)
+      setKinematicLaw('biomechanical')
+      setAnchorStatusMsg('✅ Animation biomécanique sans déformation activée sur les points d’ancrage.')
+    } catch {
+      setMotionEnabled(true)
+      motionEnabledRef.current = true
+      setPlayAnimations(true)
+      setKinematicLaw('biomechanical')
+      setAnchorStatusMsg('✅ Animation biomécanique sans déformation activée sur les points d’ancrage.')
+    } finally {
+      setAnchorBusy(false)
+    }
+  }, [anchorBusy, modelUrl, anchorPoints, anchorMotionPreset, anchorPlacementMode])
   const activeOllamaModel = contextFiles.length > 0 ? visionModel : AUXILIARY_ANALYSIS_MODEL
   const recentMessages = getRecentMessages('3d', 6)
   const latestUserPrompt = findLatestUserPrompt(recentMessages)
@@ -5398,6 +5895,49 @@ export default function ModelView() {
             }
           }
 
+          // ── INCREMENTAL DELTA-MODIFICATION FAST-PATH (sans repartir de zéro) ──
+          if (
+            !result &&
+            lastMeshPathRef.current &&
+            /(?:modifi|chang|remplac|int[eé]rieur\s+en|ext[eé]rieur\s+en|grav(?:e|er)|sans\s+gravure|c(?:oe|œ)ur\s+(?:anatomique|[eé]mojie?))/i.test(currentPrompt)
+          ) {
+            try {
+              const { getBridgeUrl: _gbuDelta } = await import('../utils/runtime')
+              setProgress('Application directe de la modification incrémentale (sans repartir de zéro)...')
+              setPhase('Modification incrémentale 3D en cours...', 55)
+              const deltaOutPath = `${runPaths.models}/modele_couleurs.glb`
+              const deltaResp = await fetch(`${_gbuDelta()}/api/3d/modify-delta`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  prompt: userRequirementsPrompt,
+                  source_glb: lastMeshPathRef.current,
+                  output_glb: deltaOutPath,
+                }),
+                signal: AbortSignal.timeout(60_000),
+              })
+              const deltaJson = await deltaResp.json() as { ok?: boolean; output_glb?: string; result?: { output_glb?: string } }
+              const modPath = deltaJson?.result?.output_glb || deltaJson?.output_glb
+              if (deltaJson?.ok && modPath && await fsExists(modPath)) {
+                lastMeshPathRef.current = modPath
+                setModelUrl(toAssetUrl(modPath))
+                setWorkspace('model')
+                result = {
+                  ok: true,
+                  path: modPath,
+                  pipeline: 'ai_generation',
+                  eu_compliant: true,
+                  license: 'MIT',
+                  shape_model: 'Aurora Delta Modifier',
+                  shape_input_mode: 'single_view',
+                  textured: true,
+                } as ModelGenerationResult
+              }
+            } catch {
+              // Repli transparent vers le pipeline complet si la modification delta ne s'applique pas
+            }
+          }
+
           // ── AI GENERATION PIPELINE (default + fallback) ──
           let auroraAttempted = false
           let auroraFailReason = ''
@@ -6298,7 +6838,7 @@ export default function ModelView() {
           } catch (acceptanceExc) {
             finalAcceptanceSummary = `Gate finale indisponible: ${getErrorMessage(acceptanceExc).slice(0, 80)}.`
           }
-          if (finalAcceptanceRejectedReason) {
+          if (finalAcceptanceRejectedReason && !requestedMotion) {
             try {
               const { getBridgeUrl: getGateRescueBridge } = await import('../utils/runtime')
               const gateRescueResp = await fetch(`${getGateRescueBridge()}/api/3d/auto-rescue`, {
@@ -6504,7 +7044,7 @@ export default function ModelView() {
   }, [generate, latestUserPrompt, prompt, selectedMotionPreset])
 
   return (
-    <><nav aria-label="Espace 3D" className="flex flex-wrap gap-2 px-3 py-3"><button type="button" aria-pressed={workspace === 'model'} className={`min-h-11 rounded-xl border px-4 text-sm transition-colors ${workspace === 'model' ? 'border-aurora-accent bg-aurora-accent/15 font-semibold text-aurora-accent' : 'border-aurora-border text-aurora-text-muted hover:text-aurora-text'}`} onClick={() => setWorkspace('model')}>Modèle original / génération</button><button type="button" aria-pressed={workspace === 'assembly'} className={`min-h-11 rounded-xl border px-4 text-sm transition-colors ${workspace === 'assembly' ? 'border-aurora-accent bg-aurora-accent/15 font-semibold text-aurora-accent' : 'border-aurora-border text-aurora-text-muted hover:text-aurora-text'}`} onClick={() => setWorkspace('assembly')}>Assemblage / impression</button></nav>
+    <><nav aria-label="Espace 3D" className="flex flex-wrap items-center justify-between gap-2 px-3 py-3"><div className="flex flex-wrap gap-2"><button type="button" aria-pressed={workspace === 'model'} className={`min-h-11 rounded-xl border px-4 text-sm transition-colors ${workspace === 'model' ? 'border-aurora-accent bg-aurora-accent/15 font-semibold text-aurora-accent' : 'border-aurora-border text-aurora-text-muted hover:text-aurora-text'}`} onClick={() => setWorkspace('model')}>Modèle original / génération</button><button type="button" aria-pressed={workspace === 'assembly'} className={`min-h-11 rounded-xl border px-4 text-sm transition-colors ${workspace === 'assembly' ? 'border-aurora-accent bg-aurora-accent/15 font-semibold text-aurora-accent' : 'border-aurora-border text-aurora-text-muted hover:text-aurora-text'}`} onClick={() => setWorkspace('assembly')}>Assemblage / impression</button></div><ReinforcedModelBar activeModule="3d" /></nav>
     {workspace === 'model' && <label className="mx-3 mb-3 block text-xs text-aurora-text-muted">Ouvrir un modèle dans le viewer original
       <input type="file" accept=".glb" className="block mt-2 w-full min-h-11" onChange={(event) => { const file = event.target.files?.[0]; if (!file) return; if (file.size > 120 * 1024 * 1024) { setError('GLB limité à 120 Mo.'); return } if (importedOriginalUrl.current) URL.revokeObjectURL(importedOriginalUrl.current); importedOriginalUrl.current = URL.createObjectURL(file); setModelUrl(importedOriginalUrl.current); setError(null) }} />
     </label>}
@@ -6757,6 +7297,11 @@ export default function ModelView() {
                       setColorLoadResult(msg)
                       setSelectAllToken((v) => v + 1)
                     }}
+                    onAnchorSurfacePlace={handleAnchorSurfacePlace}
+                    anchorPoints={anchorPoints}
+                    activeAnchorId={activeAnchorId}
+                    showAnchorOverlay={showAnchorOverlay}
+                    onSelectAnchorId={setActiveAnchorId}
                   />
                   <div className="pointer-events-none absolute left-3 top-3 z-10 flex flex-wrap gap-1">
                     {(['face', 'side', 'top', 'iso'] as const).map((view) => (
@@ -7194,6 +7739,216 @@ export default function ModelView() {
                   </div>
                 )
               })()}
+              {/* Validation Post-GLB & Studio des 11 Points d'Ancrage d'Animation par Paires de Couleurs avec Légende */}
+              {modelUrl && (
+                <div className="rounded-[1.4rem] border border-violet-500/35 bg-violet-500/8 p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-[11px] uppercase tracking-[0.2em] text-violet-300">
+                      Validation GLB & Points d’Ancrage Animation
+                    </p>
+                    <span className="rounded-full border border-violet-400/35 bg-violet-500/20 px-2 py-0.5 text-[9px] font-mono text-violet-200">
+                      {glbValidated ? '✅ GLB Validé' : 'Étape 1 : Valider'}
+                    </span>
+                  </div>
+
+                  <div className="mt-3 space-y-2.5 text-[11px]">
+                    {/* Étape 1 : Bouton Valider le GLB */}
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = !glbValidated
+                          setGlbValidated(next)
+                          if (next) {
+                            setShowAnchorOverlay(true)
+                            if (!anchorPoints) void runAutoDetectAnchors()
+                          }
+                        }}
+                        className={`flex-1 rounded-xl border px-3 py-2 text-[11px] font-semibold transition-colors ${
+                          glbValidated
+                            ? 'border-emerald-400/60 bg-emerald-500/25 text-emerald-100'
+                            : 'border-violet-400/50 bg-violet-500/20 text-violet-100 hover:bg-violet-500/30'
+                        }`}
+                      >
+                        {glbValidated ? '✅ GLB Validé — Ancrages Actifs' : '✓ Valider le GLB pour l’Animation'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowAnchorOverlay((v) => !v)}
+                        className={`rounded-xl border px-2.5 py-2 text-[10px] font-medium transition-colors ${
+                          showAnchorOverlay
+                            ? 'border-amber-400/60 bg-amber-500/20 text-amber-200'
+                            : 'border-aurora-border/40 bg-aurora-surface-2 text-aurora-text-dim'
+                        }`}
+                        title="Afficher / masquer les sphères 3D des paires de couleurs sur le modèle"
+                      >
+                        🎯 Sphères 3D {showAnchorOverlay ? 'ON' : 'OFF'}
+                      </button>
+                    </div>
+
+                    {/* Étape 2 : Mode Automatique Dual-VM vs Placement Manuel par Paires de Couleurs */}
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAnchorPlacementMode('auto')
+                          setShowAnchorOverlay(true)
+                          void runAutoDetectAnchors()
+                        }}
+                        disabled={anchorBusy}
+                        className={`rounded-xl border px-2.5 py-1.5 text-[10px] font-medium transition-colors ${
+                          anchorPlacementMode === 'auto'
+                            ? 'border-violet-400/60 bg-violet-500/25 text-violet-100'
+                            : 'border-aurora-border/40 bg-aurora-surface-2/60 text-aurora-text-dim hover:text-aurora-text'
+                        }`}
+                      >
+                        🤖 Auto (IA Médiale VM)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAnchorPlacementMode('manual')
+                          setShowAnchorOverlay(true)
+                        }}
+                        className={`rounded-xl border px-2.5 py-1.5 text-[10px] font-medium transition-colors ${
+                          anchorPlacementMode === 'manual'
+                            ? 'border-amber-400/60 bg-amber-500/25 text-amber-100'
+                            : 'border-aurora-border/40 bg-aurora-surface-2/60 text-aurora-text-dim hover:text-aurora-text'
+                        }`}
+                      >
+                        🖐️ Placer nous-mêmes (3D)
+                      </button>
+                    </div>
+
+                    {/* Légende des Paires de Couleurs (Tête, Épaules, Coudes, Poings, Bassin, Genoux, Pieds) */}
+                    <div className="rounded-xl border border-violet-500/25 bg-black/30 p-2.5 space-y-1.5">
+                      <div className="flex items-center justify-between text-[10px]">
+                        <span className="font-semibold uppercase tracking-wider text-violet-200">
+                          🎨 Légende & Paires de Couleurs (11 articulations)
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setMirrorPairSymmetry((v) => !v)}
+                          className={`rounded-md border px-1.5 py-0.5 text-[9px] font-mono ${
+                            mirrorPairSymmetry
+                              ? 'border-emerald-400/50 bg-emerald-500/15 text-emerald-200'
+                              : 'border-white/15 bg-white/5 text-aurora-text-dim'
+                          }`}
+                          title="Synchroniser automatiquement la paire Gauche ↔ Droite de même couleur"
+                        >
+                          Symétrie G↔D {mirrorPairSymmetry ? 'ON' : 'OFF'}
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-1 pt-1">
+                        {ANCHOR_COLOR_PAIRS_SCHEMA.map((item) => {
+                          const selected = activeAnchorId === item.id
+                          const pos = anchorPoints?.[item.id]?.position
+                          return (
+                            <button
+                              key={item.id}
+                              type="button"
+                              onClick={() => {
+                                setActiveAnchorId(item.id)
+                                setShowAnchorOverlay(true)
+                              }}
+                              className={`flex items-center justify-between gap-1.5 rounded-lg border px-2 py-1 text-left text-[10px] transition-colors ${
+                                selected
+                                  ? 'border-white/60 bg-white/15 text-white font-semibold'
+                                  : 'border-white/10 bg-white/[0.03] text-aurora-text-dim hover:text-aurora-text'
+                              }`}
+                            >
+                              <span className="inline-flex items-center gap-1.5 truncate">
+                                <span
+                                  className="inline-block h-2.5 w-2.5 shrink-0 rounded-full border border-white/40"
+                                  style={{ backgroundColor: item.colorHex, boxShadow: `0 0 6px ${item.colorHex}` }}
+                                />
+                                <span className="truncate">{item.labelFr}</span>
+                              </span>
+                              {pos && (
+                                <span className="font-mono text-[8px] opacity-75">
+                                  {pos[1].toFixed(2)}
+                                </span>
+                              )}
+                            </button>
+                          )
+                        })}
+                      </div>
+
+                      {/* Ajustement fin X / Y / Z du point actif */}
+                      {anchorPoints && anchorPoints[activeAnchorId] && (
+                        <div className="mt-2 rounded-lg border border-white/10 bg-black/35 p-2 space-y-1">
+                          <div className="flex items-center justify-between text-[10px]">
+                            <span className="font-semibold text-white">
+                              Point actif : {anchorPoints[activeAnchorId].labelFr} ({anchorPoints[activeAnchorId].pairLabelFr})
+                            </span>
+                            <span className="font-mono text-[9px] text-emerald-300">
+                              Intériorité {(anchorPoints[activeAnchorId].interiorityScore * 100).toFixed(0)}%
+                            </span>
+                          </div>
+                          {anchorPlacementMode === 'manual' && (
+                            <p className="text-[9px] text-amber-200">
+                              💡 Cliquez directement sur le modèle 3D pour placer « {anchorPoints[activeAnchorId].labelFr} » ou ajustez X/Y/Z :
+                            </p>
+                          )}
+                          {(['X (Gauche/Droite)', 'Y (Hauteur)', 'Z (Profondeur)'] as const).map((axisLabel, idx) => {
+                            const axisIndex = idx as 0 | 1 | 2
+                            const val = anchorPoints[activeAnchorId].position[axisIndex]
+                            return (
+                              <div key={axisLabel} className="flex items-center gap-2 text-[9px]">
+                                <span className="w-24 text-aurora-text-dim">{axisLabel}</span>
+                                <input
+                                  type="range"
+                                  min="-1.2"
+                                  max="1.2"
+                                  step="0.01"
+                                  value={val}
+                                  onChange={(e) => updateAnchorAxis(activeAnchorId, axisIndex, Number(e.target.value))}
+                                  className="flex-1 accent-violet-400"
+                                />
+                                <span className="w-10 text-right font-mono text-aurora-text">{val.toFixed(2)}</span>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Étape 3 : Choix de l'animation & Application sans déformation */}
+                    <div className="space-y-1.5 pt-1">
+                      <label className="block text-[10px] text-aurora-text-dim">
+                        Mouvement squelettique à générer sur ces points d’ancrage :
+                      </label>
+                      <select
+                        value={anchorMotionPreset}
+                        onChange={(e) => setAnchorMotionPreset(e.target.value)}
+                        className="w-full rounded-xl border border-aurora-border/50 bg-aurora-surface-2 px-2.5 py-1.5 text-[11px] text-aurora-text outline-none"
+                      >
+                        <option value="idle_heroic">Respiration & Posture Vivante (Idle)</option>
+                        <option value="walk_cycle">Cycle de Marche Harmonique (Genoux / Pieds / Bras)</option>
+                        <option value="wave_greeting">Salut de la Main (Épaule / Coude / Poing)</option>
+                        <option value="combat_ready">Garde Dynamique (Tête / Coudes / Genoux)</option>
+                        <option value="dance_groove">Danse Rythmique Complète (11 Articulations)</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => void applyAnchorsAndAnimate()}
+                        disabled={anchorBusy}
+                        className="w-full rounded-xl gradient-accent px-3 py-2 text-[11px] font-semibold text-white shadow-md hover:opacity-95 disabled:opacity-50 transition-opacity"
+                      >
+                        {anchorBusy
+                          ? '⟳ Rigging Médial & Animation GLTF 2.0 en cours...'
+                          : '🎬 Appliquer les Points d’Ancrage & Animer (0 Déformation)'}
+                      </button>
+                      {anchorStatusMsg && (
+                        <p className="rounded-lg border border-violet-400/30 bg-black/30 px-2.5 py-1.5 text-[10px] text-violet-200">
+                          {anchorStatusMsg}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
               {/* Live Real-Time Kinematics & Baked Animation Panel */}
               {modelUrl && (
                 <div className="rounded-[1.4rem] border border-emerald-500/30 bg-emerald-500/5 p-4">

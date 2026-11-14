@@ -11,7 +11,12 @@ import {
   type MotionDescriptor as KinematicMotionDescriptor,
 } from './kinematicsLibrary.ts'
 import { engineerDecision, type ThreeDEngineerDecision } from './threeDAutonomousEngineer.ts'
-import { analyzePromptOntologySync, translateFrenchSubjectToEnglish } from './cognitivePromptDirector.ts'
+import {
+  analyzePromptOntologyOpenWorld,
+  analyzePromptOntologySync,
+  translateFrenchSubjectToEnglish,
+  type CognitivePromptDecision,
+} from './cognitivePromptDirector.ts'
 
 export type ThreeDPipeline =
   | 'ai_generation'       // TRELLIS.2 / DreamGaussian — creative or reference-based
@@ -135,6 +140,15 @@ function uniqueStrings(values: string[]) {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)))
 }
 
+export function stripSystemPromptBoilerplate(rawPrompt: string): string {
+  return (rawPrompt || '')
+    .replace(/Animation is explicitly OFF:[^\n]*/gi, '')
+    .replace(/Pose,\s*appearance\s*and\s*scene\s*changes\s*still\s*apply\.?\s*Do\s*not\s*add\s*temporal\s*animation\.?/gi, '')
+    .replace(/Intent 3D detecte:[\s\S]*$/i, '')
+    .replace(/\n\n+/g, '\n')
+    .trim()
+}
+
 function parseIntentJson(text: string): Partial<ThreeDIntent> | null {
   const match = text.match(/\{[\s\S]*\}/)
   if (!match) return null
@@ -147,47 +161,61 @@ function parseIntentJson(text: string): Partial<ThreeDIntent> | null {
 }
 
 function hasDimensionalSignal(prompt: string) {
-  return /\b\d+(?:[.,]\d+)?\s?(?:mm|millimetres?|millimeters?|cm|m|in|inch|inches|degres?|degrees?)\b/i.test(prompt)
+  return /\b\d+(?:[.,]\d+)?\s?(?:mm|millimetres?|millimeters?|cm|m|in|inch|inches|degres?|degrees?)\b/i.test(stripSystemPromptBoilerplate(prompt))
 }
 
 function hasNegatedStylizedSignal(prompt: string) {
-  return /\b(non[-\s]?anime|non[-\s]?manga|non[-\s]?cartoon|pas\s+(?:anime|manga|cartoon|stylis[eé])|not\s+(?:anime|manga|cartoon|stylized|stylised)|rendu\s+non[-\s]?anime)\b/i.test(prompt)
+  return /\b(non[-\s]?anime|non[-\s]?manga|non[-\s]?cartoon|pas\s+(?:anime|manga|cartoon|stylis[eé])|not\s+(?:anime|manga|cartoon|stylized|stylised)|rendu\s+non[-\s]?anime)\b/i.test(stripSystemPromptBoilerplate(prompt))
 }
 
 function hasPositiveStylizedSignal(prompt: string) {
-  const ontology = analyzePromptOntologySync(prompt, { targetModule: '3d' })
-  if (ontology.effectiveRenderMode === 'native_anime_stylized' || ontology.effectiveRenderMode === 'hybrid_real_to_stylized') {
+  const cleanPrompt = stripSystemPromptBoilerplate(prompt)
+  const ontology = analyzePromptOntologySync(cleanPrompt, { targetModule: '3d' })
+  if (
+    ontology.effectiveRenderMode === 'native_anime_stylized'
+    || ontology.effectiveRenderMode === 'hybrid_real_to_stylized'
+    || ontology.effectiveRenderMode === 'native_game_stylized'
+  ) {
     return true
   }
-  return /\b(anime|anim[eé]|manga|stylise|stylis[eé]|cartoon|lowpoly|low poly|voxel|chibi)\b/i.test(prompt) && !hasNegatedStylizedSignal(prompt)
+  return /\b(anime|anim[eé]|manga|stylise|stylis[eé]|cartoon|dessin\s*anim[eé]|lowpoly|low[- ]?poly|voxel|chibi|figurine|funko|pixar|disney|peluche|jouet|p[aâ]te\s+[aà]\s+modeler|clay|caricature)\b/i.test(cleanPrompt) && !hasNegatedStylizedSignal(cleanPrompt)
 }
 
 function hasPositiveAnimeSignal(prompt: string) {
-  const ontology = analyzePromptOntologySync(prompt, { targetModule: '3d' })
-  if (ontology.nativeOntology === 'anime_stylized' && !hasNegatedStylizedSignal(prompt)) {
+  const cleanPrompt = stripSystemPromptBoilerplate(prompt)
+  const ontology = analyzePromptOntologySync(cleanPrompt, { targetModule: '3d' })
+  if (ontology.nativeOntology === 'anime_stylized' && !hasNegatedStylizedSignal(cleanPrompt)) {
     return true
   }
-  return /\b(anime|anim[eé]|manga|shonen|fairy\s*tail|one\s*piece|naruto|dragon\s*ball|bleach|jujutsu|demon\s*slayer|kimetsu)\b/i.test(prompt) && !hasNegatedStylizedSignal(prompt)
+  return /\b(anime|anim[eé]|manga|shonen|fairy\s*tail|one\s*piece|naruto|dragon\s*ball|bleach|jujutsu|demon\s*slayer|kimetsu)\b/i.test(cleanPrompt) && !hasNegatedStylizedSignal(cleanPrompt)
 }
 
 function hasFlossSignal(prompt: string) {
-  return /\bfloss(?:ing)?\b/i.test(prompt)
+  return /\bfloss(?:ing)?\b/i.test(stripSystemPromptBoilerplate(prompt))
 }
 
 function hasDanceOrGestureSignal(prompt: string) {
-  return /\b(macarena|danse|danser|dance|dancing|chor[eé]graph|choreograph|body\s+action|action\s+corporelle|gesture|gestuelle)\b/i.test(prompt) || hasFlossSignal(prompt)
+  const cleanPrompt = stripSystemPromptBoilerplate(prompt)
+  return /\b(macarena|danse|danser|dance|dancing|chor[eé]graph|choreograph|body\s+action|action\s+corporelle|gesture|gestuelle)\b/i.test(cleanPrompt) || hasFlossSignal(cleanPrompt)
 }
 
 function hasKnownCharacterSignal(prompt: string) {
-  const ontology = analyzePromptOntologySync(prompt, { targetModule: '3d' })
+  const cleanPrompt = stripSystemPromptBoilerplate(prompt)
+  const normalized = cleanPrompt.toLowerCase()
+  if (
+    /\b(vase|vases|flacon|carafe|coupe|calice|bol|pot|urne|bocal|tasse|bouteille|bijou|bague|pendentif|collier|m[eé]daillon|troph[eé]e|coffret|bougie|chandelier|lampe|miroir|sablier|c[oœ]ur\s+en\s+(?:verre|cristal))\b/i.test(normalized)
+    && !/\b(personnage|character|humain|homme|femme|garcon|fille|guerrier|mage)\b/i.test(normalized)
+  ) {
+    return false
+  }
+  const ontology = analyzePromptOntologySync(cleanPrompt, { targetModule: '3d' })
   if (ontology.canonicalSubjectName) {
     return true
   }
-  const normalized = prompt.toLowerCase()
-  const fictionContext = (/\b(comic|comics|bd|serie|series|film|movie|game|jeu|franchise|marvel|dc|pokemon|zelda|final\s*fantasy)\b/i.test(normalized) || hasPositiveAnimeSignal(prompt))
-  const properName = /\b[A-Z][a-zA-Z'_-]{2,}\s+[A-Z][a-zA-Z'_-]{2,}\b/.test(prompt)
+  const fictionContext = (/\b(comic|comics|bd|serie|series|film|movie|game|jeu|franchise|marvel|dc|pokemon|zelda|final\s*fantasy|cartoon|dessin\s*anim[eé])\b/i.test(normalized) || hasPositiveAnimeSignal(cleanPrompt) || hasPositiveStylizedSignal(cleanPrompt))
+  const properName = /\b[A-Z][a-zA-Z'_-]{2,}\s+[A-Z][a-zA-Z'_-]{2,}\b/.test(cleanPrompt)
   const humanoidActionOrCue = /\b(marche|marcher|walk|walking|court|courir|run|running|danse|danser|dance|dancing|macarena|pose|visage|face|cheveux|hair|costume|outfit|heros|hero|personnage|character)\b/i.test(normalized)
-  return (fictionContext && (properName || humanoidActionOrCue || hasFlossSignal(prompt))) || (properName && (humanoidActionOrCue || hasFlossSignal(prompt)))
+  return (fictionContext && (properName || humanoidActionOrCue || hasFlossSignal(cleanPrompt))) || (properName && (humanoidActionOrCue || hasFlossSignal(cleanPrompt)))
 }
 
 function isOriginalGenericCharacterPrompt(prompt: string) {
@@ -206,7 +234,7 @@ function hasHandFidelitySignal(prompt: string) {
 
 function requiresHumanFidelityPrompt(prompt: string, purpose: ThreeDPurpose, subjectKind: ThreeDSubjectKind) {
   const characterRequest = purpose === 'character' || subjectKind === 'character'
-  return characterRequest && !isExplicitProceduralHumanoidPrompt(prompt)
+  return characterRequest && !isExplicitProceduralHumanoidPrompt(prompt) && !hasPositiveStylizedSignal(prompt)
 }
 
 function buildCharacterIdentityPromptAdditions(prompt: string, purpose: ThreeDPurpose, subjectKind: ThreeDSubjectKind) {
@@ -215,10 +243,11 @@ function buildCharacterIdentityPromptAdditions(prompt: string, purpose: ThreeDPu
     return []
   }
   const normalized = prompt.toLowerCase()
+  const stylizedSubmode = ontology.stylizedSubmode ?? 'anime_cel'
   const additions = [
-    'preserve the requested character identity exactly; do not invent a gender-swapped variant',
-    'face must be sharp and readable with clear eyes, nose, jawline and expression, never blurry or melted',
-    'preserve hair shape, colors and identity from the reference, except every explicit user change; remove excluded clothing or accessories even if present in the reference or canonical design',
+    'preserve the requested character identity and style exactly; do not invent a gender-swapped variant',
+    'face must be sharp and readable with clear eyes, nose/snout, jawline and expression, never blurry or melted',
+    'preserve hair/head shape, colors and identity from the reference, except every explicit user change; remove excluded clothing or accessories even if present in the reference or canonical design',
     'use distinct material/color zones for the requested surfaces only; do not invent clothing or accessories to create material zones',
   ]
   if (ontology.canonicalSubjectName) {
@@ -229,6 +258,11 @@ function buildCharacterIdentityPromptAdditions(prompt: string, purpose: ThreeDPu
       'human fidelity is mandatory: reject mannequin, toy, chibi, marshmallow, blob or generic avatar substitutions',
       'skin, hair, eyes and only requested clothing/accessories need texture-bearing detail, not flat single-color material zones',
       'all visible hands need coherent anatomy and individually resolved fingers according to the requested anatomy and reference; preserve the requested pose and do not invent hidden structures as verified detail',
+    )
+  } else if (hasPositiveStylizedSignal(prompt)) {
+    additions.push(
+      `stylized character fidelity (${stylizedSubmode}) is mandatory: preserve the exact requested cartoon, anime, figurine, Funko Pop, chibi, claymation, or low-poly proportions and materials; do NOT force photorealistic adult human skin pores`,
+      'limbs, hands/paws, and digits must remain clearly articulated and separated for 3D reconstruction and skeletal rigging',
     )
   }
   if (hasHandFidelitySignal(prompt) || hasDanceOrGestureSignal(prompt)) {
@@ -247,10 +281,20 @@ function buildCharacterIdentityPromptAdditions(prompt: string, purpose: ThreeDPu
     additions.push(
       'HYBRID ANIME + REAL PERSON TEXTURES OVERRIDE: preserve the exact iconic anime character silhouette, hairstyle locks, and canonical costume colors, while applying photorealistic human skin pores, subsurface scattering, and real physical fabric weaves',
     )
-  } else if (ontology.effectiveRenderMode === 'native_anime_stylized' || hasPositiveAnimeSignal(prompt)) {
+  } else if (ontology.effectiveRenderMode === 'hybrid_real_to_stylized') {
     additions.push(
-      'NATIVE ANIME / MANGA CHARACTER MODE: render directly in authentic anime/cel-shaded 3D style with anime facial proportions, sculpted anime hair locks, official costume colors, and smooth anime skin (DO NOT force realistic human skin pores unless explicitly requested); reject generic lookalikes',
+      `REAL-TO-STYLIZED OVERRIDE (${stylizedSubmode.toUpperCase()}): transform the subject into an authentic ${stylizedSubmode} 3D design (cartoon, figurine, Funko Pop, chibi, claymation, or anime as requested), preserving recognizable identity cues while replacing photorealistic skin pores with clean stylized 3D materials`,
     )
+  } else if (ontology.effectiveRenderMode === 'native_anime_stylized' || ontology.effectiveRenderMode === 'native_game_stylized' || hasPositiveAnimeSignal(prompt)) {
+    if (stylizedSubmode === 'cartoon_3d' || stylizedSubmode === 'cartoon_figurine' || stylizedSubmode === 'figurine_toy') {
+      additions.push(
+        `NATIVE CARTOON / FIGURINE 3D MODE (${stylizedSubmode.toUpperCase()}): render directly in authentic 3D cartoon or collectible figurine style with expressive cartoon proportions, iconic silhouette, vibrant colors, and smooth stylized surfaces (DO NOT force realistic human skin pores)`,
+      )
+    } else {
+      additions.push(
+        'NATIVE ANIME / MANGA CHARACTER MODE: render directly in authentic anime/cel-shaded 3D style with anime facial proportions, sculpted anime hair locks, official costume colors, and smooth anime skin (DO NOT force realistic human skin pores unless explicitly requested); reject generic lookalikes',
+      )
+    }
   } else if (hasKnownCharacterSignal(prompt)) {
     additions.push(
       'named real/public person: preserve realistic adult proportions, face/costume cues and non-cartoon photorealistic material treatment; reject generic avatar substitutions',
@@ -273,7 +317,8 @@ export { buildCompoundSceneContract, hasNamedIdentitySignal } from './compoundSc
 import { buildCompoundSceneContract } from './compoundScene.ts'
 
 function detectPurpose(prompt: string): ThreeDPurpose {
-  const normalized = prompt.toLowerCase()
+  const cleanPrompt = stripSystemPromptBoilerplate(prompt)
+  const normalized = cleanPrompt.toLowerCase()
 
   if (/\b(imprim(?:e|er|able)|stl|3d print|printable|fabrication|usinage|tolerance|tolerance)\b/i.test(normalized)) {
     return 'printable_prototype'
@@ -281,10 +326,16 @@ function detectPurpose(prompt: string): ThreeDPurpose {
   if (/\b(piece|piece mecanique|mechanical|gear|engrenage|bearing|roulement|joint|assembly|assemblage|cad|technical|blueprint|chassis|frame|suspension|transmission|piston|moteur|engine|belt|courroie|pulley|poulie|gearbox|reducteur|reducer|verin|v[eé]rin|cylinder|hydraulic|hydraulique|pneumatic|pneumatique|hinge|charniere|charni[eè]re|linkage|bielle|cam|came|biellette|manivelle|tringlerie|pignon)\b/i.test(normalized)) {
     return 'mechanical_part'
   }
+  if (
+    /\b(vase|vases|flacon|carafe|coupe|calice|bol|pot|urne|bocal|tasse|bouteille|bijou|bague|pendentif|collier|m[eé]daillon|troph[eé]e|coffret|bougie|chandelier|lampe|miroir|sablier|coeur\s+en\s+(?:verre|cristal))\b/i.test(normalized)
+    && !/\b(personnage|character|humain|homme|femme|garcon|fille|guerrier|mage)\b/i.test(normalized)
+  ) {
+    return 'product'
+  }
   if (/\b(personnage|character|hero|heroine|humanoid|avatar|figurine|statue|npc|villain|guerrier|warrior|mage|sorcier|chevalier|knight|ninja|samurai|pirate|assassin|paladin)\b/i.test(normalized)) {
     return 'character'
   }
-  if (hasKnownCharacterSignal(prompt)) {
+  if (hasKnownCharacterSignal(cleanPrompt)) {
     return 'character'
   }
   if (/\b(anime|manga|waifu|shonen)\b/i.test(normalized) && /\b(personnage|character|fille|garcon|girl|boy|man|woman|homme|femme)\b/i.test(normalized)) {
@@ -304,14 +355,21 @@ function detectPurpose(prompt: string): ThreeDPurpose {
 }
 
 function detectSubjectKind(prompt: string): ThreeDSubjectKind {
-  const normalized = prompt.toLowerCase()
+  const cleanPrompt = stripSystemPromptBoilerplate(prompt)
+  const normalized = cleanPrompt.toLowerCase()
 
   if (/\b(assembly|assemblage|mechanical assembly|sous-ensemble|systeme mecanique|mechanical system)\b/i.test(normalized)) return 'assembly'
   if (/\b(cable|wiring|wire harness|harness|faisceau|routing|motherboard|carte mere|connector|connecteur|electrique|electrical|pcb|circuit|pcie|atx|sata|usb|ethernet|strimer|argb|12vhpwr|24[\s-]?pin|8[\s-]?pin|extension cable|sleeved|cablemod|rallonge|alimentation|psu)\b/i.test(normalized)) return 'electrical_system'
   if (/\b(rgb|led)\b/i.test(normalized) && /\b(cable|extension|strip|ruban)\b/i.test(normalized)) return 'electrical_system'
   if (/\b(mecanique|mechanical|gear|engrenage|bearing|roulement|joint|chassis|frame|suspension|transmission|piston|moteur|engine|belt|courroie|pulley|poulie|verin|v[eé]rin|cylinder|hinge|charniere|charni[eè]re|linkage|bielle|cam|came|biellette|manivelle|tringlerie|pignon)\b/i.test(normalized)) return 'mechanical_part'
+  if (
+    /\b(vase|vases|flacon|carafe|coupe|calice|bol|pot|urne|bocal|tasse|bouteille|bijou|bague|pendentif|collier|m[eé]daillon|troph[eé]e|coffret|bougie|chandelier|lampe|miroir|sablier|coeur\s+en\s+(?:verre|cristal))\b/i.test(normalized)
+    && !/\b(personnage|character|humain|homme|femme|garcon|fille|guerrier|mage)\b/i.test(normalized)
+  ) {
+    return 'object'
+  }
   if (/\b(personnage|character|avatar|figurine|statue|humanoid|npc|hero|heroine|villain|guerrier|warrior|mage|sorcier|chevalier|knight|ninja|samurai|pirate|assassin|paladin)\b/i.test(normalized)) return 'character'
-  if (hasKnownCharacterSignal(prompt)) return 'character'
+  if (hasKnownCharacterSignal(cleanPrompt)) return 'character'
   if (/\b(anime|manga|waifu|shonen)\b/i.test(normalized) && /\b(personnage|character|fille|garcon|girl|boy|man|woman|homme|femme)\b/i.test(normalized)) return 'character'
   if (/\b(creature|monster|monstre|animal|dragon|wolf|loup|chat|cat|chien|dog|oiseau|bird|serpent|snake|insecte|insect)\b/i.test(normalized)) return 'creature'
   if (/\b(bras|jambe|main|pied|torse|tete|skull|arm|leg|hand|foot|torso|anatomie|anatomy|membre|crane|organe)\b/i.test(normalized)) return 'body_part'
@@ -324,7 +382,7 @@ function detectSubjectKind(prompt: string): ThreeDSubjectKind {
 }
 
 function detectSystemClass(prompt: string): ThreeDSystemClass {
-  const normalized = prompt.toLowerCase()
+  const normalized = stripSystemPromptBoilerplate(prompt).toLowerCase()
 
   if (/\b(courroie|belt|poulie|pulley|belt drive|transmission courroie)\b/i.test(normalized)) return 'belt_drive'
   if (/\b(engrenage|gear|gearbox|reducteur|reducer|pignon|pinion|gear train|train d[\s']?engrenage)\b/i.test(normalized)) return 'gear_train'
@@ -363,7 +421,7 @@ export type ThreeDMotionVerbHint =
   | 'mechanism'  // generic articulated motion ("en mouvement", "moves")
 
 export function detectMotionVerbHint(prompt: string): ThreeDMotionVerbHint {
-  const normalized = prompt.toLowerCase()
+  const normalized = stripSystemPromptBoilerplate(prompt).toLowerCase()
   // Order matters: more specific patterns first.
   if (/\b(swing|swinging|swung|balanc(?:e|ier)|pendul(?:e|um)|hammock|hamac|chandelier|lustre|hanging|suspendu)\b/i.test(normalized)) return 'swinging'
   if (/\b(vibrat|oscillat|pulse|pulsing|battement|battant|breathing|respire|respira|bat|chuck)\b/i.test(normalized)) return 'oscillating'
@@ -387,12 +445,13 @@ function detectMotionReadiness(
   subjectKind: ThreeDSubjectKind,
   systemClass: ThreeDSystemClass,
 ): MotionReadiness {
-  const normalized = prompt.toLowerCase()
+  const cleanPrompt = stripSystemPromptBoilerplate(prompt)
+  const normalized = cleanPrompt.toLowerCase()
   const asksAnimation = /\b(animation|animate|animer|rig|rigging|pose|poser|mouvement|movement|joint|charniere|hinge|articulation)\b/i.test(normalized)
   // v77ze: motion-verb detection upgrades non-mechanical objects too.
   // A "drone qui vole" or "ventilateur qui tourne" is technically a static
   // mesh by default but the user obviously wants it animated, not turntable.
-  const motionVerb = detectMotionVerbHint(prompt)
+  const motionVerb = detectMotionVerbHint(cleanPrompt)
 
   if (systemClass === 'belt_drive' || systemClass === 'gear_train' || systemClass === 'cylinder_actuator' || systemClass === 'hinge_joint' || systemClass === 'linkage') {
     return 'articulated'
@@ -431,12 +490,12 @@ function detectRepresentationGoal(systemClass: ThreeDSystemClass, motionReadines
 }
 
 function promptExplicitlyRequestsHostContext(prompt: string) {
-  const normalized = prompt.toLowerCase()
+  const normalized = stripSystemPromptBoilerplate(prompt).toLowerCase()
   return /\b(dans un boitier|inside a case|inside the case|installed in|installed on|carte mere|motherboard|gpu|psu|power supply|pc complet|full pc|whole computer|tour complete|chassis|cable management|routing through the chassis|in situ|monte sur|installed product|dans la machine|dans le pc)\b/i.test(normalized)
 }
 
 function promptExplicitlyRequestsSceneContext(prompt: string) {
-  const normalized = prompt.toLowerCase()
+  const normalized = stripSystemPromptBoilerplate(prompt).toLowerCase()
   return /\b(scene|decor|d[ée]cor|environment|environnement|landscape|paysage|cityscape|room|piece complete|atelier|workshop|sur une table|mise en situation|dans une scene|dans un decor)\b/i.test(normalized)
 }
 
@@ -458,7 +517,14 @@ function detectReferenceFraming(
     return 'isolated_subject'
   }
 
-  if (purpose === 'mechanical_part' || purpose === 'printable_prototype' || purpose === 'product' || subjectKind === 'product' || subjectKind === 'tool') {
+  if (
+    purpose === 'mechanical_part'
+    || purpose === 'printable_prototype'
+    || purpose === 'product'
+    || subjectKind === 'product'
+    || subjectKind === 'object'
+    || subjectKind === 'tool'
+  ) {
     return 'isolated_subject'
   }
 
@@ -638,6 +704,13 @@ function buildReferencePromptAdditions(
     if (motionReadiness === 'rig_candidate') {
       additions.push('clear shoulder, elbow, hip and knee separation')
     }
+  } else if (subjectKind !== 'character' && subjectKind !== 'creature') {
+    additions.push(
+      'DO NOT generate any human, person, boy, girl, character, face, or hands holding the object',
+      'Generate ONLY the standalone inanimate 3D object itself',
+      'If the request specifies "<Object> shaped like <Form>" (e.g. heart-shaped vase), the object body ITSELF has that 3D morphology as one single unified object (never two separate objects)',
+      'If a proper name or word is requested for engraving/inscription, render it ONLY as raised/engraved calligraphy on the surface of the object — NEVER generate a person with that name',
+    )
   }
 
   if (purpose === 'body_part') {
@@ -1106,6 +1179,37 @@ function detectKnownProductDescription(prompt: string, systemClass: ThreeDSystem
           'Bottom has rubber feet/standoffs and often a dust filter for the PSU intake.',
           'CRITICAL DETAILS TO RENDER: (1) front panel texture (mesh holes or glass reflections), (2) USB ports on top I/O must be separate elements, (3) power button distinct shape, (4) PCIe slots at rear individually readable, (5) fan grilles must show blade pattern or mesh, (6) screws and mounting hardware visible, (7) rubber grommets on cable routing holes visible through glass.',
         )
+      }
+    }
+
+    // ── HOLLOW VESSELS, VASES & HEART-SHAPED CONTAINERS (Anti-Flower & Anti-Human Hallucination + 3D Print Scale) ──
+    const isVesselPrompt = /\b(vase|vases|flacon|carafe|coupe|calice|bol|pot|urne|bocal|tasse|mug|bouteille|jarre|amphore|cruche|pichet)\b/i.test(normalized)
+    if (isVesselPrompt) {
+      const explicitlyWantsFlowers =
+        /\b(avec\s+(?:des\s+|un\s+bouquet\s+de\s+)?(?:fleurs?|roses?)|rempli\s+de\s+fleurs?|garni\s+de\s+fleurs?)\b/i.test(normalized)
+        && !/\b(sans\s+(?:rien|fleurs?|plantes?|contenu)|vide|empty)\b/i.test(normalized)
+      const isHeartVessel = /\b(c[oœ]ur|coeurs|c[oœ]urs|heart)\b/i.test(normalized)
+      const isAnatomicalHeart = /\b(anatomique|cardiaque|ventricul|aort|organe|anatomical)\b/i.test(normalized)
+
+      descriptions.push(
+        'THIS IS A STANDALONE 3D HOLLOW VESSEL / VASE OBJECT. DO NOT generate any human person, man, woman, boy, girl, hands, or character holding or standing behind the vessel.',
+        'Generate ONLY ONE unified 3D vessel with a real deep hollow interior cavity, thick structural walls (4mm real-size 3D printable), and a flat stable base.',
+      )
+      if (!explicitlyWantsFlowers) {
+        descriptions.push(
+          'CRITICAL EMPTY VESSEL RULE: The vase/vessel MUST be 100% EMPTY inside (`sans rien dedans`). DO NOT generate any flowers, roses, stems, leaves, plants, bouquet, or water inside or around the vase.',
+        )
+      }
+      if (isHeartVessel) {
+        if (isAnatomicalHeart) {
+          descriptions.push(
+            'Visual description: a single 3D-printable anatomical cardiac heart-shaped vase with sculpted left and right ventricles, coronary relief grooves, a flat stable base, and open hollow superior aortic and pulmonary arterial necks serving as the empty vase openings at the top.',
+          )
+        } else {
+          descriptions.push(
+            'Visual description: a single 3D-printable romantic emoji heart-shaped vase with a symmetrical bilobed heart body, a flat stable base at the bottom, and a wide open hollow cavity at the top crest between the two lobes.',
+          )
+        }
       }
     }
   }
@@ -1941,6 +2045,7 @@ export async function buildFluxVisualDescription({
    */
   previousHumanoidMetrics?: HumanoidProportionMetrics | null
 }): Promise<string> {
+  prompt = stripSystemPromptBoilerplate(prompt)
   // Gather all product/subject identity knowledge
   const identityLines = intent.referencePromptAdditions.filter((line) =>
     /^(THIS IS NOT|Visual description:|DO NOT generate|Generate ONLY|The .+ is a|.+ variant:)/i.test(line),
@@ -1991,14 +2096,26 @@ export async function buildFluxVisualDescription({
 
   const systemHint = systemClassHints[intent.systemClass] || ''
   const kindHint = subjectKindHints[intent.subjectKind] || ''
-  const ontology = analyzePromptOntologySync(prompt, { targetModule: '3d' })
+  const ontology = await analyzePromptOntologyOpenWorld(prompt, { targetModule: '3d' })
 
   const ontologyCharacterRule =
-    ontology.effectiveRenderMode === 'native_anime_stylized'
-      ? '- ONTOLOGY MODE (NATIVE ANIME / MANGA 3D): The subject is intrinsically an anime/manga/stylized character without a real-skin override. Render directly in authentic anime/cel-shaded 3D aesthetics: anime facial proportions, sculpted anime hair locks, official vivid costume colors, and smooth stylized anime skin (DO NOT force realistic human skin pores).'
-      : ontology.effectiveRenderMode === 'hybrid_anime_with_real_textures'
-        ? '- ONTOLOGY MODE (HYBRID ANIME + REAL HUMAN TEXTURES OVERRIDE): The user explicitly requested real human textures on an anime character. Preserve 100% of the iconic anime silhouette, hairstyle locks, and canonical costume, while applying photorealistic human skin pores, subsurface scattering, and real physical fabric weaves.'
-        : '- ONTOLOGY MODE (NATIVE PHOTOREALISTIC 3D): Characters and objects MUST look PHOTOREALISTIC with sharp edges on clothing folds, visible fabric texture, realistic hair strands NOT blobby masses, correct finger separation, clear facial geometry, and realistic skin pores.'
+    ontology.effectiveRenderMode === 'hybrid_real_to_stylized'
+      ? `- ONTOLOGY MODE (STYLE TRANSFORMATION — REAL TO STYLIZED / CARTOON / FIGURINE 3D): The user explicitly requested transforming a subject into ${ontology.stylizedSubmode || 'cartoon/figurine'} style. Preserve the recognizable facial/character identity, hair, and outfit, while rendering 100% in the requested stylized 3D form (${ontology.styleDirectiveEn}). DO NOT render as a raw realistic photograph.`
+      : ontology.effectiveRenderMode === 'native_anime_stylized'
+        ? ontology.stylizedSubmode === 'cartoon_figurine' || ontology.stylizedSubmode === 'figurine_toy'
+          ? '- ONTOLOGY MODE (CARTOON / COLLECTIBLE 3D FIGURINE): Render as a physical 3D stylized cartoon collectible figurine / vinyl toy with oversized expressive head, smooth molded vinyl/resin surfaces, clean painted details, and authentic stylized proportions.'
+          : ontology.stylizedSubmode === 'clay_or_plush'
+            ? '- ONTOLOGY MODE (CLAYMATION / PLUSH 3D): Render with authentic stop-motion claymation / sculpted plasticine or stitched plush toy volume and tactile stylized surfaces.'
+            : ontology.stylizedSubmode === 'lowpoly_voxel'
+              ? '- ONTOLOGY MODE (LOW-POLY / VOXEL 3D): Render with intentional faceted low-poly / cubic voxel geometry and crisp stylized color blocks.'
+              : ontology.stylizedSubmode === 'cartoon_3d'
+                ? '- ONTOLOGY MODE (NATIVE CARTOON / ANIMATED 3D): The subject is intrinsically a cartoon / animated / BD character or explicitly requested in cartoon style. Render in authentic 3D cartoon aesthetics: preserve exact canonical cartoon proportions, silhouette, snout/ears/eyes, vibrant cartoon colors, and smooth stylized 3D shading (DO NOT force realistic adult human proportions or realistic human skin pores).'
+                : '- ONTOLOGY MODE (NATIVE ANIME / MANGA 3D): The subject is intrinsically an anime/manga/stylized character without a real-skin override. Render directly in authentic anime/cel-shaded 3D aesthetics: anime facial proportions, sculpted anime hair locks, official vivid costume colors, and smooth stylized anime skin (DO NOT force realistic human skin pores).'
+        : ontology.effectiveRenderMode === 'native_game_stylized'
+          ? '- ONTOLOGY MODE (NATIVE STYLIZED 3D GAME ASSET): Render with authentic stylized 3D game character proportions, clean sculpted volumes, and vibrant stylized PBR materials.'
+          : ontology.effectiveRenderMode === 'hybrid_anime_with_real_textures'
+            ? '- ONTOLOGY MODE (HYBRID ANIME/CARTOON + REAL TEXTURES OVERRIDE): The user explicitly requested real textures on an anime/cartoon character. Preserve 100% of the iconic silhouette, hairstyle, and canonical costume, while applying photorealistic skin pores, subsurface scattering, and real physical fabric weaves.'
+            : '- ONTOLOGY MODE (NATIVE PHOTOREALISTIC 3D): Characters and objects MUST look PHOTOREALISTIC with sharp edges on clothing folds, visible fabric texture, realistic hair strands NOT blobby masses, correct finger separation, clear facial geometry, and realistic skin pores.'
 
   const fluxPromptRequest = `/no_think
 You are a FLUX diffusion model prompt engineer. Your job is to convert a user's 3D modeling request into a precise, FLUX-optimized visual description in fluent English.
@@ -2022,7 +2139,7 @@ CRITICAL RULES:
 - Ensure strong lighting contrast to reveal surface depth, edges, bevels, recesses, and protruding features
 - Do NOT use primitive block-in shapes, cubes, spheres, cylinders or toy placeholders unless the user explicitly asked for a primitive. The reference must contain the real silhouette and real part structure of the requested subject.
 - Texture is part of fidelity: show material grain, fabric weave, brushed metal, glass transparency, rubber, wood grain, emission or paint finish when relevant. Avoid flat single-color surfaces and avoid a 2D image pasted onto a simple block.
-- For characters: describe only the requested outfit and accessories; excluded clothing must remain absent even when it belongs to a known character design. Describe PRECISE hairstyle shape, explicitly requested costume geometry, EXACT body proportions (slim/muscular/etc), face features (eye shape, nose, jawline), accessories. Preserve the requested/official gender and body type; NEVER gender-swap a named character. Face, hair and costume details must be sharp, not blurry, blobby or single-color. NEVER produce a blobby/marshmallow character.
+- For characters: describe only the requested outfit and accessories; excluded clothing must remain absent even when it belongs to a known character design. Describe PRECISE hairstyle shape, explicitly requested costume geometry, EXACT body proportions (slim/muscular/cartoon/chibi/etc), face features (eye shape, nose, jawline, snout), accessories. Preserve the requested/official gender and body type; NEVER gender-swap a named character. Face, hair and costume details must be sharp, not blurry, blobby or single-color. NEVER produce a blobby/marshmallow character.
 ${ontologyCharacterRule}
 - ${ontology.styleDirectiveEn}
 - For products: describe exact shape, connector types, materials, size proportions, surface finish, ALL fine details (USB ports, buttons, screws, ventilation holes, fan grilles, mesh patterns)
@@ -2051,12 +2168,12 @@ FLUX visual description:`
   // v77zai on analyzeThreeDIntent — Ollama can sit on a request for
   // minutes producing zero tokens. Without a timeout, this blocks the
   // shape stage from ever being reached.
-  const FLUX_PROMPT_TIMEOUT_MS = 20_000
+  const FLUX_PROMPT_TIMEOUT_MS = 180_000
   const fluxAbort = new AbortController()
   const fluxTimeout = setTimeout(() => fluxAbort.abort(), FLUX_PROMPT_TIMEOUT_MS)
 
   try {
-    const response = await ollamaGenerate(model, fluxPromptRequest, { signal: fluxAbort.signal, num_predict: 1200, num_ctx: 8192 })
+    const response = await ollamaGenerate(model, fluxPromptRequest, { signal: fluxAbort.signal, num_predict: 4096, num_ctx: 32768 })
     clearTimeout(fluxTimeout)
     const text = (response?.response || '').trim()
     const cleaned = text.replace(/<think>[\s\S]*?<\/think>/g, '').replace(/<think>[\s\S]*$/g, '').trim()
@@ -2079,7 +2196,7 @@ FLUX visual description:`
   }
 
   // Fallback: build the prompt manually from product knowledge + intent
-  return buildManualFluxDescription(prompt, intent, motionPreset)
+  return buildManualFluxDescription(prompt, intent, motionPreset, ontology)
 }
 
 /**
@@ -2091,9 +2208,10 @@ export function buildManualFluxDescription(
   prompt: string,
   intent: ThreeDIntent,
   motionPreset?: ThreeDMotionPreset | null,
+  precomputedOntology?: CognitivePromptDecision,
 ): string {
   const parts: string[] = []
-  const ontology = analyzePromptOntologySync(prompt, { targetModule: '3d' })
+  const ontology = precomputedOntology ?? analyzePromptOntologySync(prompt, { targetModule: '3d' })
 
   // Extract visual description from product knowledge
   const visualLines = intent.referencePromptAdditions
@@ -2108,17 +2226,49 @@ export function buildManualFluxDescription(
   }
 
   // Add ontological render mode directives
-  if (ontology.effectiveRenderMode === 'native_anime_stylized') {
+  if (ontology.effectiveRenderMode === 'hybrid_real_to_stylized' || ontology.effectiveRenderMode === 'native_anime_stylized') {
+    if (ontology.stylizedSubmode === 'cartoon_figurine' || ontology.stylizedSubmode === 'figurine_toy') {
+      parts.push(
+        'stylized 3D collectible cartoon figurine',
+        'smooth molded vinyl and painted resin toy finish',
+        'expressive stylized figurine proportions with recognizable identity',
+        'clean 3D toy silhouette',
+      )
+    } else if (ontology.stylizedSubmode === 'clay_or_plush') {
+      parts.push(
+        'tactile 3D claymation or stitched plush character aesthetic',
+        'rounded volumetric hand-crafted stylized proportions',
+        'vibrant studio lighting',
+      )
+    } else if (ontology.stylizedSubmode === 'lowpoly_voxel') {
+      parts.push(
+        'stylized low-poly faceted or cubic voxel 3D geometry',
+        'crisp geometric edges and vibrant color blocks',
+      )
+    } else if (ontology.stylizedSubmode === 'cartoon_3d') {
+      parts.push(
+        'authentic 3D cartoon character render',
+        'true-to-series cartoon proportions and iconic silhouette',
+        'vibrant saturated cartoon colors',
+        'smooth stylized 3D cartoon shading with clear volume and depth',
+      )
+    } else {
+      parts.push(
+        'authentic anime 3D character style',
+        'clean cel-shaded anime proportions',
+        'sculpted anime hair locks',
+        'smooth stylized anime skin without realistic skin pores',
+        'vivid official anime costume colors',
+      )
+    }
+  } else if (ontology.effectiveRenderMode === 'native_game_stylized') {
     parts.push(
-      'authentic anime 3D character style',
-      'clean cel-shaded anime proportions',
-      'sculpted anime hair locks',
-      'smooth stylized anime skin without realistic skin pores',
-      'vivid official anime costume colors',
+      'stylized 3D game character asset',
+      'clean sculpted stylized volumes and vibrant PBR materials',
     )
   } else if (ontology.effectiveRenderMode === 'hybrid_anime_with_real_textures') {
     parts.push(
-      'iconic anime character silhouette and canonical costume preserved',
+      'iconic character silhouette and canonical costume preserved',
       'photorealistic human skin pores and subsurface scattering override',
       'realistic physical fabric weave and material micro-detail',
     )
@@ -2202,7 +2352,7 @@ export async function analyzeThreeDIntent({
   // the whole generation forever — user sees the overlay's red "stuck"
   // warning but the bake never starts. Fallback heuristic is always
   // available so we lose nothing by abandoning the LLM call after 90s.
-  const INTENT_TIMEOUT_MS = 20_000
+  const INTENT_TIMEOUT_MS = 180_000
   const abortController = new AbortController()
   const timeoutId = setTimeout(() => abortController.abort(), INTENT_TIMEOUT_MS)
 
@@ -2244,7 +2394,7 @@ export async function analyzeThreeDIntent({
           documentContext ? `Attached context:\n${documentContext}` : '',
         ].filter(Boolean).join('\n\n'),
       },
-    ], 0.05, { signal: abortController.signal, num_predict: 512, num_ctx: 4096 })
+    ], 0.05, { signal: abortController.signal, num_predict: 4096, num_ctx: 32768 })
     clearTimeout(timeoutId)
 
     const parsed = parseIntentJson(response?.message?.content || '')

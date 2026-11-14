@@ -13,16 +13,17 @@ from .cloud import safe_extract
 from .storage import atomic_json, digest, file_hash
 
 
-def main(job_id, payload_hash):
-    work = Path("/kaggle/working")
-    root = Path("/tmp/aurora_inputs")
+def main(job_id, payload_hash, *, work=None, root=None, search_roots=None):
+    work = Path(work) if work is not None else Path("/kaggle/working")
+    root = Path(root) if root is not None else Path("/tmp/aurora_inputs")
     out = work / "aurora_export"
-    out.mkdir(exist_ok=True)
+    out.mkdir(parents=True, exist_ok=True)
     spec = None
     error = None
     try:
         root.mkdir(parents=True, exist_ok=True)
-        matches = [p for p in Path("/kaggle/input").rglob("payload.bin") if file_hash(p) == payload_hash]
+        search_roots = [Path(p) for p in search_roots] if search_roots is not None else [p for p in (Path("/tmp/aurora_embedded"), Path("/kaggle/input")) if p.exists()]
+        matches = [p for sr in search_roots for p in sr.rglob("payload.bin") if file_hash(p) == payload_hash]
         if len(matches) != 1:
             raise RuntimeError(f"Lot absent, périmé ou corrompu : {len(matches)} fichiers correspondent à l'empreinte attendue")
         safe_extract(matches[0], root)
@@ -36,6 +37,10 @@ def main(job_id, payload_hash):
                         "job_id": job_id, "payload_verified": True})
             if not torch.cuda.is_available():
                 raise RuntimeError("Kaggle n'a pas alloué de GPU")
+            return
+        if spec.get("multi_module_testbench"):
+            from .kaggle_multi_module_testbench import run_remote_kaggle_testbench_and_trainer
+            run_remote_kaggle_testbench_and_trainer(spec, root, out, job_id)
             return
         c = spec["config"]
         # Parent weights are already pinned in initial.safetensors. Never resolve
@@ -176,3 +181,17 @@ def main(job_id, payload_hash):
                     z.write(p, str(p.relative_to(out)))
         os.replace(temporary, work / "aurora_result.zip")
         print("AURORA_RESULT " + json.dumps(manifest), flush=True)
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--job-id", required=True)
+    parser.add_argument("--payload-sha256", required=True)
+    parser.add_argument("--work", type=Path, required=True)
+    parser.add_argument("--root", type=Path, required=True)
+    parser.add_argument("--search-root", type=Path, action="append", required=True)
+    args = parser.parse_args()
+    main(args.job_id, args.payload_sha256, work=args.work, root=args.root, search_roots=args.search_root)
+    receipt = json.loads((args.work / "aurora_export/result.json").read_text())
+    raise SystemExit(1 if receipt.get("error") else 0)

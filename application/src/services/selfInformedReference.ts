@@ -191,11 +191,24 @@ function classifyAddKind(prompt: string): ReferenceKind {
 
 /** Verbe d'ajout (FR + EN) pour la détection de nom propre sans cue explicite. */
 const ADD_VERB_LOOSE = /\b(?:ajout|insertion|integration|intégration|ajoute[rz]?|rajoute[rz]?|mets?|mettre|place[rz]?|pose[rz]?|incruste[rz]?|ins[eè]re[rz]?|int[èe]gre[rz]?|add|insert|put)\b/iu
-/** Mots capitalisés à ignorer (articles/pronoms en tête de phrase). */
+/** Mots capitalisés à ignorer (articles/pronoms/verbes d'action/mots de qualité ou style en tête de phrase). */
 const COMMON_CAP_STOP = new Set([
   'Le', 'La', 'Les', 'Un', 'Une', 'Des', 'Du', 'De', 'The', 'A', 'An',
-  'Mon', 'Ma', 'Mes', 'Ce', 'Cette', 'Ces', 'Il', 'Elle', 'Je', 'Tu', 'On',
-  'Photo', 'Image', 'Illustration', 'Dessin', 'Portrait', 'Scene', 'Style',
+  'Mon', 'Ma', 'Mes', 'Ce', 'Cette', 'Ces', 'Il', 'Elle', 'Je', 'Tu', 'On', 'Nous', 'Vous',
+  'Photo', 'Image', 'Illustration', 'Dessin', 'Portrait', 'Scene', 'Scène', 'Style', 'Visuel', 'Rendu', 'Render',
+  'Fais', 'Fais-moi', 'Faire', 'Crée', 'Cree', 'Créer', 'Creer', 'Création', 'Creation',
+  'Génère', 'Genere', 'Générer', 'Generer', 'Génération', 'Generation',
+  'Dessine', 'Dessiner', 'Peins', 'Peindre', 'Imagine', 'Imaginer', 'Montre', 'Montrer', 'Donne', 'Donner', 'Réalise', 'Realise',
+  'Modifie', 'Modifier', 'Modification', 'Change', 'Changer', 'Transforme', 'Transformer', 'Améliore', 'Ameliore', 'Améliorer',
+  'Ajoute', 'Ajouter', 'Rajoute', 'Enlève', 'Enleve', 'Retire', 'Retirer', 'Supprime', 'Supprimer', 'Remplace', 'Remplacer',
+  'Qualité', 'Qualite', 'Qualiter', 'Max', 'Maximum', 'Maximale', 'Précision', 'Precision', 'Pixel', 'Perfect',
+  'Ultra', 'Masterpiece', 'Chef', 'Haute', 'Résolution', 'Resolution', 'Meilleure', 'Meilleur', 'Parfait', 'Parfaite',
+  'Modèle', 'Modele', 'Renforcé', 'Renforce', 'Base', 'Entre', 'Avec', 'Sans', 'Pour', 'Dans', 'Sur', 'Sous',
+  'Paysage', 'Ville', 'Forêt', 'Foret', 'Montagne', 'Océan', 'Ocean', 'Mer', 'Plage', 'Château', 'Chateau', 'Maison',
+  'Chat', 'Chien', 'Loup', 'Dragon', 'Lion', 'Tigre', 'Cheval', 'Oiseau', 'Homme', 'Femme', 'Enfant', 'Garçon', 'Garcon', 'Fille',
+  'Guerrier', 'Chevalier', 'Samouraï', 'Samourai', 'Robot', 'Voiture', 'Moto', 'Avion', 'Vaisseau', 'Bateau',
+  'Anime', 'Manga', 'Réaliste', 'Realiste', 'Photoréaliste', 'Photorealiste', 'Cinématique', 'Cinematique', 'Aquarelle', 'Croquis', 'Cyberpunk', 'Fantasy',
+  'Create', 'Generate', 'Make', 'Draw', 'Paint', 'Show', 'High', 'Best', 'Quality',
   'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII',
 ])
 
@@ -246,7 +259,7 @@ function detectProperNounAddTarget(prompt: string): string | null {
   if (gaz) return gaz
   let rest = prompt.slice(verb.index + verb[0].length).replace(/^\s+/, '')
   rest = rest.replace(/^(?:un|une|le|la|les|des|du|de|d['’]|my|the|a|an)\s+/i, '')
-  const m = rest.match(/^([A-ZÀ-Ÿ][\p{L}'’-]+(?:\s+[A-ZÀ-Ÿ][\p{L}'’-]+){0,2})/u)
+  const m = rest.match(/^(\p{Lu}[\p{L}'’-]+(?:\s+\p{Lu}[\p{L}'’-]+){0,2})/u)
   if (!m) return null
   const name = clean(m[1]).replace(/[,.;:!?]+$/u, '')
   const first = name.split(/\s+/)[0]
@@ -260,7 +273,7 @@ function findProperNounIn(s: string): string | null {
   const gaz = findGazetteerMatch(s)
   if (gaz) return gaz
   const t = clean(s)
-  const re = /(?<![\p{L}\p{N}])([A-ZÀ-Ÿ][\p{L}'’-]+(?:\s+[A-ZÀ-Ÿ][\p{L}'’-]+){0,2})/gu
+  const re = /(?<![\p{L}\p{N}])(\p{Lu}[\p{L}'’-]+(?:\s+\p{Lu}[\p{L}'’-]+){0,2})/gu
   let m: RegExpExecArray | null
   while ((m = re.exec(t)) !== null) {
     const name = clean(m[1]).replace(/[,.;:!?]+$/u, '')
@@ -274,10 +287,15 @@ function findProperNounIn(s: string): string | null {
 const NAMED_PHRASE_RE = /\b(?:nomm[ée]e?s?|nommer|appel[ée]e?s?|named|called)\s+([^,.;!?\n]+)/iu
 
 const REPLICATION_PREFIX_RE = /^\s*(?:(?:fais[-\s]moi\s+une\s+|fais\s+une\s+)(?:r[eé]plication|reproduction|copie)\s*(?:fid[eè]le\s+)?(?:de\s+|d['’]|of\s+)?|(?:r[eé]plication|reproduction|copie)\s+(?:fid[eè]le\s+)?(?:de\s+|d['’]|of\s+)|(?:r[eé]pliqu(?:er|ez|e|ent|ait|ant|es|\u00e9|\u00e9e|\u00e9s|\u00e9es)|reprodui(?:re|s|t|sez|sent|sant)|recr[eé](?:er|ez|e|ent|ait|ant|es|\u00e9|\u00e9e|\u00e9s|\u00e9es)|dupliqu(?:er|ez|e|ent|ait|ant|es|\u00e9|\u00e9e|\u00e9s|\u00e9es)|copi(?:er|ez|e|ent|ait|ant|es|\u00e9|\u00e9e|\u00e9s|\u00e9es)|imit(?:er|ez|e|ent|ait|ant|es|\u00e9|\u00e9e|\u00e9s|\u00e9es))\s+(?:fid[eè]lement\s+)?(?:de\s+|d['’]|of\s+|le\s+|la\s+|les\s+|un\s+|une\s+)?)/iu
-const CREATION_PREFIX_RE = /^\s*(?:(?:photo|image|illustration|dessin|render|rendu|portrait|scene|sc[eè]ne|visuel)\s+(?:photo(?:r[eé]aliste|realiste)|r[eé]aliste|realiste|anime|manga|cinematic|cin[eé]matique|style\s+\w+)?\s*(?:de\s+|d['’]|of\s+)?)?/iu
-const CREATION_RELATION_STOP_RE = /\s+(?:devant|face\s+a|face\s+au|face\s+aux|a\s+cote|a\s+cot[eé]|pres\s+de|pr[eè]s\s+de|dans|sur|sous|avec|contre|inside|in\s+front\s+of|next\s+to|beside|near|with|on|under|style|au\s+style|en\s+style|,|;|\.|!|\?)/iu
+const CREATION_PREFIX_RE = /^\s*(?:(?:fais(?:[-\s]moi)?|cr[eé](?:e[rz]?|ation)|g[eé]n[eè]r(?:e[rz]?|ation)|dessine[rz]?|peins|peindre|imagine[rz]?|montre(?:[-\s]moi)?|donne(?:[-\s]moi)?|r[eé]alise[rz]?|je\s+veux|je\s+voudrais)\s+)?(?:(?:un|une|le|la|les|des|du|de\s+la|d['’])\s+)?(?:(?:photo|image|illustration|dessin|render|rendu|portrait|scene|sc[eè]ne|visuel)\s+(?:photo(?:r[eé]aliste|realiste)|r[eé]aliste|realiste|anime|manga|cinematic|cin[eé]matique|style\s+\w+)?\s*(?:de\s+|d['’]|of\s+)?)?/iu
+const CREATION_RELATION_STOP_RE = /\s+(?:devant|face\s+a|face\s+au|face\s+aux|a\s+cote|a\s+cot[eé]|pres\s+de|pr[eè]s\s+de|dans|sur|sous|avec|contre|inside|in\s+front\s+of|next\s+to|beside|near|with|on|under|style|au\s+style|en\s+style|en\s+qualit[eé]|qualit[eé]\s+max|max\s+qualit[eé]|pr[eé]cision\s+max|pixel\s+perfect|en\s+8k|en\s+4k|en\s+16k|,|;|\.|!|\?)/iu
+const META_QUALITY_CLAUSE_RE = /\b(?:(?:en|avec|de|au)\s+)?(?:qualit[eé]r?\s*(?:max(?:imale|imum)?|ultime|parfaite|extr[eê]me)|max(?:imum|imale)?\s*(?:de\s*)?qualit[eé]r?|pr[eé]cision\s*(?:max(?:imale|imum)?|nanom[eé]trique|extr[eê]me)|pixel[\s-]?perfect|ultra[\s-]?(?:hd|pr[eé]cis|net|d[eé]taill[eé])|8k|16k|4k\s*uhd|masterpiece|chef[\s-]?d['’]?(?:oeuvre|œuvre)|meilleure?\s*qualit[eé]r?)\b/giu
 const CREATION_OBJECT_CUE_RE = /\b(?:voiture|car|moto|motorcycle|telephone|phone|iphone|smartphone|ordinateur|computer|laptop|console|camera|cam[eé]ra|casque|headset|shoe|sneaker|chaussure|product|produit|objet|logo|marque|brand|model|modele|mod[eè]le|tesla|gpu|cpu|motherboard|carte\s+mere|carte\s+m[eè]re)\b/iu
 const CREATION_PLACE_CUE_RE = /\b(?:tour|tower|ville|city|pays|country|mont|mount|mountain|parc|park|palais|palace|chateau|ch[aâ]teau|eglise|[eé]glise|cathedrale|cath[eé]drale|temple|plage|beach|foret|for[eê]t|rue|street)\b/iu
+
+function stripMetaQualityClauses(raw: string): string {
+  return clean(raw.replace(META_QUALITY_CLAUSE_RE, ' '))
+}
 
 function properNameCandidateFromFragment(fragment: string): string | null {
   const gaz = findGazetteerMatch(fragment)
@@ -287,7 +305,7 @@ function properNameCandidateFromFragment(fragment: string): string | null {
   const stop = trimmed.search(CREATION_RELATION_STOP_RE)
   const head = clean((stop > 0 ? trimmed.slice(0, stop) : trimmed)
     .replace(/^(?:un|une|le|la|les|des|du|de|d['’]|the|a|an)\s+/iu, ''))
-  const match = head.match(/^([A-ZÀ-Ÿ][\p{L}0-9'’.-]+(?:\s+[A-ZÀ-Ÿ0-9][\p{L}0-9'’.-]+){0,3})/u)
+  const match = head.match(/^(\p{Lu}[\p{L}0-9'’.-]+(?:\s+[\p{Lu}0-9][\p{L}0-9'’.-]+){0,3})/u)
   if (!match?.[1]) return null
   const name = clean(match[1]).replace(/[,.;:!?]+$/u, '')
   const first = name.split(/\s+/)[0]
@@ -324,7 +342,7 @@ function detectPrimaryCreationSubject(prompt: string, intent: ParsedImageIntent 
 function titleCaseLoose(value: string): string {
   const cleaned = clean(value)
   if (!cleaned) return ''
-  if (/[A-ZÀ-Ÿ]/u.test(cleaned)) return cleaned
+  if (/\p{Lu}/u.test(cleaned)) return cleaned
   return cleaned.replace(/\b([\p{L}])([\p{L}'’-]*)/gu, (_m, first: string, rest: string) => `${first.toUpperCase()}${rest.toLowerCase()}`)
 }
 
@@ -364,7 +382,7 @@ export function detectSubjectToResearch(
   prompt: string,
   intent: ParsedImageIntent | null | undefined,
 ): SubjectToResearch | null {
-  const text = clean(prompt)
+  const text = stripMetaQualityClauses(prompt)
   if (!text) return null
 
   const primary = detectPrimaryCreationSubject(text, intent)
@@ -435,7 +453,7 @@ export function detectSubjectToResearch(
   // Garde-fou : un VRAI nom propre (« The Amazing Digital Circus », « Mario »,
   // un acronyme) — pas un simple multi-mot générique (« à sa place de façon
   // cohérente » ne doit PAS être pris pour un lieu nommé).
-  const looksProperNamed = (name: string) => /[A-ZÀ-Ÿ]/.test(name) || /\b[A-Z]{2,}\b/.test(name)
+  const looksProperNamed = (name: string) => /\p{Lu}/u.test(name) || /\b[A-Z]{2,}\b/.test(name)
   const mode = intent?.editMode
   const sceneEligible = mode === 'scene_transform' || mode === 'background_change' || /\b(d[ée]cor|fond|arri[èe]re[-\s]?plan|environnement|cirque|univers|monde|background|scene|world)\b/i.test(text)
   if (sceneEligible) {

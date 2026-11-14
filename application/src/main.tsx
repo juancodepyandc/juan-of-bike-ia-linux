@@ -11,6 +11,7 @@ import { installTheme } from './utils/theme.ts'
 import { installUiSkin, readUiSkin } from './utils/uiSkin.ts'
 import { installQuickNav } from './utils/quickNav.ts'
 import { installBuildRecovery, isChunkError, recoverFromStaleBuild } from './utils/buildRecovery.ts'
+import { installPixelPerfectEngine } from './services/pixelPerfectEngine.ts'
 import './styles/globals.css'
 // v81q: Aurora Editorial design tokens — scoped to html[data-ui-skin="aurora_v1"]
 // so they only apply when the user picks Editorial in Settings → UI complète.
@@ -54,6 +55,7 @@ import './styles/aurora-skin.css'
 installDeviceAttribute()
 installTheme()
 installUiSkin()
+installPixelPerfectEngine()
 // v82k0 : load manga-theme.css UNIQUEMENT si l'utilisateur est sur le
 // skin manga. Pour aurora_v1 / aurora_v3 le navigateur ne télécharge
 // même pas le chunk (60KB+ de !important sur tokens paper/ink + Bangers

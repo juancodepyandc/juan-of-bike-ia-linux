@@ -19,7 +19,7 @@ FORMATS = {".png", ".jpg", ".jpeg", ".webp"}
 
 
 def folders(module):
-    root = QUEUE_ROOT / {"3d": "3D", "image": "Images", "code": "Code", "audio": "Voix", "conversation": "Conversation", "cyber": "Cyber", "cowork": "Cowork", "learning": "Apprentissage", "video": "Video", "animation": "Animation"}[module]
+    root = QUEUE_ROOT / {"3d": "3D", "image": "Images", "code": "Code", "audio": "Voix", "conversation": "Conversation", "cyber": "Cyber", "cowork": "Cowork", "learning": "Apprentissage", "business": "Business", "drawing": "Dessin", "simulator": "Simulateur", "video": "Video", "animation": "Animation"}[module]
     for name in ("A_TRAITER", "VALIDES", "REAPPROVISIONNEMENT"):
         (root/name).mkdir(parents=True, exist_ok=True)
     return root

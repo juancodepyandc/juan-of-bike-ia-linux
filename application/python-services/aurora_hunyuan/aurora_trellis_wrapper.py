@@ -38,6 +38,7 @@ _TRELLIS_CANDIDATES = [
     "/home/juan/.local/share/auroraia/external/TRELLIS.2",
     os.path.expanduser("~/.local/share/auroraia/external/TRELLIS.2"),
     # aurora_hunyuan/ -> python-services/ -> application/ -> repository root
+    str(Path(__file__).resolve().parents[3] / "modele" / "external" / "TRELLIS.2"),
     str(Path(__file__).resolve().parents[3] / "external" / "TRELLIS.2"),
 ]
 TRELLIS_ROOT = next((Path(p) for p in _TRELLIS_CANDIDATES if p and Path(p).exists()), Path("/nonexistent"))
@@ -121,7 +122,7 @@ def import_error() -> str | None:
 _PIPE_CACHE = None
 
 
-def _sync_trellis_adapter(pipe) -> None:
+def _sync_trellis_adapter(pipe, prompt_text: str | None = None, style_hint: str | None = None) -> None:
     try:
         from pathlib import Path as _Path
         import sys as _sys
@@ -138,28 +139,38 @@ def _sync_trellis_adapter(pipe) -> None:
                 existing.enabled = False
                 log.info("[trellis2] Modele de Base (Intouchable) actif — adaptateur renforce desactive")
         else:
-            if existing is not None:
-                existing.enabled = True
-                log.info("[trellis2] Modele Renforce (+Gains) actif : %s", getattr(flow_model, "_aurora_validated_name", "v1"))
-            else:
-                _trained = attach_validated(flow_model, "3d", MODEL_ID)
-                if _trained:
-                    log.info("[trellis2] Modele Renforce (+Gains) charge : %s", _trained["name"])
+            _trained = attach_validated(
+                flow_model,
+                "3d",
+                MODEL_ID,
+                prompt_text=prompt_text or os.environ.get("AURORA_3D_PROMPT"),
+                style_hint=style_hint or os.environ.get("AURORA_3D_STYLE"),
+            )
+            if _trained:
+                log.info(
+                    "[trellis2] Modele Renforce (+Gains) actif : %s [role=%s]",
+                    _trained["name"],
+                    _trained.get("specialist_role", "core"),
+                )
     except Exception as _exc:
         log.warning("[trellis2] sync adapter warning: %s", _exc)
 
 
-def _load_pipe():
+def _load_pipe(prompt_text: str | None = None, style_hint: str | None = None):
     global _PIPE_CACHE
-    if _PIPE_CACHE is not None:
-        _sync_trellis_adapter(_PIPE_CACHE)
+    if _PIPE_CACHE is not None and getattr(_PIPE_CACHE, "models", None):
+        try:
+            _PIPE_CACHE.to(torch.device("cuda"))
+        except Exception:
+            pass
+        _sync_trellis_adapter(_PIPE_CACHE, prompt_text=prompt_text, style_hint=style_hint)
         return _PIPE_CACHE
     from trellis2.pipelines import Trellis2ImageTo3DPipeline
     log.info("[trellis2] loading Trellis2ImageTo3DPipeline from %s", MODEL_ID)
     pipe = Trellis2ImageTo3DPipeline.from_pretrained(MODEL_ID)
     pipe.low_vram = True
     pipe.to(torch.device("cuda"))
-    _sync_trellis_adapter(pipe)
+    _sync_trellis_adapter(pipe, prompt_text=prompt_text, style_hint=style_hint)
 
     # Etape A (gratuit) : liberer les latents (shape_slat/tex_slat) AVANT fill_holes/CuMesh
     # (le pic OOM du 1536) -> rend ~1-3 Go juste avant l'extraction. Sur des monkeypatch de
@@ -195,12 +206,11 @@ def _load_pipe():
     return pipe
 
 
-# Qualite MAX par defaut : 1536_cascade = geometrie la plus fine (rayons/cables/cheveux fins
-# mieux resolus, moins d'emmelement). Repli auto vers 1024_cascade/512 si OOM (l'utilisateur
-# veut la precision max meme si plus lent). Options: 512, 1024, 1024_cascade, 1536_cascade.
-QUALITY = os.environ.get("AURORA_TRELLIS2_QUALITY", "1536_cascade")
-# Pas de diffusion (raffinement). Plus haut = plus precis, plus lent. Defaut TRELLIS ~12-25.
-STEPS = int(os.environ.get("AURORA_TRELLIS2_STEPS", "50"))
+# Qualite MAX par defaut : 1024_cascade (equilibre precision geometrique / VRAM 16 Go).
+# Repli auto vers 1024/512 si OOM. Options: 512, 1024, 1024_cascade, 1536_cascade.
+QUALITY = os.environ.get("AURORA_TRELLIS2_QUALITY", "1024_cascade")
+# Pas d'integration Flow-Matching Euler (calibre a 12-16 pas dans pipeline.json de TRELLIS.2-4B).
+STEPS = int(os.environ.get("AURORA_TRELLIS2_STEPS", "16"))
 # Echelle de repli sur OOM (garde la meilleure resolution qui tient reellement en VRAM).
 _QUALITY_LADDER = ["1536_cascade", "1024_cascade", "1024", "512"]
 
@@ -274,28 +284,43 @@ def _albedo_de_secours(glb_path: str) -> bool:
         return False
 
 
-def _auto_expose_glb_texture(glb_path: str, target_p50: float = 0.30, floor_p50: float = 0.16) -> bool:
+def _auto_expose_glb_texture(glb_path: str, target_p50: float = 0.26, floor_p50: float = 0.07) -> bool:
     try:
+        import io as _io
         import numpy as np
         from PIL import Image
         Image.MAX_IMAGE_PIXELS = None
-        import trimesh
-        m = trimesh.load(glb_path, force="mesh", process=False)
-        mat = getattr(m.visual, "material", None)
-        img = getattr(mat, "baseColorTexture", None) if mat is not None else None
-        if img is None:
+        _ps = str(Path(__file__).resolve().parent.parent)
+        if _ps not in sys.path:
+            sys.path.insert(0, _ps)
+        import glb_io
+
+        j, blob = glb_io.load(glb_path)
+        mats = j.get("materials") or []
+        if not mats:
             return False
-        arr = np.asarray(img.convert("RGB"), dtype=np.float32) / 255.0
+        tex = (mats[0].get("pbrMetallicRoughness") or {}).get("baseColorTexture")
+        if not tex:
+            return False
+        idx_img = j["textures"][tex["index"]]["source"]
+        img = Image.open(_io.BytesIO(glb_io.image_bytes(j, blob, idx_img))).convert("RGB")
+        del j, blob
+        arr = np.asarray(img, dtype=np.float32) / 255.0
         lum = 0.2126 * arr[..., 0] + 0.7152 * arr[..., 1] + 0.0722 * arr[..., 2]
-        p50 = float(np.percentile(lum, 50))
-        if p50 >= floor_p50:
+        valid_lum = lum[lum > 0.015]
+        if valid_lum.size < 100:
+            return False
+        p50 = float(np.percentile(valid_lum, 50))
+        p90 = float(np.percentile(valid_lum, 90))
+        # Ne jamais surexposer un personnage portant un vêtement noir si son visage/détails (p90) sont déjà bien exposés
+        if p50 >= floor_p50 or p90 >= 0.28:
             return False
         gamma = np.log(max(target_p50, 1e-3)) / np.log(max(p50, 1e-3))
-        gamma = float(np.clip(gamma, 0.45, 1.0))
+        gamma = float(np.clip(gamma, 0.55, 1.0))
         arr = np.power(arr, gamma)
-        mat.baseColorTexture = Image.fromarray((np.clip(arr, 0, 1) * 255).astype(np.uint8))
-        m.export(glb_path)
-        return True
+        buf = _io.BytesIO()
+        Image.fromarray((np.clip(arr, 0, 1) * 255).astype(np.uint8)).save(buf, format="PNG", compress_level=3)
+        return _remplacer_image_glb(glb_path, idx_img, buf.getvalue())
     except Exception:
         return False
 
@@ -428,10 +453,236 @@ def _upscale_glb_texture(glb_path: str, factor: int = 2, tile: int = 768) -> boo
         return False
 
 
+def _try_generate_multi_entity_glb(
+    image,
+    image_path: Path | str,
+    out_glb: Path | str,
+    *,
+    texture_size: int,
+    decimation_target: int,
+    pipeline_type: str,
+    seed: int,
+    prompt: str | None,
+    style: str | None,
+) -> dict | None:
+    """Détecte automatiquement une scène multi-entités (2+ personnages séparés comme Zig & Sharko)
+    et reconstruit chaque entité à pleine résolution `1024_cascade` avant de les assembler en 3D
+    avec leur échelle et positionnement relatifs exacts et un atlas UV unifié."""
+    try:
+        import cv2
+        import numpy as np
+        import trimesh
+        from PIL import Image
+
+        if "A" not in image.getbands():
+            return None
+        arr = np.asarray(image.convert("RGBA"), dtype=np.uint8)
+        h_im, w_im = arr.shape[:2]
+        mask = (arr[..., 3] > 64).astype(np.uint8)
+        n_lbl, lbl_map, stats, cents = cv2.connectedComponentsWithStats(mask, connectivity=8)
+        if n_lbl <= 2:
+            return None
+        max_area = float(stats[1:, cv2.CC_STAT_AREA].max())
+        major = []
+        for idx in range(1, n_lbl):
+            x, y, w, h, area = stats[idx]
+            if area >= 0.12 * max_area and w >= 0.12 * w_im and h >= 0.18 * h_im:
+                major.append((idx, int(x), int(y), int(w), int(h), int(area), float(cents[idx][0]), float(cents[idx][1])))
+        if len(major) < 2 or len(major) > 3:
+            return None
+        major.sort(key=lambda item: item[6])
+        if abs(major[-1][6] - major[0][6]) < 0.22 * w_im:
+            return None
+
+        log.info("[trellis2] scene multi-entites detectee (%d sujets) -> generation haute resolution par entite", len(major))
+        max_h_2d = float(max(m[4] for m in major))
+        all_x0 = min(m[1] for m in major)
+        all_x1 = max(m[1] + m[3] for m in major)
+        all_y1 = max(m[2] + m[4] for m in major)
+        span_w_2d = max(float(all_x1 - all_x0), 1.0)
+
+        entity_meshes = []
+        entity_texs = []
+        peak_vram = 0.0
+        used_q = pipeline_type
+
+        for e_i, (c_id, x, y, w, h, _area, cx, _cy) in enumerate(major):
+            e_arr = arr.copy()
+            e_mask = lbl_map == c_id
+            e_arr[~e_mask, 3] = 0
+            crop = Image.fromarray(e_arr[y:y + h, x:x + w])
+            cote = max(1024, int(round(max(w, h) / 0.84)))
+            canvas = Image.new("RGBA", (cote, cote), (0, 0, 0, 0))
+            scale_c = min(int(round(cote * 0.84)) / max(w, h), 1.5)
+            nw = max(1, int(round(w * scale_c)))
+            nh = max(1, int(round(h * scale_c)))
+            crop_r = crop.resize((nw, nh), Image.Resampling.LANCZOS) if scale_c != 1.0 else crop
+            canvas.paste(crop_r, ((cote - nw) // 2, (cote - nh) // 2))
+
+            tmp_img = f"{out_glb}.entity_{e_i}.png"
+            tmp_glb = f"{out_glb}.entity_{e_i}.glb"
+            canvas.save(tmp_img)
+            r_ent = generate_glb(
+                tmp_img,
+                tmp_glb,
+                texture_size=min(texture_size, 4096),
+                decimation_target=max(250_000, decimation_target // len(major)),
+                pipeline_type=pipeline_type,
+                seed=seed + e_i * 7,
+                prompt=prompt or str(image_path),
+                style=style,
+                _single_entity=True,
+            )
+            try:
+                os.remove(tmp_img)
+            except OSError:
+                pass
+            if not r_ent.get("ok") or not os.path.isfile(tmp_glb):
+                return None
+            peak_vram = max(peak_vram, float(r_ent.get("peak_vram_gb", 0.0)))
+            used_q = r_ent.get("quality", used_q)
+
+            m_e = trimesh.load(tmp_glb, force="mesh", process=False)
+            try:
+                os.remove(tmp_glb)
+                if os.path.isfile(tmp_glb.replace(".glb", ".ply")):
+                    os.remove(tmp_glb.replace(".glb", ".ply"))
+            except OSError:
+                pass
+
+            v_e = np.asarray(m_e.vertices, dtype=np.float64).copy()
+            vy_min, vy_max = float(v_e[:, 1].min()), float(v_e[:, 1].max())
+            vh_cur = max(vy_max - vy_min, 1e-6)
+            target_h = 0.86 * (float(h) / max_h_2d)
+            s_factor = target_h / vh_cur
+            v_e *= s_factor
+            vy_min_s = float(v_e[:, 1].min())
+            y_bot_offset = ((all_y1 - (y + h)) / max_h_2d) * 0.86
+            v_e[:, 1] += (-0.43 + y_bot_offset) - vy_min_s
+            vx_mid = 0.5 * (float(v_e[:, 0].min()) + float(v_e[:, 0].max()))
+            rel_x = ((cx - 0.5 * (all_x0 + all_x1)) / span_w_2d) * 0.92
+            v_e[:, 0] += rel_x - vx_mid
+            m_e.vertices = v_e
+
+            mat_e = getattr(m_e.visual, "material", None)
+            bct_e = getattr(mat_e, "baseColorTexture", None) if mat_e is not None else None
+            mrt_e = getattr(mat_e, "metallicRoughnessTexture", None) if mat_e is not None else None
+            nrm_e = getattr(mat_e, "normalTexture", None) if mat_e is not None else None
+            tex_im = bct_e.convert("RGB") if bct_e is not None else Image.new("RGB", (2048, 2048), (200, 200, 200))
+            mr_im = mrt_e.convert("RGB") if mrt_e is not None else Image.new("RGB", tex_im.size, (255, 175, 0))
+            nr_im = nrm_e.convert("RGB") if nrm_e is not None else Image.new("RGB", tex_im.size, (128, 128, 255))
+            entity_meshes.append(m_e)
+            entity_texs.append((tex_im, mr_im, nr_im))
+
+        # Garantie d'espacement X sans collision entre les entités
+        if len(entity_meshes) == 2:
+            v0 = np.asarray(entity_meshes[0].vertices)
+            v1 = np.asarray(entity_meshes[1].vertices)
+            overlap = float(v0[:, 0].max()) - float(v1[:, 0].min()) + 0.04
+            if overlap > 0:
+                v0[:, 0] -= 0.5 * overlap
+                v1[:, 0] += 0.5 * overlap
+                entity_meshes[0].vertices = v0
+                entity_meshes[1].vertices = v1
+
+        n_ent = len(entity_meshes)
+        tile_h = max(im_t[0].height for im_t in entity_texs)
+        tile_w = max(im_t[0].width for im_t in entity_texs)
+        atlas = Image.new("RGB", (tile_w * n_ent, tile_h))
+        atlas_mr = Image.new("RGB", (tile_w * n_ent, tile_h), (255, 175, 0))
+        atlas_nrm = Image.new("RGB", (tile_w * n_ent, tile_h), (128, 128, 255))
+        all_verts = []
+        all_faces = []
+        all_uvs = []
+        v_offset = 0
+        for idx_e, (m_e, (im_t, im_mr, im_nr)) in enumerate(zip(entity_meshes, entity_texs)):
+            if im_t.size != (tile_w, tile_h):
+                im_t = im_t.resize((tile_w, tile_h), Image.Resampling.LANCZOS)
+            if im_mr.size != (tile_w, tile_h):
+                im_mr = im_mr.resize((tile_w, tile_h), Image.Resampling.BILINEAR)
+            if im_nr.size != (tile_w, tile_h):
+                im_nr = im_nr.resize((tile_w, tile_h), Image.Resampling.BILINEAR)
+            atlas.paste(im_t, (idx_e * tile_w, 0))
+            atlas_mr.paste(im_mr, (idx_e * tile_w, 0))
+            atlas_nrm.paste(im_nr, (idx_e * tile_w, 0))
+            v_e = np.asarray(m_e.vertices, dtype=np.float64)
+            f_e = np.asarray(m_e.faces, dtype=np.int64) + v_offset
+            uv_e = np.asarray(m_e.visual.uv, dtype=np.float64).copy()
+            uv_e[:, 0] = (np.clip(uv_e[:, 0], 0.0, 1.0) + idx_e) / float(n_ent)
+            all_verts.append(v_e)
+            all_faces.append(f_e)
+            all_uvs.append(uv_e)
+            v_offset += len(v_e)
+
+        comb_v = np.vstack(all_verts)
+        comb_f = np.vstack(all_faces)
+        comb_uv = np.vstack(all_uvs)
+        vmin = comb_v.min(axis=0)
+        vmax = comb_v.max(axis=0)
+        vcenter = 0.5 * (vmin + vmax)
+        vspan = max(float((vmax - vmin).max()), 1e-6)
+        comb_v = (comb_v - vcenter) * (0.95 / vspan)
+
+        mat_comb = trimesh.visual.material.PBRMaterial(
+            baseColorTexture=atlas,
+            metallicRoughnessTexture=atlas_mr,
+            normalTexture=atlas_nrm,
+            metallicFactor=1.0,
+            roughnessFactor=1.0,
+        )
+        vis_comb = trimesh.visual.TextureVisuals(uv=comb_uv, material=mat_comb)
+        comb_mesh = trimesh.Trimesh(vertices=comb_v, faces=comb_f, visual=vis_comb, process=False)
+        out_glb_str = str(out_glb)
+        _opt_meta_c = None
+        try:
+            _ps_c = str(Path(__file__).resolve().parent.parent)
+            if _ps_c not in sys.path:
+                sys.path.insert(0, _ps_c)
+            from pbr_cartography import (
+                _prune_disconnected_micro_crumbs as _prune_c,
+                resolve_pbr_optical_profile as _res_prof_c,
+                inject_gltf_optical_extensions as _inj_opt,
+            )
+            _prune_c(comb_mesh)
+            _ctx_str_c = f"{image_path} {out_glb} {prompt or ''} {style or ''}"
+            _opt_meta_c = _res_prof_c(_ctx_str_c)
+        except Exception as _exc_c:
+            log.warning("[trellis2] multi-entity pbr_cartography warning: %r", _exc_c)
+        comb_mesh.export(out_glb_str)
+        if _opt_meta_c:
+            try:
+                _inj_opt(out_glb_str, _opt_meta_c)
+            except Exception:
+                pass
+        try:
+            out_ply = out_glb_str.replace(".glb", ".ply")
+            ply_m = comb_mesh.copy()
+            if hasattr(ply_m.visual, "to_color"):
+                ply_m.visual = ply_m.visual.to_color()
+            ply_m.export(out_ply)
+        except Exception:
+            pass
+        return {
+            "ok": True,
+            "out_glb": out_glb_str,
+            "faces": int(len(comb_f)),
+            "verts": int(len(comb_v)),
+            "peak_vram_gb": round(peak_vram, 2),
+            "quality": used_q,
+            "texture_size": atlas.width,
+            "multi_entity_count": n_ent,
+        }
+    except Exception as _me_exc:
+        log.warning("[trellis2] multi-entity fallback sur generation simple: %r", _me_exc)
+        return None
+
+
 def generate_glb(image_path: Path | str, out_glb: Path | str,
-                  *, texture_size: int | None = None, decimation_target: int = 2_000_000,
+                  *, texture_size: int | None = None, decimation_target: int = 500_000,
                   pipeline_type: str | None = None, seed: int = 1,
-                  extra_views: list | None = None) -> dict:
+                  extra_views: list | None = None,
+                  prompt: str | None = None, style: str | None = None,
+                  _single_entity: bool = False) -> dict:
     """Run TRELLIS.2 image -> 3D (geometrie coherente + PBR) et exporte un GLB.
     Returns {ok, out_glb, faces, verts, peak_vram_gb, quality, error?}. Never raises."""
     if not is_available():
@@ -453,25 +704,86 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
             pass
 
         ptype = pipeline_type or QUALITY
+        prompt = prompt or os.environ.get("AURORA_3D_PROMPT") or ""
+        style = style or os.environ.get("AURORA_3D_STYLE") or ""
         # Texture 8192 NATIF (le bake to_glb 16384 OOM sur 16 Go: manque ~4 Go). Le vrai 16K
         # est obtenu ensuite par upscale RealESRGAN x2 en tuiles (faible VRAM). Configurable.
         if texture_size is None:
-            texture_size = int(os.environ.get("AURORA_TRELLIS2_TEXTURE", "8192"))
-        pipe = _load_pipe()
+            texture_size = int(os.environ.get("AURORA_TRELLIS2_TEXTURE", "4096"))
+        pipe = _load_pipe(
+            prompt_text=prompt or str(image_path),
+            style_hint=style,
+        )
         def _ouvrir(pth):
-            # 31/07 (recherche, meme cause deja payee cote MV-Adapter): en
-            # convertissant en RGB on jetait l'alpha du matting amont — le
-            # preprocess vendor re-detourait A L'AVEUGLE (cheveux manges,
-            # silhouette fausse). Un alpha REEL (non uniforme) est conserve.
             im = Image.open(str(pth))
+            has_real_alpha = False
             if "A" in im.getbands():
                 _a = im.getchannel("A")
                 _mn, _mx = _a.getextrema()
                 if _mx - _mn > 8:
-                    return im.convert("RGBA")
-            return im.convert("RGB")
+                    has_real_alpha = True
+            if has_real_alpha:
+                rgba_im = im.convert("RGBA")
+            elif getattr(pipe, "rembg_model", None) is not None:
+                try:
+                    if getattr(pipe, "low_vram", False):
+                        pipe.rembg_model.to(pipe.device)
+                    rgba_im = pipe.rembg_model(im.convert("RGB"))
+                    if getattr(pipe, "low_vram", False):
+                        pipe.rembg_model.cpu()
+                except Exception:
+                    return im.convert("RGB")
+            else:
+                return im.convert("RGB")
+            try:
+                import cv2 as _cv_o
+                import numpy as _np_o
+                _arr_o = _np_o.asarray(rgba_im.convert("RGBA"), dtype=_np_o.uint8).copy()
+                _bin_o = (_arr_o[..., 3] > 15).astype(_np_o.uint8)
+                _nl, _lbl, _st, _ = _cv_o.connectedComponentsWithStats(_bin_o, connectivity=8)
+                if _nl > 2:
+                    _max_a = float(_st[1:, _cv_o.CC_STAT_AREA].max())
+                    for _ci in range(1, _nl):
+                        _ca = float(_st[_ci, _cv_o.CC_STAT_AREA])
+                        _cw = float(_st[_ci, _cv_o.CC_STAT_WIDTH])
+                        _ch = float(_st[_ci, _cv_o.CC_STAT_HEIGHT])
+                        if _ca < 0.015 * _max_a or (_cw > 3.2 * _ch and _ca < 0.12 * _max_a):
+                            _arr_o[_lbl == _ci, 3] = 0
+                _fg_o = _arr_o[..., 3] > 128
+                _dist_o = _cv_o.distanceTransform(_fg_o.astype(_np_o.uint8), _cv_o.DIST_L2, 5)
+                _val_in = _fg_o & (_dist_o > 2.0) & (_arr_o[..., 3] >= 240)
+                if int(_val_in.sum()) > 500:
+                    _, _v_lbl = _cv_o.distanceTransformWithLabels(
+                        (~_val_in).astype(_np_o.uint8), _cv_o.DIST_L2, 5, labelType=_cv_o.DIST_LABEL_PIXEL
+                    )
+                    _fl_v = _np_o.flatnonzero(_val_in.ravel())
+                    _lut_o = _np_o.zeros(int(_v_lbl.max()) + 1, dtype=_np_o.int64)
+                    _lut_o[_v_lbl.ravel()[_fl_v]] = _fl_v
+                    _rgb_o = _arr_o[..., :3]
+                    _vor_o = _rgb_o.reshape(-1, 3)[_lut_o[_v_lbl.ravel()]].reshape(_rgb_o.shape)
+                    _rim_o = (_arr_o[..., 3] > 0) & (_arr_o[..., 3] < 240) & (_dist_o <= 2.5)
+                    _rgb_o[_rim_o] = _vor_o[_rim_o]
+                    _arr_o[..., :3] = _rgb_o
+                return Image.fromarray(_arr_o)
+            except Exception:
+                return rgba_im
         image = _ouvrir(image_path)
+        if not _single_entity and not extra_views and os.environ.get("AURORA_TRELLIS2_MULTI_ENTITY", "1") == "1":
+            _multi_res = _try_generate_multi_entity_glb(
+                image,
+                image_path,
+                out_glb,
+                texture_size=int(texture_size),
+                decimation_target=int(decimation_target),
+                pipeline_type=ptype,
+                seed=seed,
+                prompt=prompt,
+                style=style,
+            )
+            if _multi_res is not None and _multi_res.get("ok"):
+                return _multi_res
         run_input = image
+        shape_input = None
         if extra_views:
             vs = []
             for _v in extra_views:
@@ -497,13 +809,14 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
                 torch.cuda.empty_cache()
                 mesh = pipe.run(
                     run_input, seed=seed, pipeline_type=_q,
+                    shape_image=shape_input,
                     max_num_tokens=int(os.environ.get("AURORA_TRELLIS2_MAXTOK", "49152")),
                     sparse_structure_sampler_params={"steps": STEPS,
-                        # 27/07: 8.5 (usine 7.5) = OVERSHOOT CFG -> surfaces bosselees prises
-                        # pour du detail. Le detail vient de la resolution, pas du CFG.
                         "guidance_strength": float(os.environ.get("AURORA_TRELLIS2_SS_CFG", "7.5"))},
-                    shape_slat_sampler_params={"steps": STEPS},
-                    tex_slat_sampler_params={"steps": STEPS},
+                    shape_slat_sampler_params={"steps": STEPS,
+                        "guidance_strength": float(os.environ.get("AURORA_TRELLIS2_SHAPE_CFG", "7.5"))},
+                    tex_slat_sampler_params={"steps": STEPS,
+                        "guidance_strength": float(os.environ.get("AURORA_TRELLIS2_TEX_CFG", "2.0"))},
                 )[0]
                 used_q = _q
                 break
@@ -521,7 +834,7 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
         ptype = used_q
         mesh.simplify(16_777_216)  # limite nvdiffrast
 
-        # Offload pipeline models to CPU to release 6.5+ GB VRAM before to_glb rasterization/baking
+        # Move pipeline models from GPU VRAM to CPU RAM before to_glb rasterization/baking
         try:
             if hasattr(pipe, "models") and isinstance(pipe.models, dict):
                 for m_name, m_obj in pipe.models.items():
@@ -536,16 +849,6 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
         except Exception:  # noqa: BLE001
             pass
 
-        # LE DECOUPAGE EN ILOTS UV EST PARAMETRABLE ET N'ETAIT JAMAIS TRANSMIS.
-        # Mesures du 29/08 sur le personnage, 300 k faces, pour lever le doute:
-        # le regroupement conique ne produit que 175 ilots, et c'est l'etage
-        # xatlas du depliage qui les refait en 7 277. Ni les reglages coniques
-        # (les defauts de la bibliotheque, refine=100/global=3, donnent 309 ilots
-        # soit PLUS que les 175 actuels) ni ceux de xatlas (7 124 a 7 637 selon
-        # les poids) ne deplacent ce plafond: la fragmentation tient a la surface
-        # elle-meme, bosselee par le Marching Cubes. Les reglages restent donc
-        # exposes — pour pouvoir remesurer sans reediter du code — mais leurs
-        # valeurs par defaut sont celles qui ont gagne la mesure, pas un pari.
         import numpy as np
 
         _uv_decoupe = {
@@ -559,9 +862,9 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
                 os.environ.get("AURORA_TRELLIS2_UV_SMOOTH", "1")),
         }
 
-        # Export to_glb (remesh + bake texture) : CuMesh / nvdiffrast rasterization
+        # Export to_glb (remesh Dual Contouring GPU + bake texture) : CuMesh / nvdiffrast rasterization
         _glb_ladder = [(int(texture_size), int(decimation_target)),
-                       (4096, 1_000_000), (2048, 500_000), (1024, 250_000)]
+                       (4096, 500_000), (2048, 350_000), (1024, 250_000)]
         _glb_ladder = [(t, d) for (t, d) in _glb_ladder if t <= max(1024, int(texture_size))]
         glb = None
         for _ts, _dt in _glb_ladder:
@@ -575,20 +878,16 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
                     aabb=[[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]],
                     decimation_target=_dt, texture_size=_ts,
                     **_uv_decoupe,
-                    remesh=(os.environ.get("AURORA_TRELLIS2_REMESH", "0") == "1"), remesh_band=1,
-                    remesh_project=float(os.environ.get("AURORA_TRELLIS2_REMESH_PROJECT", "0.9")),
+                    remesh=(os.environ.get("AURORA_TRELLIS2_REMESH", "1") == "1"), remesh_band=1,
+                    remesh_project=float(os.environ.get("AURORA_TRELLIS2_REMESH_PROJECT", "0.5")),
                     verbose=False,
                 )
                 texture_size = _ts
                 break
             except Exception as _ge:  # noqa: BLE001
-                _err_str = str(_ge).lower()
-                if "out of memory" in _err_str or "oom" in _err_str or "cuda" in _err_str:
-                    import gc
-                    gc.collect()
-                    torch.cuda.empty_cache()
-                    continue
-                # If remesh_project failed, retry with remesh=False fallback before giving up
+                import gc
+                gc.collect()
+                torch.cuda.empty_cache()
                 try:
                     glb = o_voxel.postprocess.to_glb(
                         vertices=mesh.vertices, faces=mesh.faces, attr_volume=mesh.attrs,
@@ -601,11 +900,50 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
                     texture_size = _ts
                     break
                 except Exception:
-                    pass
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                    continue
+        try:
+            del mesh
+            import gc as _gc_m
+            _gc_m.collect()
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
         if glb is None:
             return {"ok": False, "error": "to_glb OOM a tous les paliers texture"}
+        _opt_meta = None
+        if True:
+            try:
+                _ps_pbr = str(Path(__file__).resolve().parent.parent)
+                if _ps_pbr not in sys.path:
+                    sys.path.insert(0, _ps_pbr)
+                from pbr_cartography import enhance_mesh_and_pbr_cartography as _enhance_pbr
+                _ctx_str = f"{image_path} {out_glb} {prompt or ''} {style or ''}"
+                _opt_meta = _enhance_pbr(glb, image, prompt_context=_ctx_str)
+            except Exception as _pbr_exc:
+                log.warning("[trellis2] pbr_cartography warning: %r", _pbr_exc)
         out_glb = str(out_glb)
         glb.export(out_glb)
+        if _opt_meta:
+            try:
+                _ps_pbr = str(Path(__file__).resolve().parent.parent)
+                if _ps_pbr not in sys.path:
+                    sys.path.insert(0, _ps_pbr)
+                from pbr_cartography import inject_gltf_optical_extensions as _inject_opt
+                _inject_opt(out_glb, _opt_meta)
+            except Exception as _opt_exc:
+                log.warning("[trellis2] inject_gltf_optical_extensions warning: %r", _opt_exc)
+        try:
+            _ps_use = str(Path(__file__).resolve().parent.parent)
+            if _ps_use not in sys.path:
+                sys.path.insert(0, _ps_use)
+            from universal_style_engine import resolve_pbr_optical_profile as _use_resolve
+            from pbr_cartography import inject_gltf_optical_extensions as _use_inject
+            _use_prof = _use_resolve(f"{prompt or ''} {style or ''} {image_path}")
+            _use_inject(out_glb, _use_prof)
+        except Exception as _use_exc:
+            log.warning("[trellis2] universal_style_engine optical injection warning: %r", _use_exc)
         
         # Export a PLY with colored geometry ("geometrie couleur" requirement)
         try:

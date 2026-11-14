@@ -689,24 +689,33 @@ export function useImageViewLogic() {
       const up = await ensureComfyUIRunning()
       if (!up.ok) throw new Error(up.error || 'ComfyUI indisponible')
 
+      const hasExplicitUserReference = Boolean(refFilename || refFilename2)
       const hasReferenceCandidate = Boolean(refFilename || current)
-      const intent = parseImageIntent(text, { hasReference: hasReferenceCandidate })
+      const intent = parseImageIntent(text, {
+        hasReference: hasReferenceCandidate,
+        hasExplicitReference: hasExplicitUserReference,
+      })
+      const effectiveHasReference = Boolean(
+        hasExplicitUserReference || (current && (intent.isEditIntent || intent.editMode === 'replicate')),
+      )
       const cleanedText = intent.cleanedPrompt
       const activeSessionAtStart = useModuleHistoryStore.getState().getActiveSession('image')
       const previousMessages = useModuleHistoryStore.getState().getRecentMessages('image', 6)
-      const conversationContext = buildImageConversationContext(previousMessages)
+      const conversationContext = effectiveHasReference ? buildImageConversationContext(previousMessages) : ''
       const styleResolution = resolveImageConversationStyle({
         style: styleForRun,
         prompt: text,
-        hasReference: hasReferenceCandidate,
+        hasReference: effectiveHasReference,
         isEditIntent: intent.isEditIntent,
       })
       const effectiveStyle = styleResolution.style
-      const sessionContract = buildImageAutocorrectionContract({
-        prompt: text,
-        hasReference: hasReferenceCandidate,
-        conversationContext,
-      })
+      const sessionContract = effectiveHasReference
+        ? buildImageAutocorrectionContract({
+            prompt: text,
+            hasReference: effectiveHasReference,
+            conversationContext,
+          })
+        : ''
 
       // Si une image de référence est présente (reproduction "fais-moi ce personnage"
       // ou modification/changement de style), on extrait ses caractéristiques visuelles
@@ -751,7 +760,7 @@ export function useImageViewLogic() {
             ? (styleForRun !== 'none' ? 'style_transfer' : 'edit')
             : 'create',
         requestedStyle: effectiveStyle,
-        hasReference: hasReferenceCandidate,
+        hasReference: effectiveHasReference,
         referenceVisionSummary,
         conversationContext,
         generateText: mainModel ? (p) => ollamaGenerate(mainModel, p, { signal: ac.signal }) : undefined,
@@ -780,6 +789,23 @@ export function useImageViewLogic() {
           }
         : null
 
+      // Si une référence utilisateur est sélectionnée via refPreview, on s'assure qu'elle est bien présente et valide dans ComfyUI
+      if (groundedReference && refPreview) {
+        try {
+          const resp = await fetch(refPreview, { signal: ac.signal })
+          if (resp.ok) {
+            const blob = await resp.blob()
+            const file = new File([blob], groundedReference.filename || `aurora_user_ref_${Date.now()}.png`, { type: 'image/png' })
+            const uploaded = await comfyuiUploadImage(file, groundedReference.filename)
+            if (uploaded?.name) {
+              groundedReference = { filename: uploaded.name, denoise: groundedReference.denoise }
+            }
+          }
+        } catch {
+          // Si le ré-upload échoue, le backend _sanitize_workflow_load_image_nodes protège l'exécution
+        }
+      }
+
       if (!groundedReference && current && (intent.isEditIntent || refFilename2)) {
         try {
           reportImageStep(2, 23, 'Préparation de l’image actuelle comme référence FLUX.2…', 'Étape 2/5 : chargement de l’image courante dans ReferenceLatent FLUX.2')
@@ -794,33 +820,38 @@ export function useImageViewLogic() {
         }
       }
 
-      if (!groundedReference && (intent.editMode === 'replicate' || (targetToResearch !== null && !intent.isEditIntent))) {
+      // En création pure (!intent.isEditIntent), on n'écrase JAMAIS groundedReference avec une image web
+      // (qui transformerait une création libre en img2img à denoise 0.40 ou injecterait un fichier externe non désiré).
+      // Seul le mode explicite 'replicate' sans référence fournie cherche une image de référence matricielle vérifiée.
+      if (!groundedReference && intent.editMode === 'replicate') {
         try {
-          reportImageStep(2, 26, 'Recherche de référence visuelle vérifiée (Qwen3-VL 30B)…', 'Étape 2/5 : recherche de référence visuelle pour le sujet nommé')
+          reportImageStep(2, 26, 'Recherche de référence visuelle vérifiée (Qwen3-VL 30B)…', 'Étape 2/5 : recherche de référence visuelle pour reproduction fidèle')
           let foundBlob: Blob | null = null
+          const { validateRasterImageBlob, findBestReferenceVisual } = await import('../services/referenceVisualResearch')
           try {
             const { searchReferenceImages } = await import('../services/auroraExtensionBridge')
             const refResult = await searchReferenceImages(cleanedText, { limit: 1, signal: ac.signal })
             if (refResult.ok && refResult.data.length > 0) {
               const response = await fetch(refResult.data[0].url, { signal: ac.signal })
-              if (response.ok) foundBlob = await response.blob()
+              if (response.ok) {
+                foundBlob = await validateRasterImageBlob(await response.blob())
+              }
             }
           } catch {}
 
           if (!foundBlob) {
-            const { findBestReferenceVisual } = await import('../services/referenceVisualResearch')
             const selection = await findBestReferenceVisual({
               prompt: cleanedText,
               model: VISION_HIGH_QUALITY_MODEL,
               queries: [cleanedText],
             })
-            if (selection?.blob) foundBlob = selection.blob
+            if (selection?.blob) foundBlob = await validateRasterImageBlob(selection.blob)
           }
 
           if (foundBlob) {
-            const file = new File([foundBlob], `aurora_ref_${Date.now()}.png`, { type: foundBlob.type || 'image/png' })
+            const file = new File([foundBlob], `aurora_ref_${Date.now()}.png`, { type: 'image/png' })
             const uploaded = await comfyuiUploadImage(file)
-            if (uploaded?.name) groundedReference = { filename: uploaded.name, denoise: intent.editMode === 'replicate' ? 0.30 : 0.40 }
+            if (uploaded?.name) groundedReference = { filename: uploaded.name, denoise: 0.30 }
           }
         } catch {}
       }
@@ -834,6 +865,7 @@ export function useImageViewLogic() {
         const target = targetToResearch
         if (target) {
           try {
+            const shouldUploadToComfy = Boolean(intent.isEditIntent || intent.editMode === 'replicate')
             const resolved = await resolveSubjectReference(target, {
               fetchReferenceImages: async (queries, profile) => {
                 const selections = await findMultipleReferenceVisuals({
@@ -846,11 +878,15 @@ export function useImageViewLogic() {
                 const refs: Array<{ comfyFilename: string | null; blob: Blob; sourceUrl?: string; score?: number }> = []
                 for (const selection of selections) {
                   if (!selection?.blob) continue
-                  try {
-                    const file = new File([selection.blob], `autoref_${Date.now()}_${refs.length}.png`, { type: selection.blob.type || 'image/png' })
-                    const up = await comfyuiUploadImage(file)
-                    refs.push({ comfyFilename: up?.name ?? null, blob: selection.blob, sourceUrl: selection.pageUrl, score: selection.score })
-                  } catch {
+                  if (shouldUploadToComfy) {
+                    try {
+                      const file = new File([selection.blob], `autoref_${Date.now()}_${refs.length}.png`, { type: 'image/png' })
+                      const up = await comfyuiUploadImage(file)
+                      refs.push({ comfyFilename: up?.name ?? null, blob: selection.blob, sourceUrl: selection.pageUrl, score: selection.score })
+                    } catch {
+                      refs.push({ comfyFilename: null, blob: selection.blob, sourceUrl: selection.pageUrl, score: selection.score })
+                    }
+                  } else {
                     refs.push({ comfyFilename: null, blob: selection.blob, sourceUrl: selection.pageUrl, score: selection.score })
                   }
                 }
@@ -865,8 +901,11 @@ export function useImageViewLogic() {
                   maxResults: 1,
                 }))[0]
                 if (!selection?.blob) return null
+                if (!shouldUploadToComfy) {
+                  return { comfyFilename: null, blob: selection.blob, sourceUrl: selection.pageUrl, score: selection.score }
+                }
                 try {
-                  const file = new File([selection.blob], `autoref_${Date.now()}.png`, { type: selection.blob.type || 'image/png' })
+                  const file = new File([selection.blob], `autoref_${Date.now()}.png`, { type: 'image/png' })
                   const up = await comfyuiUploadImage(file)
                   return { comfyFilename: up?.name ?? null, blob: selection.blob, sourceUrl: selection.pageUrl, score: selection.score }
                 } catch {
@@ -976,14 +1015,21 @@ export function useImageViewLogic() {
           ? (baseSeed + k * 10007) % 1_000_000_000_000_000
           : Math.floor(Math.random() * 900_000_000_000_000) + 100_000_000_000_000 + k * 10007
         const dim = DIMENSIONS[dimensions] || DIMENSIONS.square
+        const wantsMaxQuality = Boolean(
+          intent.wantsMaxQuality ||
+          effectiveStyle === 'macro_8k' ||
+          /\b(qualit[eé]r?\s*max|max\s*qualit[eé]r?|pr[eé]cision\s*max|pixel[\s-]?perfect|8k|16k|ultra[\s-]?hd|masterpiece|chef[\s-]?d['’]?(?:oeuvre|œuvre))\b/i.test(text),
+        )
+        const effectiveSteps = wantsMaxQuality ? 38 : 34
+        const effectiveKontextSteps = wantsMaxQuality ? 32 : 28
         const autoUpscaleTarget = dim.upscaleMaxEdge
-          ?? ((effectiveStyle === 'macro_8k' || /\b(8k|16k|ultra[\s-]?hd|masterpiece\s+8k)\b/i.test(text)) ? 4096 : null)
+          ?? ((wantsMaxQuality && effectiveStyle !== 'pixel_art') ? 4096 : null)
         reportImageStep(
           3,
           36,
           batch > 1
             ? `Construction du workflow FLUX.2-dev (${k + 1}/${batch})…`
-            : `Construction du workflow FLUX.2-dev (${autoUpscaleTarget ? `diffusion + RealESRGAN ${autoUpscaleTarget}px` : '34 pas + Mistral-3 Small'})…`,
+            : `Construction du workflow FLUX.2-dev (${autoUpscaleTarget ? `${effectiveSteps} pas + RealESRGAN ${autoUpscaleTarget}px` : `${effectiveSteps} pas + Mistral-3 Small`})…`,
           `Étape 3/5 : lancement du graphe FLUX.2-dev (seed ${runSeed})`,
         )
         let blob: Blob | null = null
@@ -1006,7 +1052,7 @@ export function useImageViewLogic() {
               unetName: kontextModel,
               filenamePrefix: `aurora_stage_${Date.now()}_${k}_stage${stageIndex + 1}`,
               seed: runSeed !== null ? runSeed + stageIndex : null,
-              steps: 28,
+              steps: effectiveKontextSteps,
               width: dim.w,
               height: dim.h,
             })
@@ -1071,7 +1117,7 @@ export function useImageViewLogic() {
               unetName: kontextModel,
               filenamePrefix: `aurora_image_${Date.now()}_${k}`,
               seed: runSeed,
-              steps: 28,
+              steps: effectiveKontextSteps,
               width: dim.w,
               height: dim.h,
             })
@@ -1081,7 +1127,7 @@ export function useImageViewLogic() {
               style: effectiveStyle,
               width: dim.w,
               height: dim.h,
-              steps: 34,
+              steps: effectiveSteps,
               filenamePrefix: `aurora_image_${Date.now()}_${k}`,
               referenceImage: groundedReference,
               referenceImage2: effectiveSecondReference ? { filename: effectiveSecondReference } : null,

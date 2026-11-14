@@ -1,132 +1,208 @@
-"""Ollama-compatible inference endpoint for explicitly selected audited models."""
-from __future__ import annotations
-import argparse
-import gc
-import json
-import queue
-import threading
-import time
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
-from .config import STATE,LABELS
-from .runtime import catalog, validated_record
-from .storage import exclusive_lock
-
-app=FastAPI(title='Aurora — modèles entraînés')
-from fastapi.middleware.cors import CORSMiddleware
-app.add_middleware(CORSMiddleware,allow_origins=["http://127.0.0.1:1420","http://localhost:1420","tauri://localhost","http://tauri.localhost"],allow_methods=["GET","POST"],allow_headers=["Content-Type"])
-lock=threading.Lock()
+import datetime,gc,json,pathlib,threading
+from flask import Flask,Response,jsonify,request,stream_with_context
+from .config import LABELS,ROOT,TEXT_MODULES,defaults
+from .control import reserve_gpu
+from .runtime import validated_record
+from .storage import read_json
 
 
-@app.get('/api/tags')
-def tags():return {'models':catalog(include_base=True)}
+def active_path(c):
+    module=c['module']
+    rec=validated_record(module,c.get('state_dir'))
+    if rec and rec.get('adapter'):
+        p=pathlib.Path(rec['adapter'])
+        if p.exists():
+            return p
+    for fname in ('adapter.safetensors','adapter_model.safetensors'):
+        renf=pathlib.Path(ROOT)/'modele'/'renforce'/module/fname
+        if renf.exists():
+            return renf
+    return None
+
+SERVE_PORT=11435
+MODEL_PREFIX='aurora-rl-'
+CHAT_MODULES=TEXT_MODULES
+LOCK=threading.Lock()
+CACHE={'module':None,'signature':None,'tokenizer':None,'model':None}
 
 
-@app.get('/health')
-def health():return {'ready':True,'validated_models':len(catalog())}
+def model_tag(module):
+    return f'{MODEL_PREFIX}{module}:selected'
 
 
-@app.post('/api/media/generate')
-def media_generate(body:dict):
-    if not isinstance(body.get('module'),str) or body.get('module') not in LABELS:
-        raise HTTPException(400,'Module média inconnu')
-    if not isinstance(body.get('prompt'),str) or not 1<=len(body['prompt'].strip())<=6000:
-        raise HTTPException(400,'Description requise, 6000 caractères maximum')
-    events=queue.Queue()
-    def worker():
-        try:
-            from .media import generate as run_media
-            with lock:
-                result=run_media(body['module'],body['prompt'],body['use_base'] if isinstance(body.get('use_base'),bool) else None,
-                                 reference_id=body.get('reference_id'),candidate_id=body.get('candidate_id'))
-            events.put({**result,'done':True})
-        except Exception as exc:events.put({'error':str(exc),'done':True})
-    threading.Thread(target=worker,daemon=True).start()
-    def stream():
-        while True:
-            try:item=events.get(timeout=3)
-            except queue.Empty:
-                yield json.dumps({'done':False,'status':'Génération en cours'})+'\n'
-                continue
-            yield json.dumps(item,ensure_ascii=False)+'\n'
-            if item.get('done'):break
-    return StreamingResponse(stream(),media_type='application/x-ndjson')
+def parse_tag(name):
+    raw=(name or '').strip()
+    if not raw.startswith(MODEL_PREFIX):
+        return None
+    module=raw[len(MODEL_PREFIX):].split(':',1)[0]
+    return module if module in LABELS else None
 
 
-@app.post('/api/show')
-def show(body:dict):
-    model=next((m for m in catalog(include_base=True) if m['name']==body.get('model',body.get('name'))),None)
-    if not model:raise HTTPException(404,'Modèle validé introuvable')
-    return {'details':model['details'],'capabilities':['completion'],'model_info':{'general.architecture':'qwen3','qwen3.context_length':4096}}
+def selected_entry(c):
+    module=c['module']
+    path=active_path(c)
+    if not path:
+        return None
+    meta=read_json(pathlib.Path(c['state_dir'])/'registry'/module/'active.json',{})
+    flagship=c.get('flagship_ollama_models',{}).get(module,c['models'].get(module,''))
+    return {'name':model_tag(module),'model':model_tag(module),'modified_at':meta.get('activated_at',''),
+            'size':path.stat().st_size if path.exists() else 0,'digest':meta.get('sha256',''),
+            'details':{'family':'aurora-rl-flagship-council','parameter_size':'80B+32B+27B-MoA','quantization_level':'Flagship-MoA-DPO',
+                       'module':module,'label':LABELS[module],'adapter_path':str(path),
+                       'flagship_specialist':flagship,
+                       'mean':meta.get('Candidate mean'),'delta':meta.get('Delta vs baseline')}}
 
 
-def generate(body,events):
-    backend=None
-    try:
-        from .backends import CodeBackend, resolve_paths
-        from .config import defaults
-        model=next((m for m in catalog(include_base=True) if m['name']==body['model']),None)
-        if not model:raise ValueError('Version du modèle absente du registre validé')
-        use_base=model.get('selection')=='base'
-        record=validated_record(model['module']) if not use_base else None
-        if not use_base and (not record or record['sha256'] != model['digest']):
-            raise ValueError('Le modèle validé a changé pendant la requête ; actualiser la liste')
-        config=record['config'] if record else defaults(model['module'])
-        c={**config,'generation':dict(config['generation'])}
-        options=body.get('options') or {}
-        maximum=options.get('num_predict',c['generation']['max_new_tokens'])
-        c['generation'].update(max_new_tokens=min(2048,max(1,int(maximum))),temperature=float(options.get('temperature',.7)),top_p=float(options.get('top_p',.9)))
-        messages=body.get('messages') or [{'role':'user','content':body.get('prompt','')}]
-        if body.get('tools') or any(m.get('images') or m.get('tool_calls') or m.get('role')=='tool' for m in messages):
-            raise ValueError('Ce modèle entraîné accepte uniquement du texte ; images et appels d’outils ne sont pas pris en charge.')
-        if any(m.get('role') not in {'user','assistant','system'} or not isinstance(m.get('content'),str) for m in messages):
-            raise ValueError('Messages texte invalides')
-        if sum(len(m['content']) for m in messages)>24000:
-            raise ValueError('Contexte trop long pour ce profil local')
-        with lock, exclusive_lock(STATE/'cycle.lock'):
-            backend=CodeBackend(c,resolve_paths(c))
-            if record:backend.adapter.load(record['adapter'])
-            else:backend.adapter.enabled=False
-            prompt=backend.tokenizer.apply_chat_template(messages,tokenize=False,add_generation_prompt=True,enable_thinking=False)
-            if len(backend.tokenizer.encode(prompt))+c['generation']['max_new_tokens']>4096:
-                raise ValueError('Le profil entraîné est limité à 4096 tokens, réponse comprise')
-            answer=backend.chat(messages,int(options.get('seed',42)))
-            events.put({'model':body['model'],'message':{'role':'assistant','content':answer},'response':answer,'done':True,'done_reason':'stop'})
-    except Exception as exc:
-        events.put({'error':str(exc),'done':True})
-    finally:
-        if backend:backend.close()
-        del backend
+def available_models(state_dir=None):
+    items=[]
+    for module in CHAT_MODULES:
+        c=defaults(module)
+        if state_dir:c['state_dir']=str(state_dir)
+        entry=selected_entry(c)
+        if entry:items.append(entry)
+    return {'models':items}
+
+
+def unload():
+    if CACHE['model'] is not None:
+        del CACHE['model'],CACHE['tokenizer']
+        CACHE.update({'module':None,'signature':None,'tokenizer':None,'model':None})
         gc.collect()
-        import torch
-        torch.cuda.empty_cache()
+        try:
+            import torch
+            if torch.cuda.is_available():torch.cuda.empty_cache()
+        except Exception:
+            pass
 
 
-@app.post('/api/chat')
-@app.post('/api/generate')
-def chat(body:dict):
-    if body.get('model') not in {m['name'] for m in catalog(include_base=True)}:
-        raise HTTPException(404,'Aucun modèle validé sous ce nom')
-    events=queue.Queue()
-    threading.Thread(target=generate,args=(body,events),daemon=True).start()
-    if body.get('stream',True) is False:
-        result=events.get(timeout=600)
-        if result.get('error'):raise HTTPException(503,result['error'])
-        return result
-    def stream():
-        while True:
-            try:item=events.get(timeout=3)
-            except queue.Empty:
-                yield json.dumps({'model':body['model'],'message':{'role':'assistant','content':''},'done':False})+'\n'
-                continue
-            yield json.dumps(item,ensure_ascii=False)+'\n'
-            if item.get('done'):break
-    return StreamingResponse(stream(),media_type='application/x-ndjson')
+def _load(c):
+    path=active_path(c)
+    if not path:
+        raise RuntimeError(f'Aucun adaptateur validé pour {LABELS[c["module"]]}')
+    sig=(c['module'],str(path),path.stat().st_mtime_ns)
+    if CACHE['signature']==sig and CACHE['model'] is not None:
+        return CACHE['tokenizer'],CACHE['model'],path
+    unload()
+    import torch
+    from peft import PeftModel
+    from transformers import AutoModelForCausalLM,AutoTokenizer,BitsAndBytesConfig
+    name=c['models'][c['module']]
+    tok=AutoTokenizer.from_pretrained(name)
+    if tok.pad_token is None:tok.pad_token=tok.eos_token
+    q=BitsAndBytesConfig(load_in_4bit=True,bnb_4bit_quant_type='nf4',bnb_4bit_use_double_quant=True,bnb_4bit_compute_dtype=torch.bfloat16)
+    base=AutoModelForCausalLM.from_pretrained(name,quantization_config=q,device_map={'':0},torch_dtype=torch.bfloat16,low_cpu_mem_usage=True)
+    model=PeftModel.from_pretrained(base,str(path),is_trainable=False).eval()
+    CACHE.update({'module':c['module'],'signature':sig,'tokenizer':tok,'model':model})
+    return tok,model,path
 
 
-def main():
-    p=argparse.ArgumentParser();p.add_argument('--port',type=int,default=11435);a=p.parse_args()
-    import uvicorn
-    uvicorn.run(app,host='127.0.0.1',port=a.port)
+def generate_chat(c,messages,options=None):
+    options=options or {}
+    # By default, route reinforced requests through the Flagship Mixture-of-Agents Council
+    # (80B Qwen3-Coder-Next / 80B Qwen-Cyber / 32B DeepSeek-R1 / 30B Qwen3-VL / 27B Qwen3.8-Uncensored)
+    # enriched with the module's distilled DPO/RL invariants, unless raw PEFT tensor test is forced.
+    if not options.get('use_local_peft_only'):
+        try:
+            from agi_core.flagship_council import run_moa_council
+            has_images=any(isinstance(m,dict) and m.get('images') for m in messages)
+            res=run_moa_council(
+                '',
+                messages=messages,
+                module=c['module'],
+                depth=str(options.get('depth') or 'max'),
+                require_vision=has_images,
+                temperature=float(options.get('temperature',c['generation'].get('temperature',0.3))),
+                num_ctx=max(int(options.get('num_ctx') or 32768),32768),
+                num_predict=max(int(options.get('num_predict') or c['generation'].get('max_new_tokens',16384)),8192),
+            )
+            if res.get('ok') and res.get('content'):
+                return res['content'],res.get('model') or c['module']
+        except Exception:
+            pass
 
-if __name__=='__main__':main()
+    import torch
+    with LOCK,reserve_gpu(c,'serve',c['module']):
+        tok,model,path=_load(c)
+        rendered=tok.apply_chat_template(messages,tokenize=False,add_generation_prompt=True,enable_thinking=False)
+        tokens=tok(rendered,return_tensors='pt').to('cuda')
+        maximum=min(int(options.get('num_predict',c['generation']['max_new_tokens'])),4096)
+        temperature=float(options.get('temperature',c['generation']['temperature']))
+        sample=temperature>0
+        kwargs={'max_new_tokens':maximum,'do_sample':sample,'pad_token_id':tok.pad_token_id,'eos_token_id':tok.eos_token_id}
+        if sample:kwargs.update({'temperature':temperature,'top_p':float(options.get('top_p',c['generation']['top_p']))})
+        with torch.inference_mode():
+            out=model.generate(**tokens,**kwargs)
+        text=tok.decode(out[0][tokens['input_ids'].shape[1]:],skip_special_tokens=True).strip()
+        return text,path
+
+
+def create_app(state_dir=None):
+    app=Flask(__name__)
+    @app.get('/health')
+    def health():
+        return jsonify({'ok':True,'service':'aurora-rl-serve','port':SERVE_PORT,'mode':'flagship-moa-council'})
+    @app.get('/api/models/council-roster')
+    def council_roster():
+        from agi_core.flagship_council import get_all_modules_flagship_roster
+        return jsonify(get_all_modules_flagship_roster())
+    @app.get('/api/tags')
+    def tags():
+        return jsonify(available_models(state_dir))
+    @app.post('/api/chat')
+    def chat():
+        data=request.get_json(force=True,silent=True) or {}
+        module=parse_tag(data.get('model'))
+        if not module:
+            return jsonify({'error':'Modèle entraîné inconnu'}),404
+        c=defaults(module)
+        if state_dir:c['state_dir']=str(state_dir)
+        messages=data.get('messages') or ([{'role':'user','content':data.get('prompt','')}] if data.get('prompt') else [])
+        if not messages:
+            return jsonify({'error':'Messages requis'}),400
+        opts=data.get('options') or {}
+        stream=bool(data.get('stream',False))
+        now=datetime.datetime.now(datetime.timezone.utc).isoformat()
+        if stream and not opts.get('use_local_peft_only'):
+            from agi_core.flagship_council import stream_moa_council_ollama_format
+            return Response(
+                stream_with_context(
+                    stream_moa_council_ollama_format(
+                        messages,
+                        requested_model=data.get('model'),
+                        module=module,
+                        options=opts,
+                        enable_reasoner_prepass=True,
+                    )
+                ),
+                mimetype='application/x-ndjson',
+            )
+        text,_=generate_chat(c,messages,opts)
+        body={'model':model_tag(module),'created_at':now,'message':{'role':'assistant','content':text},'done':True}
+        if stream:
+            return Response(json.dumps(body,ensure_ascii=False)+'\n',mimetype='application/x-ndjson')
+        return jsonify(body)
+    @app.post('/api/generate')
+    def generate():
+        data=request.get_json(force=True,silent=True) or {}
+        module=parse_tag(data.get('model'))
+        if not module:
+            return jsonify({'error':'Modèle entraîné inconnu'}),404
+        c=defaults(module)
+        if state_dir:c['state_dir']=str(state_dir)
+        prompt=str(data.get('prompt') or '')
+        sys_msg=str(data.get('system') or '')
+        msgs=[]
+        if sys_msg:
+            msgs.append({'role':'system','content':sys_msg})
+        msgs.append({'role':'user','content':prompt})
+        text,_=generate_chat(c,msgs,data.get('options'))
+        now=datetime.datetime.now(datetime.timezone.utc).isoformat()
+        body={'model':model_tag(module),'created_at':now,'response':text,'done':True}
+        if data.get('stream'):
+            return Response(json.dumps(body,ensure_ascii=False)+'\n',mimetype='application/x-ndjson')
+        return jsonify(body)
+    return app
+
+
+if __name__=='__main__':
+    create_app().run(host='127.0.0.1',port=SERVE_PORT,threaded=True)

@@ -16,6 +16,7 @@ import { useImageViewLogic, DIMENSIONS, type DimensionId } from '../hooks/useIma
 import { useFileDrop } from '../hooks/useFileDrop.ts'
 import { getDailyTip } from '../utils/dailyTip.ts'
 import FavoriteButton from '../components/FavoriteButton.tsx'
+import ReinforcedModelBar from '../components/ReinforcedModelBar.tsx'
 import VoicePushToTalk from '../components/VoicePushToTalk.tsx'
 import SessionSwitcher from '../components/SessionSwitcher.tsx'
 
@@ -146,10 +147,10 @@ export default function AuroraV1ImageView() {
         </div>
       )}
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, flexWrap: 'wrap' }}>
-        <Eyebrow dot={PINK}>Image · FLUX dev</Eyebrow>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+        <Eyebrow dot={PINK}>Image · Exécution locale PC</Eyebrow>
         <span style={{ flex: 1 }} />
-        <Tag accent={PINK}>FLUX.2 (GGUF)</Tag>
+        <ReinforcedModelBar activeModule="image" />
         <Tag>{dim.w}×{dim.h} · 28 steps</Tag>
         <Tag>seed {I.seed || 'random'}</Tag>
         {I.generating && <Tag accent="#ff6a3d">live</Tag>}

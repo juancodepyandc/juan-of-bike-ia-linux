@@ -5,6 +5,7 @@ import { useFileDrop } from '../hooks/useFileDrop.ts'
 import { useModuleHistoryStore } from '../stores/moduleHistoryStore.ts'
 import VoicePushToTalk from '../components/VoicePushToTalk.tsx'
 import FavoriteButton from '../components/FavoriteButton.tsx'
+import ReinforcedModelBar from '../components/ReinforcedModelBar.tsx'
 import { getDailyTip } from '../utils/dailyTip.ts'
 
 const InpaintingPanel = lazy(() => import('../components/InpaintingPanel'))
@@ -395,17 +396,18 @@ export default function AuroraV4ImageView() {
         </span>
         <div>
           <h1 className="av4img-gradsoft" style={{ margin: 0, fontSize: 23, fontWeight: 800, letterSpacing: '-0.02em', filter: `drop-shadow(0 0 16px ${ACCENT}38)` }}>Image</h1>
-          <TechLabel style={{ marginTop: 3 }}>flux.2-dev (20 go) · mistral-3 fp8 · realesrgan 8k · qwen3-vl 30b</TechLabel>
+          <TechLabel style={{ marginTop: 3 }}>modèle renforcé ↔ modèle de base · précision sub-pixel 16k · exécution 100 % locale pc</TechLabel>
         </div>
         <span style={{ flex: 1 }} />
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <ReinforcedModelBar activeModule="image" />
           <span style={{
             ...monoTag,
             color: '#6EE7B7',
             borderColor: 'rgba(110,231,183,.35)',
           }}
-            title="Pack maître actif : FLUX.2-dev (flux2-dev-Q4_K_M.gguf 20 Go) + Mistral-3 Small FP8 (18 Go) + Flux2Scheduler + CFGGuider + ReferenceLatent + RealESRGAN x4plus + Qwen3-VL 30B">
-            {I.editEngine === 'kontext' ? 'FLUX.2-dev · Kontext' : 'FLUX.2-dev · ReferenceLatent + 8K'}
+            title="Moteur Image Haute Fidélité avec conditionnement de référence et super-résolution 8K/16K sur votre PC">
+            {I.editEngine === 'kontext' ? 'Édition de Référence Locale' : 'Haute Précision + Super-Résolution 8K/16K'}
           </span>
           <span style={monoTag}>{dim.w}×{dim.h} · 28 étapes</span>
           <span style={monoTag}>seed {I.seed || 'aléatoire'}</span>

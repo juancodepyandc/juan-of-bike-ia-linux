@@ -112,7 +112,7 @@ export const THREE_D_TEXTURE_MODEL = 'microsoft/TRELLIS.2-4B'
 export const THREE_D_HUNYUAN_MODEL = 'tencent/Hunyuan3D-2.1'
 export const THREE_D_WORLD_MODEL = 'tencent/HunyuanWorld-Mirror'
 export const THREE_D_NORMAL_MODEL = 'moge_2_vitl_normal_fp16.safetensors'
-export const THREE_D_MODEL_PACK_LABEL = 'TRELLIS.2-4B + Hunyuan3D-2.1 PBR + HunyuanWorld-Mirror (Scènes/Paysages) + MoGe-2 + FLUX.2-dev'
+export const THREE_D_MODEL_PACK_LABEL = 'Modèle renforcé ↔ Modèle de base (Exécution 100 % locale PC)'
 
 export const THREE_D_TRELLIS2_REPO = 'https://github.com/microsoft/TRELLIS.2'
 export const THREE_D_TRELLIS2_MODEL = 'microsoft/TRELLIS.2-4B'
@@ -152,6 +152,16 @@ export const VOICE_MODEL_PACK_LABEL = 'faster-whisper large-v3-turbo STT + Kokor
 const LEGACY_MAIN_MODELS = new Set([
   'qwen3:32b',
   'qwen3:32b-q4_K_M',
+  'qwen3:14b',
+  'qwen3:14b-q8_0',
+  'qwen3:8b',
+  'qwen3:7b',
+  'qwen2.5:7b',
+  'qwen2.5:14b',
+  'qwen2.5:32b',
+  'gemma3:27b',
+  'gemma3:12b',
+  'llama3.2:3b',
   'llama3.1:70b-instruct-q5_K_M',
   'llama3.1:70b-instruct-q4_K_M',
   'llama3.1:70b',
@@ -159,8 +169,6 @@ const LEGACY_MAIN_MODELS = new Set([
   'llama3.3:70b-instruct-q4_K_M',
   'llama3.3:70b',
   'llama4:scout',
-  'qwen3-vl:30b',
-  'qwen3:14b-q8_0',
 ])
 
 // Anciens modeles code supprimes -- tout redirige vers CODE_SINGLE_MODEL.
@@ -173,15 +181,24 @@ const LEGACY_CODE_MODELS = new Set([
   'qwen3-coder:30b-a3b-q6_K_M',
   'qwen3-coder:30b-a3b-q6_K',
   'qwen2.5-coder:14b',
+  'qwen2.5-coder:7b',
+  'qwen2.5-coder',
   'hf.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:Q6_K',
 ])
 
 const MODEL_ALIASES = new Map<string, string>([
-  // Tous les gros modeles -> qwen3:14b (seul modele chat installe)
+  // Tous les anciens modeles -> DEFAULT_MAIN_MODEL (orcarouter/Qwen3.8-27B-Uncensored)
   ['llama4:scout', DEFAULT_MAIN_MODEL],
   ['llama4:16x17b', DEFAULT_MAIN_MODEL],
   ['llama4:latest', DEFAULT_MAIN_MODEL],
+  ['qwen3:14b', DEFAULT_MAIN_MODEL],
   ['qwen3:14b-q8_0', DEFAULT_MAIN_MODEL],
+  ['qwen3:8b', DEFAULT_MAIN_MODEL],
+  ['qwen2.5:7b', DEFAULT_MAIN_MODEL],
+  ['qwen2.5:14b', DEFAULT_MAIN_MODEL],
+  ['gemma3:27b', DEFAULT_MAIN_MODEL],
+  ['gemma3:12b', DEFAULT_MAIN_MODEL],
+  ['llama3.2:3b', DEFAULT_MAIN_MODEL],
   // NOTE: qwen3-vl:30b et qwen3-vl:8b sont des modeles vision DIFFERENTS du main.
   // Ne plus les rediriger vers DEFAULT_MAIN_MODEL (qwen3:14b texte-seul).
   // Ils restent accessibles tels quels pour les appels multimodaux (images).
@@ -474,6 +491,7 @@ export function selectAdaptivePrimaryModel(hardware: Pick<HardwareProfile, 'ram_
 const MAIN_MODEL_PRIORITY: string[] = [
   'orcarouter/Qwen3.8-27B-Uncensored',
   'orcarouter/qwen3.8-27b-uncensored',
+  'deepseek-r1:32b',
   'qwen3.8:27b',
   'qwen3.8',
   'qwen3.6:27b',
@@ -482,16 +500,6 @@ const MAIN_MODEL_PRIORITY: string[] = [
   'qwen3.5:35b',
   'qwen3.5:27b',
   'qwen3:32b',
-  'gemma3:27b',
-  'mistral-small3.2:24b',
-  'qwen3:14b',
-  'qwen2.5:14b',
-  'qwen2.5:32b',
-  'qwen3:7b',
-  'qwen2.5:7b',
-  'mistral',
-  'llama3.1',
-  'llama3',
 ]
 
 // Un modele CHAT generaliste n'est ni un modele vision (-vl) ni un modele code

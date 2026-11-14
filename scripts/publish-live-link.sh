@@ -14,10 +14,19 @@ cd "$LIVE_REPO"
 # Push previously committed state first. Do not silently lose a failed push.
 git fetch -q origin main
 git -c user.name="Aurora availability" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" rebase -X theirs origin/main
-URL="$(tr -d '[:space:]' < "$ROOT_DIR/tunnel.txt")"
+TUNNEL_FILE="$ROOT_DIR/interface/tunnel/tunnel.txt"
+[ -s "$TUNNEL_FILE" ] || TUNNEL_FILE="$ROOT_DIR/tunnel.txt"
+URL="$(tr -d '[:space:]' < "$TUNNEL_FILE" 2>/dev/null || true)"
+if [ -n "$URL" ]; then
+  mkdir -p "$ROOT_DIR/interface/tunnel"
+  printf '%s\n' "$URL" > "$ROOT_DIR/tunnel.txt"
+  printf '%s\n' "$URL" > "$ROOT_DIR/tunnel_url.txt"
+  printf '%s\n' "$URL" > "$ROOT_DIR/interface/tunnel/tunnel.txt"
+  printf '%s\n' "$URL" > "$ROOT_DIR/interface/tunnel/tunnel_url.txt"
+fi
 # Use the existing public-DNS fallback locally, and strict JSON service check.
 if [ "$MODE" != closed ]; then
-  if ! bash "$ROOT_DIR/scripts/verify-tunnel-url.sh" "$URL" 1 >/dev/null 2>&1; then MODE=closed; fi
+  if ! bash "$ROOT_DIR/scripts/verify-tunnel-url.sh" "$URL" 5 >/dev/null 2>&1; then MODE=closed; fi
 fi
 # closed never probes; auto/open independently verify the public endpoint.
 python3 - "$LIVE_REPO" "$MODE" "$URL" <<'PYTHON'

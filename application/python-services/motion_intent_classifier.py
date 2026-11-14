@@ -25,10 +25,11 @@ import urllib.error
 OLLAMA_URL = "http://127.0.0.1:11434"
 try:  # `gemma3:27b` absent de cette machine -> appel mort, repli silencieux
     from llm_disponible import resoudre_modele as _res_llm
-    DEFAULT_MODEL = _res_llm("gemma3:27b", "texte", bavard=False)
+    DEFAULT_MODEL = _res_llm("orcarouter/Qwen3.8-27B-Uncensored:latest", "texte", bavard=False)
+    FALLBACK_MODEL = _res_llm("deepseek-r1:32b", "texte", bavard=False)
 except Exception:  # noqa: BLE001
-    DEFAULT_MODEL = "gemma3:27b"   # installe, non-thinking -> JSON propre (gemma3:12b n'existe pas ici)
-FALLBACK_MODEL = "qwen3:14b"
+    DEFAULT_MODEL = "orcarouter/Qwen3.8-27B-Uncensored:latest"
+    FALLBACK_MODEL = "deepseek-r1:32b"
 
 # Keep this verbatim with the TS service. If you change one, update the other.
 SYSTEM_PROMPT = """You are a 3D animation intent classifier for a real-time Blender pipeline.

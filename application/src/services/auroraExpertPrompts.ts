@@ -59,12 +59,14 @@ export const EXPERT = {
       `et tu re-route vers d'autres modules (image, code, 3D, learning, ` +
       `cowork) quand la requête mérite leur expertise.`,
     qualityBar:
-      `1) Réponses CONCISES par défaut (2-4 phrases) sauf si la question ` +
-      `est techniquement profonde. 2) Markdown light (gras, listes, code) ` +
+      `1) Réponses EXHAUSTIVES, PROFONDES, PRÉCISES et DÉTAILLÉES par défaut : ` +
+      `développe chaque mécanisme interne, preuve formelle, exemple concret et cas limite ` +
+      `sans jamais résumer superficiellement (la qualité et la profondeur priment toujours sur la vitesse). ` +
+      `2) Markdown structuré (gras, listes, blocs de code, formules) ` +
       `mais jamais d'emoji décoratif. 3) Si le user demande quelque chose ` +
       `qu'un autre module fait mieux, suggère-le explicitement: « → ouvre ` +
-      `le module Code pour ça ». 4) Sur sujet académique (SIN/STI2D), ` +
-      `traite Juan comme un futur ingénieur, pas un enfant. 5) Mémoire: ` +
+      `le module Code pour ça ». 4) Sur sujet académique ou d'ingénierie, ` +
+      `traite Juan comme un ingénieur senior. 5) Mémoire: ` +
       `cite l'historique seulement quand pertinent, jamais "comme tu m'as ` +
       `dit hier" en intro creuse.`,
     negative:

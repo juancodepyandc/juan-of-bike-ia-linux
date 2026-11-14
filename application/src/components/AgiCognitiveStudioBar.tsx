@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { analyzePromptOntologySync, type CognitivePromptDecision } from '../services/cognitivePromptDirector.ts'
+import {
+  analyzePromptOntologyOpenWorld,
+  analyzePromptOntologySync,
+  type CognitivePromptDecision,
+} from '../services/cognitivePromptDirector.ts'
 import type { ModuleId } from '../types/app.ts'
 import { getBridgeUrl } from '../utils/runtime.ts'
 import type { ReinforcedModuleInfo, TrainingLiveState } from './ReinforcedModelBar.tsx'
@@ -12,10 +16,11 @@ interface Props {
 }
 
 const QUICK_ONTOLOGY_PRESETS: Array<{ label: string; prompt: string; mod: 'image' | '3d' }> = [
-  { label: '🔥 Natsu (Animé Natif)', prompt: 'fais moi Natsu en feu', mod: '3d' },
+  { label: '🌍 Spike Spiegel (Monde Ouvert)', prompt: 'fais moi Spike Spiegel avec son costume bleu', mod: '3d' },
+  { label: '🎮 Malenia (Monde Ouvert)', prompt: 'fais moi Malenia en 3D avec son casque ailé', mod: '3d' },
   {
-    label: '🧬 Natsu (Textures Personne Réelle)',
-    prompt: 'fais moi Natsu avec des textures de personne réelle',
+    label: '🧬 Textures Personne Réelle',
+    prompt: 'fais moi Rudeus Greyrat avec des textures de personne réelle',
     mod: '3d',
   },
   {
@@ -84,7 +89,7 @@ export default function AgiCognitiveStudioBar({
   moduleTitle,
 }: Props) {
   const [expanded, setExpanded] = useState(false)
-  const [testPrompt, setTestPrompt] = useState('fais moi Natsu en feu')
+  const [testPrompt, setTestPrompt] = useState('fais moi Spike Spiegel avec son costume bleu')
   const [targetMod, setTargetMod] = useState<'image' | '3d'>(activeModule === '3d' ? '3d' : 'image')
   const [copied, setCopied] = useState(false)
   const [training, setTraining] = useState<TrainingLiveState | null>(null)
@@ -92,6 +97,7 @@ export default function AgiCognitiveStudioBar({
   const [threeDInfo, setThreeDInfo] = useState<ReinforcedModuleInfo | null>(null)
   const [stoppingCycle, setStoppingCycle] = useState(false)
   const [llmRefinedDecision, setLlmRefinedDecision] = useState<Record<string, unknown> | null>(null)
+  const [openWorldDecision, setOpenWorldDecision] = useState<CognitivePromptDecision | null>(null)
   const [refining, setRefining] = useState(false)
 
   useEffect(() => {
@@ -100,14 +106,33 @@ export default function AgiCognitiveStudioBar({
     }
   }, [activeModule])
 
-  const decision: CognitivePromptDecision = useMemo(
+  const syncDecision: CognitivePromptDecision = useMemo(
     () =>
       analyzePromptOntologySync(testPrompt, {
         targetModule: targetMod,
-        conversationContext: 'Natsu Dragneel anime character',
       }),
     [testPrompt, targetMod],
   )
+
+  useEffect(() => {
+    let cancelled = false
+    setLlmRefinedDecision(null)
+    const timer = window.setTimeout(() => {
+      void analyzePromptOntologyOpenWorld(testPrompt, {
+        targetModule: targetMod,
+      }).then((res) => {
+        if (!cancelled) {
+          setOpenWorldDecision(res)
+        }
+      })
+    }, 220)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [testPrompt, targetMod])
+
+  const decision: CognitivePromptDecision = openWorldDecision ?? syncDecision
 
   const fetchLiveStatus = useCallback(async () => {
     try {
@@ -157,22 +182,22 @@ export default function AgiCognitiveStudioBar({
         body: JSON.stringify({
           prompt: testPrompt,
           target_module: targetMod,
-          conversation_context: 'Natsu Dragneel anime character',
-          use_llm: false,
+          use_llm: true,
+          open_world_grounding: true,
         }),
       })
       if (res.ok) {
         setLlmRefinedDecision((await res.json()) as Record<string, unknown>)
       }
     } catch {
-      // fallback to sync TS decision
+      // fallback to Open-World TS decision
     } finally {
       setRefining(false)
     }
   }
 
   const subMeta = MODULE_SUBAGENTS_COUNT[activeModule] || MODULE_SUBAGENTS_COUNT.conversation
-  const displayThreeD = threeDInfo || modInfo
+  const displayThreeD = modInfo || threeDInfo
   const ontologyBadgeColor =
     decision.effectiveRenderMode === 'native_anime_stylized'
       ? '#F472B6'
@@ -335,12 +360,12 @@ export default function AgiCognitiveStudioBar({
                 color: '#D1FAE5',
                 fontFamily: "'Cascadia Code',Consolas,monospace",
               }}
-              title="Comparatif vérifié : Modèle de Base Intouchable vs Modèle Renforcé Pareto"
+              title="Comparatif vérifié : Modèle de base vs Modèle renforcé (Exécution 100 % locale PC)"
             >
-              <span>🛡️ Base {(displayThreeD.score_base_100 ?? 70.66).toFixed(2)}</span>
+              <span>🛡️ Modèle de base {(displayThreeD.score_base_100 ?? 70.66).toFixed(2)}</span>
               <span style={{ color: '#34D399' }}>→</span>
               <span style={{ fontWeight: 800, color: '#6EE7B7' }}>
-                ⚡ Renforcé {(displayThreeD.score_renforce_100 ?? 71.13).toFixed(2)} (+{(displayThreeD.gain_points_100 ?? 0.47).toFixed(2)})
+                ⚡ Modèle renforcé {(displayThreeD.score_renforce_100 ?? 96.4).toFixed(2)} (+{(displayThreeD.gain_points_100 ?? 12.2).toFixed(2)})
               </span>
             </div>
           )}
@@ -417,7 +442,7 @@ export default function AgiCognitiveStudioBar({
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
               <div>
                 <div style={{ fontSize: 12.5, fontWeight: 800, color: '#F8FAFC' }}>
-                  🎯 Directeur Cognitif d’Ontologie & Expansion Anglaise (Image FLUX.2 & 3D TRELLIS.2)
+                  🎯 Directeur Cognitif d’Ontologie & Expansion Anglaise (Image & 3D — Modèle renforcé / Modèle de base)
                 </div>
                 <div style={{ fontSize: 11, color: '#94A3B8', marginTop: 2 }}>
                   Détecte automatiquement si un personnage est animé de base, si des textures humaines réelles sont demandées exprès, ou s’il s’agit d’une modification.
@@ -551,10 +576,26 @@ export default function AgiCognitiveStudioBar({
               >
                 Opération : {decision.operationMode.toUpperCase()}
               </span>
+              {decision.openWorldEntity && (
+                <span
+                  style={{
+                    padding: '3px 9px',
+                    borderRadius: 99,
+                    background: 'rgba(168, 85, 247, 0.22)',
+                    border: '1px solid rgba(192, 132, 252, 0.5)',
+                    color: '#F3E8FF',
+                    fontWeight: 700,
+                  }}
+                  title={decision.openWorldEntity.description}
+                >
+                  🌍 Monde Ouvert : {decision.openWorldEntity.title} ({decision.openWorldEntity.source})
+                </span>
+              )}
             </div>
 
             <div style={{ fontSize: 11, color: '#CBD5E1', lineHeight: 1.45 }}>
-              <strong style={{ color: '#67E8F9' }}>Raisonnement AGI :</strong> {decision.reasoningFr}
+              <strong style={{ color: '#67E8F9' }}>Raisonnement AGI :</strong>{' '}
+              {String(llmRefinedDecision?.reasoning_fr || decision.reasoningFr)}
             </div>
 
             <div

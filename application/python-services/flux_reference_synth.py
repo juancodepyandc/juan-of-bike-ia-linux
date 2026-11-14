@@ -102,14 +102,54 @@ def check_models_present(comfy_models_dir: str | None = None) -> dict:
     return {"ok": not stubs and not missing, "stubs": stubs, "missing": missing}
 
 
+def upload_reference_image(image_path: str | Path, comfy_base: str = COMFY_BASE) -> str | None:
+    """Téléverse une image de référence officielle dans ComfyUI (/upload/image)
+    et retourne son nom de fichier côté ComfyUI pour le noeud LoadImage / ReferenceLatent."""
+    p = Path(image_path)
+    if not p.is_file():
+        return None
+    boundary = f"----AuroraBoundary{int(time.time() * 1000)}"
+    raw_bytes = p.read_bytes()
+    filename = p.name
+    body = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="image"; filename="{filename}"\r\n'
+        f"Content-Type: image/png\r\n\r\n"
+    ).encode("utf-8") + raw_bytes + (
+        f"\r\n--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="overwrite"\r\n\r\n'
+        f"true\r\n"
+        f"--{boundary}--\r\n"
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        f"{comfy_base}/upload/image",
+        data=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            payload = json.loads(resp.read().decode("utf-8", errors="replace"))
+            return str(payload.get("name") or "").strip() or None
+    except Exception:
+        return None
+
+
 def build_workflow(prompt: str, *, width: int = 1024, height: int = 1024,
                    steps: int = 25, seed: int | None = None,
-                   filename_prefix: str = "aurora_flux", trained_adapter: bool = True) -> dict:
+                   filename_prefix: str = "aurora_flux", trained_adapter: bool = True,
+                   reference_comfy_name: str | None = None,
+                   reference_denoise: float = 0.08) -> dict:
     """FLUX.2-dev workflow (encodeur Mistral-3, Flux2Scheduler + SamplerCustomAdvanced).
     Poids REELS presents (diffusion 33 Go + Mistral 16.8 Go + VAE 0.31 Go).
-    Miroir du template officiel ComfyUI image_flux2_text_to_image."""
+    Miroir du template officiel ComfyUI image_flux2_text_to_image, avec support
+    optionnel ReferenceLatent pour ancrer l'identite visuelle officielle d'un personnage."""
     if seed is None:
         seed = randint(1, 2**32 - 1)
+    is_canonical_lock = bool(reference_comfy_name and reference_denoise < 0.30)
+    is_style_restyle = bool(reference_comfy_name and reference_denoise >= 0.30)
+    positive_cond_ref = ["53", 0] if reference_comfy_name else ["6", 0]
+    negative_cond_ref = ["54", 0] if is_canonical_lock else ["33", 0]
     workflow = {
         "11": {
             "class_type": "CLIPLoader",
@@ -147,18 +187,27 @@ def build_workflow(prompt: str, *, width: int = 1024, height: int = 1024,
             "class_type": "EmptyFlux2LatentImage",
             "inputs": {"width": width, "height": height, "batch_size": 1},
         },
-        "40": {
+        "40": ({
+            "class_type": "BasicScheduler",
+            "inputs": {
+                "scheduler": "simple",
+                "steps": steps,
+                "denoise": float(reference_denoise),
+                "model": ["12", 0],
+            },
+        } if is_canonical_lock else {
             "class_type": "Flux2Scheduler",
             "inputs": {"steps": steps, "width": width, "height": height},
-        },
+        }),
         "41": {
             "class_type": "KSamplerSelect",
             "inputs": {"sampler_name": "euler"},
         },
         "26": {
             "class_type": "CFGGuider",
-            "inputs": {"model": ["12", 0], "positive": ["6", 0],
-                       "negative": ["33", 0], "cfg": 5.0},
+            "inputs": {"model": ["12", 0], "positive": positive_cond_ref,
+                       "negative": negative_cond_ref,
+                       "cfg": 1.2 if is_canonical_lock else (3.5 if is_style_restyle else 5.0)},
         },
         "42": {
             "class_type": "RandomNoise",
@@ -168,7 +217,7 @@ def build_workflow(prompt: str, *, width: int = 1024, height: int = 1024,
             "class_type": "SamplerCustomAdvanced",
             "inputs": {"noise": ["42", 0], "guider": ["26", 0],
                        "sampler": ["41", 0], "sigmas": ["40", 0],
-                       "latent_image": ["27", 0]},
+                       "latent_image": ["52", 0] if is_canonical_lock else ["27", 0]},
         },
         "8": {
             "class_type": "VAEDecode",
@@ -179,6 +228,35 @@ def build_workflow(prompt: str, *, width: int = 1024, height: int = 1024,
             "inputs": {"images": ["8", 0], "filename_prefix": filename_prefix},
         },
     }
+
+    if reference_comfy_name:
+        workflow["50"] = {
+            "class_type": "LoadImage",
+            "inputs": {"image": reference_comfy_name},
+        }
+        workflow["51"] = {
+            "class_type": "ImageScale",
+            "inputs": {
+                "image": ["50", 0],
+                "upscale_method": "lanczos",
+                "width": width if is_canonical_lock else 320,
+                "height": height if is_canonical_lock else 320,
+                "crop": "disabled" if is_canonical_lock else "center",
+            },
+        }
+        workflow["52"] = {
+            "class_type": "VAEEncode",
+            "inputs": {"pixels": ["51", 0], "vae": ["10", 0]},
+        }
+        workflow["53"] = {
+            "class_type": "ReferenceLatent",
+            "inputs": {"conditioning": ["6", 0], "latent": ["52", 0]},
+        }
+        if is_canonical_lock:
+            workflow["54"] = {
+                "class_type": "ReferenceLatent",
+                "inputs": {"conditioning": ["33", 0], "latent": ["52", 0]},
+            }
 
     if trained_adapter:
         import sys
@@ -313,6 +391,29 @@ def fetch_to(url: str, dest: Path) -> int:
     dest.parent.mkdir(parents=True, exist_ok=True)
     with urllib.request.urlopen(url, timeout=60) as r:
         data = r.read()
+    try:
+        import io
+        import sys
+        import numpy as np
+        from PIL import Image
+        root_dir = str(Path(__file__).resolve().parents[2])
+        py_srv = str(Path(__file__).resolve().parent)
+        if root_dir not in sys.path:
+            sys.path.insert(0, root_dir)
+        if py_srv not in sys.path:
+            sys.path.insert(0, py_srv)
+        from auto_rl.versions import preference
+        if preference("image") == "validated":
+            from pixel_perfect_optical_engine import apply_pixel_perfect_optical_refinement
+            img_pil = Image.open(io.BytesIO(data)).convert("RGB")
+            arr = np.asarray(img_pil, dtype=np.uint8)
+            pp_res = apply_pixel_perfect_optical_refinement(arr, is_uv_texture=False)
+            out_pil = Image.fromarray(pp_res["image"], mode="RGB")
+            buf = io.BytesIO()
+            out_pil.save(buf, format="PNG", compress_level=3)
+            data = buf.getvalue()
+    except Exception:
+        pass
     dest.write_bytes(data)
     return len(data)
 
@@ -406,34 +507,61 @@ def _motion_reference_contract(motion_prompt: str | None) -> str:
 
 def _human_fidelity_contract(prompt: str, subject_kind: str | None,
                              motion_prompt: str | None = None) -> str:
-    """Hard prompt block for human/character assets.
+    """Hard prompt block for human/character/creature assets.
 
-    The old procedural fallback could satisfy "there is a body" while missing
-    the actual requirement: identity, readable face, textures and real hands.
-    Keep this separate so product/machine prompts are not overconstrained.
+    Distinguishes bipedal/humanoid characters from non-humanoid quadrupeds/creatures
+    via `infer_universal_morphology` so quadrupeds (e.g. Kitsune, Xylo-Vulpis, wolves, dragons)
+    NEVER receive human A/T-pose arm/hand instructions.
     """
     kind = (subject_kind or "").lower()
     text = " ".join([prompt or "", motion_prompt or ""]).lower()
-    is_character = kind in {"character", "humanoid", "creature"} or re.search(
+    try:
+        if str(REPO_ROOT) not in sys.path:
+            sys.path.insert(0, str(REPO_ROOT))
+        from agi_core.prompt_intelligence import infer_universal_morphology
+        morph = infer_universal_morphology(text)
+        if morph.get("is_non_humanoid_creature") or kind == "creature":
+            return (
+                "HIGH-FIDELITY NON-HUMANOID CREATURE CONTRACT, natural anatomical quadruped/creature stance, "
+                "strictly 4 anatomical legs and paws standing on the ground with clear separation between front and hind legs, "
+                "ZERO human arms, ZERO humanoid hands, sharp readable snout, eyes, ears, fur/scales, and well-separated tails"
+            )
+    except Exception:
+        pass
+    is_character = kind in {"character", "humanoid"} or re.search(
         r"\b(personnage|personne|human|humain|character|visage|face|mains?|hands?)\b",
         text,
     )
     if not is_character:
         return ""
-    block = HUMAN_FIDELITY_CONTRACT
-    if re.search(r"\b(anime|manga|fairy\s*tail|shonen)\b", text):
-        block += (
-            ", anime identity may stay anime-styled only when explicitly requested, "
-            "but the 3D asset must still have readable facial features, costume pieces, palms and separate fingers"
+    if _style_demande(text):
+        block = (
+            "HIGH-FIDELITY STYLIZED CHARACTER CONTRACT, preserve the exact requested cartoon, anime, "
+            "figurine, toy, chibi, claymation or stylized proportions, silhouette and identity, "
+            "sharp readable face, eyes, expression, costume geometry and clean surface shading, "
+            "both hands/paws/limbs clearly articulated and separated with readable digits, "
+            "no fused limbs, no hands hidden in sleeves or pockets"
         )
     else:
-        block += ", photorealistic adult human proportions by default, not cartoon"
+        block = HUMAN_FIDELITY_CONTRACT + ", photorealistic adult human proportions by default, not cartoon"
     if ARM_CRITICAL_MOTION_RX.search(text):
         block += (
             ", because the motion uses arms/hands, hands must be open enough to verify palm direction "
             "and finger separation in the reference"
         )
     return block
+
+CREATURE_TURNAROUND_CONTRACT = (
+    ", fur, mane, scales and tails as BOLD SCULPTED MASSES with clean readable silhouette, "
+    "fine fur grain shown as SURFACE TEXTURE only, no isolated flyaway strands, "
+    "STRICT SINGLE-VIEW RECONSTRUCTION REFERENCE, one full-body creature/quadruped only, "
+    "exactly one figure in the image, no duplicate copies, no lineup, no triptych, "
+    "no contact sheet, no model sheet, no turnaround sheet inside the image, "
+    "natural anatomical quadruped/creature stance, strictly 4 anatomical legs and paws standing on the ground "
+    "with clear separation between front and hind legs, ZERO human arms, ZERO humanoid hands, "
+    "all paws and tails fully visible with clear white margin around the whole body, "
+    "single centered subject, sharp snout, eyes and edges, no blur, no duplicate subject"
+)
 
 MULTIVIEW_SUFFIXES = {
     "front": ", front view, facing camera, isolated white background, photorealistic 3D reference" + TURNAROUND_CONTRACT,
@@ -442,29 +570,70 @@ MULTIVIEW_SUFFIXES = {
     "right": ", exact right side profile view, 90 degree side view, no front-facing pose, isolated white background, photorealistic 3D reference" + TURNAROUND_CONTRACT,
 }
 
+CREATURE_MULTIVIEW_SUFFIXES = {
+    "front": ", front view, facing camera, isolated white background, photorealistic 3D reference" + CREATURE_TURNAROUND_CONTRACT,
+    "back":  ", back view, rear of subject, no face visible, isolated white background, photorealistic 3D reference" + CREATURE_TURNAROUND_CONTRACT,
+    "left":  ", exact left side profile view, 90 degree side view, no front-facing pose, isolated white background, photorealistic 3D reference" + CREATURE_TURNAROUND_CONTRACT,
+    "right": ", exact right side profile view, 90 degree side view, no front-facing pose, isolated white background, photorealistic 3D reference" + CREATURE_TURNAROUND_CONTRACT,
+}
+
 
 # Mots par lesquels un HUMAIN demande un style (francais ecrit naturellement,
 # accents compris) — teste sur de vraies formulations: "goldorak facon anime",
-# "un dragon en dessin anime", "un robot stylise", "style pixar", "facon peluche".
-# Piege corrige: "anime" (sans accent) ne matchait PAS "anime" (avec accent),
-# et un \b apres "stylis" ne matchait pas "stylise".
+# "un dragon en dessin anime", "un robot stylise", "style pixar", "facon peluche",
+# "zig et sharko", "personnage reel en cartoon figurine", "en funko pop".
 _STYLE_RX = re.compile(
     r"(cartoon|dessin[s]?\s*anim|anim[eé]|manga|toon|cel[-\s]?shad|comic|"
     r"bande[-\s]?dessin|\bbd\b|stylis|illustration|dessin|croquis|aquarelle|"
     r"peinture|pixel[-\s]?art|low[-\s]?poly|voxel|chibi|kawaii|"
-    r"pixar|disney|ghibli|lego|playmobil|peluche|jouet|figurine\s+cartoon|"
+    r"pixar|disney|ghibli|dreamworks|illumination|nickelodeon|cartoon\s*network|xilam|"
+    r"looney\s*tunes|tex\s*avery|hanna[-\s]?barbera|"
+    r"lego|playmobil|peluche|plush(?:ie)?|jouet|toy\b|action\s*figure|"
+    r"figurine|funko(?:\s*pop)?|nendoroid|statuette|poup[eé]e|doll\b|mascotte|mascot|"
+    r"p[aâ]te\s+[aà]\s+modeler|clay(?:mation)?|plasticine|stop[-\s]?motion|aardman|caricature|"
     r"\b2d\b|plat\b|flat\b|retro|vintage|steampunk|cyberpunk|"
     r"aquarel|bd\b|comics?|manhwa|webtoon)",
     re.I)
 
+_EXPLICIT_REAL_OVERRIDE_RX = re.compile(
+    r"\b(texture[s]?\s+(?:de\s+)?(?:personne|peau|humain[e]?|vrai[e]?)\s+r[eé]el(?:le)?s?|"
+    r"peau\s+(?:humaine\s+)?r[eé]elle|en\s+(?:vrai[e]?\s+)?(?:personne|humain)\s+r[eé]el(?:le)?|"
+    r"live[-\s]?action|cosplay\s+r[eé]aliste|photorealistic\s+human\s+skin|"
+    r"real\s+human\s+(?:skin\s+)?textures?|realistic\s+skin\s+pores|"
+    r"en\s+r[eé]aliste|version\s+r[eé]aliste|style\s+r[eé]aliste)\b",
+    re.I,
+)
+
 
 def _style_demande(texte: str) -> bool:
-    """L'utilisateur a-t-il demande un style precis ? (sinon: realiste par defaut)
+    """L'utilisateur a-t-il demande un style precis ou un personnage nativement cartoon/anime ?
 
-    Rend True des qu'une intention de style apparait, quelle que soit la tournure:
-    "facon X", "style X", "en X", "type X", "version X", "comme dans X".
+    Utilise à la fois la détection syntaxique universelle (`extract_universal_style_clause`),
+    l'ontologie Monde Ouvert Wikipedia (`analyze_and_direct_prompt`) et les marqueurs rapides
+    pour ne dépendre d'aucune liste figée de personnages ou de styles.
     """
-    return bool(_STYLE_RX.search(texte or ""))
+    t = texte or ""
+    if _EXPLICIT_REAL_OVERRIDE_RX.search(t) and not re.search(
+        r"\b(?:en|into|to|style|fa[cç]on|version)\s+(?:un[e]?\s+)?(?:cartoon|figurine|anime|manga|chibi|funko|pixar|peluche|jouet|low[-\s]?poly|voxel|bd|comics?)\b",
+        t,
+        re.I,
+    ):
+        return False
+    if _STYLE_RX.search(t):
+        return True
+    try:
+        if str(REPO_ROOT) not in sys.path:
+            sys.path.insert(0, str(REPO_ROOT))
+        from agi_core.prompt_intelligence import extract_universal_style_clause, analyze_and_direct_prompt
+        sc = extract_universal_style_clause(t)
+        if sc.get("has_style_clause") and not sc.get("is_real_override"):
+            return True
+        ont = analyze_and_direct_prompt(t, target_module="3d", use_llm=False, use_open_world=True)
+        if ont.get("effective_render_mode") in {"native_anime_stylized", "hybrid_real_to_stylized", "native_game_stylized"}:
+            return True
+    except Exception:
+        pass
+    return False
 
 
 # DETECTION DE COMPOSITION. "un Pikachu" = un sujet seul a detourer; "une ville
@@ -543,14 +712,9 @@ def _single_view_base_prompt(prompt: str) -> str:
         cleaned = re.sub(pattern, "single clean reconstruction view", cleaned, flags=re.I)
     cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" ,.")
     cleaned = cleaned or prompt
-    # STYLE REALISTE PAR DEFAUT. Sans directive, FLUX rend un sujet nomme (surtout
-    # un perso d'anime comme Goldorak) en illustration cartoon plate — mauvais pour
-    # la reconstruction 3D ET non demande par l'utilisateur. On force un rendu 3D
-    # realiste (qualite figurine/studio) SAUF si un style est explicitement demande.
-    # ... mais la directive n'est pas la meme selon ce qui est demande: un sujet
-    # seul se rend comme une piece de collection sur fond neutre, un lieu se rend
-    # comme une photographie de ce lieu. Appliquer la formule "figurine studio" a
-    # une ville la posait sur une table comme un objet.
+    # STYLE REALISTE PAR DEFAUT uniquement si aucun style ni personnage cartoon/anime
+    # n'est demande. Si un style cartoon/anime/figurine/chibi est demande, on preserve
+    # 100% du style demande tout en assurant un volume 3D lisible pour la reconstruction.
     if not _style_demande(cleaned):
         if composition_de(cleaned) == "scene":
             cleaned += (", photorealistic photograph, natural environment lighting, "
@@ -561,6 +725,10 @@ def _single_view_base_prompt(prompt: str) -> str:
             cleaned += (", realistic 3D render, high-detail collectible figure, studio "
                         "product photography lighting, physically based materials, "
                         "sharp fine surface detail, NOT a flat 2D cartoon or cel-shaded drawing")
+    else:
+        if "3d" not in cleaned.lower() and "volumetric" not in cleaned.lower():
+            cleaned += (", 3D volumetric stylized render with clean depth, studio lighting, "
+                        "and readable 3D geometry faithful to the requested style")
     # CHEVEUX EN MASSES SCULPTEES. Mesure sur le guerrier: les meches fines de
     # la reference (0.5-2 mm a l'echelle du modele) sont SOUS la cellule
     # effective de la grille TRELLIS (1.6 mm) -> la tete sort en eponge
@@ -602,8 +770,8 @@ def _retry_single_view_prompt(prompt: str, attempt_index: int, failures: list[st
         additions.append("sharp high-frequency detail, crisp face, crisp clothing edges, no blur")
     if "palette" in failure_text or "diverges" in failure_text:
         additions.append(
-            "STRICT IDENTITY/COLOR CONSISTENCY: every view must keep the exact same black suit, "
-            "white shirt, black bow tie, skin tone, hair color, beard color, lighting and contrast"
+            "STRICT IDENTITY/COLOR CONSISTENCY: every view must keep the exact same requested colors, "
+            "materials, surface texture, markings, lighting and contrast"
         )
     if "motion-ready" in failure_text or "arms" in failure_text or "hands" in failure_text:
         additions.append(
@@ -691,7 +859,12 @@ def _cleanup_character_reference(path: str | Path) -> dict:
             components,
             key=lambda c: c[0] * (1.0 - min(0.82, (((c[5] - cx0) ** 2 + (c[6] - cy0) ** 2) ** 0.5) / diag)),
         )
-        keep_area, minx, miny, maxx, maxy, *_ = kept
+        max_area = float(kept[0])
+        major_comps = [c for c in components if c[0] >= 0.16 * max_area]
+        minx = min(c[1] for c in major_comps)
+        miny = min(c[2] for c in major_comps)
+        maxx = max(c[3] for c in major_comps)
+        maxy = max(c[4] for c in major_comps)
         for y in range(h):
             for x in range(w):
                 if not mask[y][x]:
@@ -938,7 +1111,9 @@ def synth_multiview(prompt: str, run_id: str, *,
                     comfy_base: str = COMFY_BASE,
                     subject_kind: str | None = None,
                     max_attempts: int | None = None,
-                    motion_prompt: str | None = None) -> dict:
+                    motion_prompt: str | None = None,
+                    reference_image: str | Path | None = None,
+                    reference_denoise: float = 0.08) -> dict:
     """Generate 4 views (front/back/left/right) of the same prompt with a
     shared seed so the subject identity is preserved across views.
     Output: <run_id>_reference.png (front, primary), plus
@@ -986,13 +1161,25 @@ def synth_multiview(prompt: str, run_id: str, *,
         else:
             seed_used = int(seed) + attempt - 1
         views = {}
-        for view, suffix in MULTIVIEW_SUFFIXES.items():
-            view_prompt = attempt_prompt.rstrip().rstrip(",.") + suffix
+        is_stylized_mv = _style_demande(attempt_prompt)
+        is_creature_mv = kind in {"creature", "quadruped"} or "NON-HUMANOID CREATURE CONTRACT" in attempt_prompt
+        active_suffixes = CREATURE_MULTIVIEW_SUFFIXES if is_creature_mv else MULTIVIEW_SUFFIXES
+        for view, suffix in active_suffixes.items():
+            eff_suffix = (
+                suffix.replace(
+                    "photorealistic 3D reference",
+                    "consistent 3D turnaround reference preserving the exact requested style",
+                )
+                if is_stylized_mv
+                else suffix
+            )
+            view_prompt = attempt_prompt.rstrip().rstrip(",.") + eff_suffix
             view_run_id = f"{run_id}_{view}" if view != "front" else run_id
             sub = synth(
                 view_prompt, view_run_id, output_dir=output_dir,
                 width=width, height=height, steps=steps,
                 seed=seed_used, comfy_base=comfy_base,
+                reference_image=reference_image if view == "front" else None,
             )
             if not sub.get("ok"):
                 return {"ok": False, "error": f"view '{view}' failed: {sub.get('error')}",
@@ -1076,16 +1263,21 @@ def synth(prompt: str, run_id: str, *,
           output_dir: Path = DEFAULT_OUTPUT_DIR,
           width: int = 1024, height: int = 1024, steps: int = 25,
           seed: int | None = None,
-          comfy_base: str = COMFY_BASE) -> dict:
+          comfy_base: str = COMFY_BASE,
+          reference_image: str | Path | None = None,
+          reference_denoise: float = 0.08) -> dict:
     if not prompt.strip():
         return {"ok": False, "error": "empty prompt"}
     if not run_id.strip():
         return {"ok": False, "error": "empty run_id"}
 
     started_at = time.time()
+    ref_comfy_name = upload_reference_image(reference_image, comfy_base) if reference_image else None
     workflow = build_workflow(
         prompt, width=width, height=height, steps=steps,
         seed=seed, filename_prefix=f"aurora_{run_id}",
+        reference_comfy_name=ref_comfy_name,
+        reference_denoise=reference_denoise,
     )
     # FLUX.1: le seed vit dans le KSampler "31". (Sous FLUX.2 il vivait dans le
     # noeud RandomNoise "42"; on lit les deux pour rester robuste si le graphe change.)
@@ -1118,6 +1310,19 @@ def synth(prompt: str, run_id: str, *,
         size = fetch_to(url, out_path)
     except OSError as exc:
         return {"ok": False, "error": f"fetch failed: {exc}", "src_url": url}
+
+    # Libere immediatement les ~20 Go de RAM (--novram) de ComfyUI apres synthese
+    try:
+        free_req = urllib.request.Request(
+            f"{comfy_base}/free",
+            data=b'{"unload_models": true, "free_memory": true}',
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(free_req, timeout=5) as free_resp:
+            free_resp.read()
+    except Exception:
+        pass
 
     sidecar = output_dir / f"{run_id}_prompt.txt"
     sidecar.parent.mkdir(parents=True, exist_ok=True)

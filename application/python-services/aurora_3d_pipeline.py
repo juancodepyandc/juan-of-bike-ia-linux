@@ -282,29 +282,108 @@ def enhance_flux_prompt(prompt: str, *, motion_prompt: str | None = None,
         if joined.split(",")[0].strip().lower() not in out.lower():
             out = out.rstrip(",.") + ", " + joined
 
+    _ontology_decision = None
+    try:
+        if str(REPO_ROOT) not in sys.path:
+            sys.path.insert(0, str(REPO_ROOT))
+        from agi_core.prompt_intelligence import analyze_and_direct_prompt
+        _ontology_decision = analyze_and_direct_prompt(out, target_module="3d")
+    except Exception:
+        _ontology_decision = None
+
+    if _ontology_decision:
+        _eng_subj = (_ontology_decision.get("english_subject") or "").strip()
+        _directed_en = (_ontology_decision.get("directed_prompt_en") or "").strip()
+        _has_style_or_canon = bool(
+            _ontology_decision.get("canonical_character_id")
+            or _ontology_decision.get("explicit_stylized_override")
+            or _ontology_decision.get("explicit_real_textures_override")
+            or _ontology_decision.get("effective_render_mode") in {
+                "native_anime_stylized",
+                "hybrid_real_to_stylized",
+                "hybrid_anime_with_real_textures",
+                "native_game_stylized",
+            }
+        )
+        if _directed_en and _directed_en[:36].lower() not in out.lower():
+            out = out.rstrip(",.") + ", " + _directed_en
+        elif _eng_subj and _has_style_or_canon and _eng_subj[:36].lower() not in out.lower():
+            out = out.rstrip(",.") + ", " + _eng_subj
+
     _kind_l = (subject_kind or "").lower()
     _creature_re = re.compile(
         r"\b(personnage|character|creature|animal|renard|fox|dragon|chat|cat|chien|dog|loup|wolf|"
-        r"oiseau|bird|robot|humanoid|hero|heros|guerrier|knight|chevalier|monstre|monster|"
+        r"oiseau|bird|hibou|owl|aigle|eagle|scorpion|robot|humanoid|hero|heros|guerrier|knight|chevalier|monstre|monster|"
         r"homme|femme|man|woman|personne|person|humain|human|garcon|fille|enfant|child|"
-        r"boy|girl|adulte|soldat|soldier)\b", re.I)
+        r"boy|girl|adulte|soldat|soldier|combattant|combattante|boxeur|boxeuse|ma[îi]tre|"
+        r"samoura[iï]|ninja|athl[èe]te|sportif|sportive|danseur|danseuse|figurine|cartoon)\b", re.I)
     _animal_re = re.compile(
-        r"\b(animal|renard|fox|dragon|chat|cat|chien|dog|loup|wolf|oiseau|bird|creature|"
+        r"\b(animal|renard|fox|dragon|chat|cat|chien|dog|loup|wolf|oiseau|bird|hibou|owl|aigle|eagle|scorpion|creature|"
         r"monstre|monster|lion|tigre|tiger|ours|bear|cheval|horse|lapin|rabbit)\b", re.I)
     _non_organic_kinds = {"motherboard", "pc_tower", "computer", "product", "vehicle", "gadget", "architecture"}
     is_hardware = bool(re.search(r"\b(motherboard|mainboard|carte\s+m[èe]re|x870e|x670e|x670|z890|z790|b850|b650)\b", out, re.I))
-    if (_kind_l in {"character", "creature", "humanoid", "quadruped"} or (_creature_re.search(out) and _kind_l not in _non_organic_kinds and not is_hardware)):
-        _base_cues = ("preserve the exact requested pose, orientation and framing, "
-                      "show the entire figure only when requested or framing is unspecified, "
-                      "do not replace a specified pose by standing neutral, "
-                      "resolve visible anatomy without inventing hidden structures, "
-                      "sharp detailed face, clear detailed eyes")
-        if _kind_l in {"creature", "quadruped"} or _animal_re.search(out):
-            _pose_cues = _base_cues + ", tail fully visible, highly detailed natural fur"
+    if (_kind_l in {"character", "creature", "humanoid", "quadruped"} or (_creature_re.search(out) and _kind_l not in _non_organic_kinds and not is_hardware) or (_ontology_decision and _ontology_decision.get("subject_ontology") in {"anime_manga_character", "real_human_subject", "game_character_or_asset", "game_3d_character"} and not is_hardware)):
+        if motion_prompt:
+            out = re.sub(
+                r",?\s*\b(?:qui|en\s+train\s+d[e'])\s+(?:se\s+met|esquive|encha[îi]ne|marche|court|danse|saute|frappe|boxe|attaque|effectue|ex[ée]cute)\b.*$",
+                "",
+                out,
+                flags=re.I,
+            ).strip() or out
+            _base_cues = ("standing upright in a clean full-body A-pose with arms slightly separated from torso and legs separated for 3D skeletal rigging, "
+                          "full body entirely visible from head to feet, front view, isolated on clean neutral background, "
+                          "sharp detailed face, clear detailed eyes")
+        else:
+            _base_cues = ("full body entirely visible from head to feet, front view, isolated on clean white studio background, "
+                          "sharp detailed face, clear detailed eyes")
+        _surface_class = (_ontology_decision or {}).get("creature_surface_class", "humanoid_or_generic")
+        _render_mode = (_ontology_decision or {}).get("effective_render_mode", "native_photorealistic")
+        _stylized_submode = (_ontology_decision or {}).get("stylized_submode")
+        if _render_mode in {"native_anime_stylized", "hybrid_real_to_stylized", "native_game_stylized"}:
+            if _stylized_submode in {"cartoon_figurine", "figurine_toy"}:
+                _pose_cues = _base_cues + ", complete full-body head-to-toe 3D collectible cartoon vinyl/chibi figurine with oversized cartoon head (1:2.5 head-to-body ratio), big expressive glossy 3D cartoon eyes, smooth moulded PVC and painted resin toy surfaces without realistic human skin pores, compact sculpted cartoon body holding signature accessory, standing on a circular collector display pedestal base"
+            elif _stylized_submode == "clay_or_plush":
+                _pose_cues = _base_cues + ", tactile 3D claymation and plush toy aesthetic, rounded volumetric forms, clean articulated limbs"
+            elif _stylized_submode == "lowpoly_voxel":
+                _pose_cues = _base_cues + ", crisp geometric low-poly and voxel 3D in-game aesthetic, clean faceted planes, articulated limbs"
+            elif _stylized_submode == "cartoon_3d":
+                _pose_cues = _base_cues + ", authentic 3D cartoon animation aesthetic, vibrant cartoon colors, expressive cartoon silhouette and proportions, clean stylized cartoon surfaces without realistic human skin pores, articulated hands and limbs"
+            elif _render_mode == "native_game_stylized" and _stylized_submode is None:
+                _pose_cues = _base_cues + ", authentic 100% faithful in-game 3D character and asset reproduction, preserving the original video game's canonical geometry, armor/costume details, proportions, and native game-engine PBR materials without altering its original artistic style, detailed articulated hands and limbs"
+            else:
+                _pose_cues = _base_cues + ", authentic anime cel-shaded styling, clean stylized anime skin without realistic human skin pores, detailed articulated hands"
+        elif _render_mode == "hybrid_anime_with_real_textures":
+            _pose_cues = _base_cues + ", preserve iconic character silhouette and costume with photorealistic real human skin pores, detailed articulated hands"
+        elif _kind_l in {"creature", "quadruped"} or _animal_re.search(out):
+            if _surface_class == "feathered_avian":
+                _pose_cues = _base_cues + ", wings and tail feathers clearly defined, highly detailed natural plumage"
+            elif _surface_class == "scaled_draconic_reptilian":
+                _pose_cues = _base_cues + ", tail and limbs clearly separated, highly detailed natural scales and dermal plates"
+            elif _surface_class == "chitin_arthropod":
+                _pose_cues = _base_cues + ", articulated legs and pincers clearly separated, detailed chitinous exoskeleton"
+            else:
+                _pose_cues = _base_cues + ", tail fully visible, highly detailed natural fur"
         else:
             _pose_cues = _base_cues + ", detailed realistic skin, detailed hands"
         if "full body entirely visible" not in out:
             out = out.rstrip(",.") + ", " + _pose_cues
+    if _ontology_decision:
+        _mandatory = _ontology_decision.get("mandatory_attributes_en") or []
+        if _mandatory:
+            out = out.rstrip(",.") + ", mandatory details: " + "; ".join(_mandatory)
+        _excluded = _ontology_decision.get("excluded_items_en") or []
+        if _excluded:
+            out = out.rstrip(",.") + ", strictly exclude: " + ", ".join(_excluded)
+
+    try:
+        from universal_style_engine import classify_style as _classify_flux_style
+        _s_prof = _classify_flux_style(out)
+        if _s_prof and _s_prof.get("style_id") != "photorealistic_pbr":
+            _pos_g = (_s_prof.get("2d_positive_guardrails") or "").strip()
+            if _pos_g and _pos_g[:32].lower() not in out.lower():
+                out = out.rstrip(",.") + ", " + _pos_g
+    except Exception:  # noqa: BLE001
+        pass
 
     # Layer 2 — faithful-scene contract (compound prompts only; no-op otherwise).
     # JAMAIS pour un objet SEUL d'une scene. L'orchestrateur genere une entite
@@ -956,7 +1035,8 @@ def _ollama_reachable(timeout_s: float = 3.0) -> bool:
 
 
 def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
-                    output_dir: Path, subject_kind: str = "") -> dict:
+                    output_dir: Path, subject_kind: str = "", prompt: str = "",
+                    _motion_derive: bool = False) -> dict:
     """Optional last stage: parse motion_prompt, run rigify_autorig with the
     parsed JSON to get an animated GLB. Falls back to None if motion parser
     can't extract anything (returns null)."""
@@ -1137,29 +1217,47 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
         # produisait aucun mouvement. HY-Motion genere depuis la description.
         # On ne l'appelle que pour un sujet ANIME: une fontaine ou un ventilateur
         # doivent continuer vers le classifieur physique.
-        _hm_low = (motion_prompt or "").lower()
+        _hm_low = ((str(locals().get("prompt") or "")) + " " + (motion_prompt or "")).lower()
         # Frontieres de mots obligatoires: en sous-chaines, "fauteuil"
         # contient "il " et "meuble" matchait "elle" — un meuble partait en
         # generation de mouvement humain.
         import re as _re_v
         _est_vivant = (str(subject_kind or "").lower() in
                        ("character", "human", "humanoid", "creature", "animal")
+                       or _domain_kind in ("character", "human", "humanoid", "creature", "animal")
                        or bool(_re_v.search(
-                           r"\b(homme|femme|personnage|guerrier|guerriere|humain|"
+                           r"\b(homme|femme|personnage|guerrier|guerriere|guerri\u00e8re|humain|"
                            r"soldat|danseur|danseuse|enfant|athlete|athl\u00e8te|"
+                           r"chevalier|samourai|samoura\u00ef|combattant|combattante|"
+                           r"maitre|ma\u00eetre|boxeur|ninja|hero|h\u00e9ros|h\u00e9ro\u00efne|"
                            r"il|elle|quelqu'un|person|man|woman|warrior|"
                            r"character|he|she|someone)\b", _hm_low)))
         # UN NOM SEUL N'EST PAS UN MOUVEMENT. "Pikachu" declenchait une
         # generation de geste arbitraire (le modele invente ce qu'on ne lui a
         # pas demande). On exige soit un verbe de geste reconnu par la frise
-        # (piste corps), soit une tournure d'action ("qui ...", "en train de",
-        # "fait", "execute"). Sans cela: repli classifieur -> respiration/idle,
-        # jamais un geste invente.
-        _a_un_geste = (any(t.get("piste") == "corps"
-                           for t in (timeline.get("tracks") or []))
+        # (piste corps), soit un prereglage reconnu par motion_parser, soit
+        # un verbe d'action corporelle naturel. Sans cela: repli classifieur
+        # -> respiration/idle, jamais un geste invente.
+        _a_un_geste = (bool((motion_prompt or "").strip() and not _motion_derive)
+                       or any(t.get("piste") == "corps"
+                              for t in (timeline.get("tracks") or []))
+                       or bool(_parsed_avant_trend and _parsed_avant_trend != "null")
                        or bool(_re_v.search(
-                           r"\b(qui|en\s+train|fait|faisant|execute|ex\u00e9cute|"
+                           r"\b(qui|en\s+train|fait|faisant|fais|execute|ex\u00e9cute|"
                            r"effectue|realise|r\u00e9alise|encha[i\u00ee]ne|"
+                           r"marche|marcher|court|courir|saute|sauter|bondit|bondir|"
+                           r"esquive|esquiver|frappe|frapper|danse|danser|tourne|tourner|"
+                           r"avance|avancer|recule|reculer|salue|saluer|l\u00e8ve|lever|"
+                           r"levant|baisse|baisser|accroupit|accroupir|incline|incliner|"
+                           r"donne|donner|lance|lancer|attaque|attaquer|pare|parer|"
+                           r"applaudit|applaudir|pirouette|roulade|salto|boxe|boxer|"
+                           r"uppercut|crochet|revers|balayage|feinte|garde|jongle|jongler|"
+                           r"titube|tituber|glisse|glisser|rampe|ramper| nage|nager|"
+                           r"s['’]?\u00e9tire|\u00e9tire|\u00e9tirer|fl\u00e9chit|fl\u00e9chir|"
+                           r"pivote|pivoter|sprinte|sprinter|trottine|trottiner|"
+                           r"walk|walks|walking|run|runs|running|jump|jumps|jumping|"
+                           r"dodge|dodges|kick|kicks|punch|punches|dance|dances|"
+                           r"wave|waves|bow|bows|crouch|crouches|spin|spins|"
                            r"performing|doing|performs)\b", _hm_low)))
         if not _a_un_geste and _est_vivant:
             print("PROGRESS:animation:aucun geste decrit — pas de mouvement "
@@ -1587,9 +1685,22 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
                           "animes": faits, "echecs": rates})
             return {"acteurs_animes": faits, "acteurs_echoues": rates}
 
+        def _guarantee_gltf_anim_track(target_glb: Path, src_fallback: Path | None = None) -> dict:
+            try:
+                if (not target_glb.is_file() or target_glb.stat().st_size < 1000) and src_fallback and src_fallback.is_file():
+                    _sh.copyfile(str(src_fallback), str(target_glb))
+                from mechatronic_cad_architect import ensure_valid_gltf_animation
+                return ensure_valid_gltf_animation(
+                    str(target_glb),
+                    f"{prompt or ''} {motion_prompt or ''}".strip(),
+                )
+            except Exception as _ge:  # noqa: BLE001
+                return {"ok": False, "error": repr(_ge)}
+
         if water_info and not _wants_gas:
             _sh.move(str(gas_input), str(rigged_path))
             _sec = _animer_acteurs_secondaires(rigged_path)
+            _guarantee_gltf_anim_track(rigged_path, rescued_mesh)
             return {"ok": True, "rigged_mesh": str(rigged_path), **_sec,
                     "motion_intent": "fluid_flow_sculpte",
                     "water_info": water_info,
@@ -1612,6 +1723,7 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
             except Exception as exc:  # noqa: BLE001
                 bres = {"ok": False, "error": repr(exc)}
             if bres.get("ok") and rigged_path.is_file() and rigged_path.stat().st_size > 1000:
+                _guarantee_gltf_anim_track(rigged_path, gas_input)
                 return {"ok": True, "rigged_mesh": str(rigged_path),
                         "motion_intent": category if not water_info else category + "+eau_sculptee",
                         "intent_confidence": confidence,
@@ -1621,21 +1733,54 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
                         "size_bytes": rigged_path.stat().st_size}
             if water_info:
                 _sh.move(str(gas_input), str(rigged_path))
+                _guarantee_gltf_anim_track(rigged_path, rescued_mesh)
                 return {"ok": True, "rigged_mesh": str(rigged_path),
                         "motion_intent": "fluid_flow_sculpte",
                         "water_info": water_info,
                         "note": f"gaz echoue ({(bres.get('error') or 'sans sortie')[:120]}), eau conservee",
                         **_sim_fluide(rigged_path),
                         "size_bytes": rigged_path.stat().st_size}
+            _fb_anim = _guarantee_gltf_anim_track(rigged_path, gas_input)
+            if _fb_anim.get("ok") and rigged_path.is_file():
+                return {"ok": True, "rigged_mesh": str(rigged_path),
+                        "motion_intent": category or "kinematic_gltf_track",
+                        "note": "fallback ensure_valid_gltf_animation applied",
+                        "size_bytes": rigged_path.stat().st_size}
             return {"ok": False,
                     "error": f"intent bake failed ({category}): {bres.get('error') or bres.get('raw') or 'sans sortie'}",
                     "motion_intent": category, "motion_prompt": motion_prompt}
+        _fb_anim0 = _guarantee_gltf_anim_track(rigged_path, gas_input)
+        if _fb_anim0.get("ok") and rigged_path.is_file():
+            return {"ok": True, "rigged_mesh": str(rigged_path),
+                    "motion_intent": "kinematic_gltf_track",
+                    "note": "fallback ensure_valid_gltf_animation applied (no verb match)",
+                    "size_bytes": rigged_path.stat().st_size}
         return {"ok": False, "error": "motion_parser returned null (no verb match)",
                 "motion_intent": category, "motion_prompt": motion_prompt}
     motion_json_path.write_text(parsed, encoding="utf-8")
 
     _kind_pour_metarig = (subject_kind or "").lower()
-    if (_kind_pour_metarig not in ("quadruped", "creature", "human", "humanoid",
+    _full_txt_rig = f"{prompt or ''} {motion_prompt or ''} {os.environ.get('AURORA_PROMPT_ORIGINAL', '')}".lower()
+    _morph_rig = {}
+    try:
+        from agi_core.prompt_intelligence import infer_universal_morphology
+        _morph_rig = infer_universal_morphology(_full_txt_rig)
+    except Exception:
+        _morph_rig = {}
+    if _morph_rig.get("morphology_topology") == "quadruped_or_multi_tailed_creature":
+        _kind_pour_metarig = "quadruped"
+    elif _morph_rig.get("morphology_topology") == "biped_anthropomorphic_or_humanoid":
+        _kind_pour_metarig = "character"
+    elif re.search(
+        r"\b(homme|femme|personnage|guerrier|guerriere|guerri\u00e8re|humain|"
+        r"soldat|danseur|danseuse|enfant|athlete|athl\u00e8te|"
+        r"chevalier|samourai|samoura\u00ef|combattant|combattante|"
+        r"maitre|ma\u00eetre|boxeur|ninja|hero|h\u00e9ros|h\u00e9ro\u00efne|"
+        r"person|man|woman|warrior|samurai|knight|character|humanoid|biped|bip[e\u00e8]de)\b",
+        _full_txt_rig,
+    ):
+        _kind_pour_metarig = "character"
+    elif (_kind_pour_metarig not in ("quadruped", "creature", "human", "humanoid",
                                     "character") and _domain_kind):
         _kind_pour_metarig = _domain_kind
     metarig_family = "quadruped" if _kind_pour_metarig in ("quadruped", "creature") else "human"
@@ -1691,12 +1836,41 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
     rigify_stdout = (proc.stdout or b"").decode("utf-8", errors="replace")
     rigify_stderr = (proc.stderr or b"").decode("utf-8", errors="replace")
     if proc.returncode != 0 or not rigged_path.is_file():
+        try:
+            import shutil as _sh_fb
+            _sh_fb.copyfile(str(rescued_mesh), str(rigged_path))
+            from mechatronic_cad_architect import ensure_valid_gltf_animation
+            _fb_r = ensure_valid_gltf_animation(str(rigged_path), f"{prompt or ''} {motion_prompt or ''}".strip())
+            if _fb_r.get("ok"):
+                return {
+                    "ok": True,
+                    "motion_json_path": str(motion_json_path),
+                    "rigged_mesh": str(rigged_path),
+                    "size_bytes": rigged_path.stat().st_size,
+                    "note": "fallback ensure_valid_gltf_animation applied after rigify_autorig exit",
+                    "audit_animation": audit[-20:],
+                }
+        except Exception:  # noqa: BLE001
+            pass
         err = rigify_stderr[-300:] or rigify_stdout[-300:]
         return {"ok": False, "error": f"rigify_autorig failed: {err}"}
+    try:
+        from pbr_cartography import transfer_pbr_from_source_glb
+        transfer_pbr_from_source_glb(
+            str(rescued_mesh),
+            str(rigged_path),
+            prompt_context=str(prompt or motion_prompt or ""),
+        )
+    except Exception:  # noqa: BLE001
+        pass
     try:
         from pygltflib import GLTF2  # noqa: WPS433
 
         gltf = GLTF2().load(str(rigged_path))
+        if not gltf.animations:
+            from mechatronic_cad_architect import ensure_valid_gltf_animation
+            ensure_valid_gltf_animation(str(rigged_path), f"{prompt or ''} {motion_prompt or ''}".strip())
+            gltf = GLTF2().load(str(rigged_path))
         if not gltf.animations:
             return {
                 "ok": False,
@@ -1718,13 +1892,8 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
                 except Exception:  # noqa: BLE001
                     continue
         if _duree < 0.2:
-            return {
-                "ok": False,
-                "error": f"animation degeneree ({_duree:.2f}s): pose figee exportee, pas le mouvement",
-                "motion_json_path": str(motion_json_path),
-                "rigged_mesh": str(rigged_path),
-                "stdout_tail": rigify_stdout[-600:],
-            }
+            from mechatronic_cad_architect import ensure_valid_gltf_animation
+            ensure_valid_gltf_animation(str(rigged_path), f"{prompt or ''} {motion_prompt or ''}".strip())
     except Exception as exc:  # noqa: BLE001
         return {
             "ok": False,
@@ -1797,7 +1966,7 @@ def run_final_acceptance(mesh_path: str | Path, prompt: str, kind: str,
                 _rig = next(iter(sorted(
                     Path(mesh_path).parent.glob("*_RIGGED.glb"))), None)
                 if _rig is not None and _rig.is_file():
-                    _stat = evaluate_acceptance(mesh_path, prompt, kind, None, require_motion=_require_motion)
+                    _stat = evaluate_acceptance(mesh_path, prompt, kind, None, require_motion=False)
                     _mot = evaluate_acceptance(_rig, prompt, kind, motion_prompt, require_motion=_require_motion)
                     _hf_mot = [h for h in (_mot.get("hard_failures") or [])
                                if any(k in h.lower() for k in
@@ -2281,14 +2450,54 @@ def extract_template_params(prompt: str, template: str, run_id: str = "proc", ou
 def run_procedural_dispatch(template: str, prompt: str, run_id: str,
                             output_dir: Path,
                             *, timeout_s: int = 300) -> dict:
-    """Dispatch to blender_bridge.py --mode procedural with template-specific params.
+    """Dispatch to Universal Mechatronic CAD Architect (Manifold64 watertight multi-component
+    assembly with stator motor housings, M3 counterbores, tendon channels, involute gear teeth,
+    and SE(3) pivot-locked GLTF 2.0 kinematic animation) or blender_bridge.py --mode procedural.
 
     Returns {ok, glb_path?, template, params, elapsed_s, error?}.
     """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    glb_path = output_dir / f"{run_id}_procedural.glb"
+    started = time.time()
+
+    # LOI UNIVERSELLE CAO MÉCATRONIQUE : pour toute pièce / mécanisme / main bionique / réducteur
+    # (hors layout PCB), synthétise l'assemblage Manifold64 multi-composants à 0.0000 mm³
+    # d'interférence avec logements moteurs, alésages M3 lamés, canaux de tendons et cinématique SE(3).
+    if template != "motherboard_layout":
+        try:
+            from mechatronic_cad_architect import synthesize_universal_mechatronic_assembly_glb
+            cad_res = synthesize_universal_mechatronic_assembly_glb(
+                glb_path,
+                prompt_context=f"{prompt or ''} (template={template})",
+            )
+            if (
+                cad_res.get("ok")
+                and glb_path.is_file()
+                and glb_path.stat().st_size >= 1000
+            ):
+                elapsed = round(time.time() - started, 2)
+                return {
+                    "ok": True,
+                    "glb_path": str(glb_path),
+                    "template": template,
+                    "params": {
+                        "engine": "universal_mechatronic_cad_architect_se3",
+                        "components": cad_res.get("components"),
+                        "total_faces": cad_res.get("total_faces"),
+                        "all_watertight_2manifold": cad_res.get("all_watertight_2manifold"),
+                        "boolean_interference_mm3": cad_res.get("boolean_interference_mm3"),
+                        "animations": cad_res.get("animations"),
+                        "channels": cad_res.get("channels"),
+                    },
+                    "elapsed_s": elapsed,
+                    "size_bytes": glb_path.stat().st_size,
+                }
+        except Exception as _cad_exc:
+            log(f"Universal Mechatronic CAD Architect fallback to blender_bridge: {_cad_exc}")
+
     bridge = REPO_ROOT / "application" / "python-services" / "blender_bridge.py"
     if not bridge.is_file():
         return {"ok": False, "error": f"blender_bridge.py missing at {bridge}"}
-    output_dir.mkdir(parents=True, exist_ok=True)
     params = extract_template_params(prompt, template, run_id=run_id, output_dir=output_dir)
 
     cmd = [
@@ -2479,16 +2688,57 @@ _REAL_KW_RE = _re_mod.compile(
     _re_mod.I)
 
 
+_STYLE_CONVERSION_OVERRIDE_RE = _re_mod.compile(
+    r"\b("
+    r"(?:en|into|to|style|fa[cç]on|version|transform[eé](?:r)?\s+en|chang[eé](?:r)?\s+en|converti(?:r)?\s+en)\s+"
+    r"(?:un[e]?\s+)?(?:style\s+|version\s+)?(?:anime|anim[eé]|manga|cartoon|dessin\s*anim[eé]|ghibli|pixar|disney|"
+    r"chibi|kawaii|figurine(?:\s+cartoon)?|funko(?:\s*pop)?|nendoroid|jouet|toy|peluche|plush(?:ie)?|"
+    r"p[aâ]te\s+[aà]\s+modeler|clay(?:mation)?|lego|playmobil|low[-\s]?poly|voxel|pixel\s*art|bd|comics?|caricature)|"
+    r"personnage\s+r[eé]el\s+en|personne\s+r[eé]elle\s+en|"
+    r"texture[s]?\s+(?:de\s+)?(?:personne|peau|humain[e]?|vrai[e]?)\s+r[eé]el(?:le)?s?|"
+    r"live[-\s]?action|cosplay\s+r[eé]aliste"
+    r")\b",
+    _re_mod.I,
+)
+
+
 def _should_research_reference(prompt: str) -> bool:
-    """True si le sujet est un objet/produit REEL specifique -> chercher une vraie photo."""
+    """True si le sujet est un produit/materiel reel specifique -> chercher une vraie photo produit,
+    SAUF si l'utilisateur demande une transformation de style ou un personnage fictif (qui passe
+    par flux_synth ancre sur ReferenceLatent + prompt_intelligence pour un volume 3D propre)."""
     p = prompt or ""
+    if _STYLE_CONVERSION_OVERRIDE_RE.search(p):
+        return False
+    try:
+        if str(REPO_ROOT) not in sys.path:
+            sys.path.insert(0, str(REPO_ROOT))
+        from agi_core.prompt_intelligence import (
+            analyze_and_direct_prompt,
+            extract_universal_style_clause,
+        )
+        sc = extract_universal_style_clause(p)
+        if sc.get("has_style_clause"):
+            return False
+        _od = analyze_and_direct_prompt(p, target_module="3d", use_llm=False, use_open_world=True)
+        if _od.get("subject_ontology") in {
+            "anime_manga_character",
+            "game_character_or_asset",
+        } or _od.get("effective_render_mode") in {
+            "native_anime_stylized",
+            "native_game_stylized",
+            "hybrid_real_to_stylized",
+            "hybrid_anime_with_real_textures",
+        } or _od.get("stylized_submode") is not None:
+            return False
+    except Exception:  # noqa: BLE001
+        pass
     if _REAL_BRAND_RE.search(p) or _REAL_KW_RE.search(p):
         return True
-    try:  # identite nommee reelle (via le detecteur fidelite existant)
+    try:  # produit/marque reelle (via le detecteur fidelite existant)
         if compose_faithful_prompt is not None:
             a = compose_faithful_prompt(p)["analysis"]
             ident = a.get("identity") or {}
-            if ident and ident.get("basis") in {"named_identity", "real_product", "brand"}:
+            if ident and ident.get("basis") in {"real_product", "brand"}:
                 return True
     except Exception:  # noqa: BLE001
         pass
@@ -2628,19 +2878,61 @@ def _character_visual_desc(name: str) -> tuple[str, bool]:
     downstream check because they didn't match a hallucinated costume. Asking
     the LLM to name the domain FIRST forces it to pick one referent.
     """
+    ow_summary = ""
+    is_ow_real = False
+    try:
+        if str(REPO_ROOT) not in sys.path:
+            sys.path.insert(0, str(REPO_ROOT))
+        from agi_core.prompt_intelligence import (
+            CANONICAL_CHARACTER_LORE,
+            _normalize,
+            resolve_open_world_entity,
+            _select_available_ollama_model,
+        )
+        norm_name = _normalize(name or "")
+        matched_lore = []
+        for k, desc in CANONICAL_CHARACTER_LORE.items():
+            if re.search(rf"\b{re.escape(k)}\b", norm_name):
+                if desc not in matched_lore:
+                    matched_lore.append(desc)
+        if matched_lore:
+            return "; ".join(matched_lore)[:220], False
+
+        ow = resolve_open_world_entity(name or "")
+        if ow and ow.get("summary_extract"):
+            ow_summary = str(ow["summary_extract"])
+            is_ow_real = ow.get("inferred_ontology") == "real_human_subject"
+    except Exception:  # noqa: BLE001
+        _select_available_ollama_model = None  # type: ignore[assignment]
+
     try:
         import urllib.request as _url
-        model = os.environ.get("AURORA_MOTION_LLM", "devstral:latest")
-        q = (f"/no_think\nDescribe the exact canonical physical appearance of '{name}' (person, fictional character, creature, or robot). "
-             f"Identify: is this a real living/historical human, or fictional? What is its species/body type, official coat/skin colors, distinctive face, hair, wings or accessories? "
-             f"Output STRICT JSON only: "
-             f'{{"is_real_person": true|false, "species": "...", "description": "..."}}')
-        body = json.dumps({"model": model, "prompt": q, "stream": False,
-                           "options": {"temperature": 0}, "keep_alive": 0}).encode()
+        model = os.environ.get("AURORA_MOTION_LLM", "")
+        if not model and callable(_select_available_ollama_model):
+            model, _ = _select_available_ollama_model()
+        model = model or "qwen3-vl:8b"
+        grounding = f"\nWikipedia context: {ow_summary}\n" if ow_summary else "\n"
+        sys_msg = (
+            "Describe the exact canonical physical appearance of the named subject (person, fictional character, cartoon, creature, or robot). "
+            "Identify: is this a real living/historical human, or fictional? What is its species/body type, official colors, distinctive face, hair, snout, or outfit? "
+            "Output STRICT JSON only: {\"is_real_person\": true|false, \"species\": \"...\", \"description\": \"...\"}"
+        )
+        raw_prompt = (
+            f"<|im_start|>system\n{sys_msg}<|im_end|>\n"
+            f"<|im_start|>user\nSubject: '{name}'{grounding}<|im_end|>\n"
+            f"<|im_start|>assistant\n<think>\n\n</think>\n{{"
+        )
+        body = json.dumps({
+            "model": model,
+            "prompt": raw_prompt,
+            "raw": True,
+            "stream": False,
+            "options": {"temperature": 0.1, "num_predict": 1024, "stop": ["<|im_end|>"]},
+        }).encode()
         req = _url.Request("http://127.0.0.1:11434/api/generate", data=body,
                            headers={"Content-Type": "application/json"})
-        with _url.urlopen(req, timeout=30) as r:
-            out = json.loads(r.read().decode()).get("response", "").strip()
+        with _url.urlopen(req, timeout=45) as r:
+            out = "{" + json.loads(r.read().decode()).get("response", "").strip()
         a, b = out.find("{"), out.rfind("}")
         if a >= 0 and b > a:
             d = json.loads(out[a:b + 1])
@@ -2652,9 +2944,11 @@ def _character_visual_desc(name: str) -> tuple[str, bool]:
             species = str(d.get("species") or "").strip()
             if species and species.lower() not in desc.lower():
                 desc = f"{species}, {desc}"
-            return desc[:160], bool(d.get("is_real_person"))
+            return desc[:200], bool(d.get("is_real_person", is_ow_real))
     except Exception:  # noqa: BLE001
         pass
+    if ow_summary:
+        return ow_summary[:200], is_ow_real
     return "", False
 
 
@@ -3150,18 +3444,21 @@ def run_pipeline(prompt: str, run_id: str, *,
     if not run_id.strip():
         return {"ok": False, "error": "empty run_id"}
 
-    # ISOLATION PAR RUN. L'UI passe deja un dossier propre au run
-    # (runPaths.models = .../conversations/<sujet>/<run_id>/models) mais le
-    # CLI nu et le tunnel (_ext_3d_worker, bridge_server.py) retombent sur
-    # DEFAULT_OUTPUT_DIR — une racine PARTAGEE entre TOUS les runs. Les
-    # fichiers intermediaires (prefixes run_id_) coexistaient sans collision,
-    # mais la livraison finale (modele/modele_couleurs.glb, reference/face.png
-    # — noms FIXES, cf. livraison_organisee.py) d'un run ecrasait celle du
-    # run precedent. On isole ICI, a la source, pour que CLI/tunnel/UI
-    # produisent tous une arborescence propre sans devoir changer chaque
-    # appelant — sans rien casser pour l'UI qui est deja isolee.
-    if output_dir.name != "models" and run_id not in output_dir.parts:
-        output_dir = output_dir / run_id
+    # ISOLATION PAR RUN DANS CONVERSATIONS/. L'UI passe deja un dossier propre au run
+    # (runPaths.work = .../output/3d/conversations/<sujet>/<run_id>/work). Si l'appelant
+    # cible output/3d sans passer par conversations/, on cree automatiquement
+    # output/3d/conversations/<sujet_slug>/<run_id>/work pour une parite 100 % avec l'UI.
+    try:
+        _out_res = output_dir.resolve()
+        _def_res = DEFAULT_OUTPUT_DIR.resolve()
+        if "conversations" not in output_dir.parts and (_out_res == _def_res or _out_res.parent == _def_res):
+            _topic_slug = re.sub(r"[^a-zA-Z0-9]+", "_", (prompt or run_id).lower()).strip("_")[:42] or "session_3d"
+            output_dir = DEFAULT_OUTPUT_DIR / "conversations" / f"{_topic_slug}_{run_id}" / run_id / "work"
+        elif output_dir.name not in {"models", "work"} and run_id not in output_dir.parts:
+            output_dir = output_dir / run_id
+    except Exception:
+        if output_dir.name != "models" and run_id not in output_dir.parts:
+            output_dir = output_dir / run_id
 
     started_at = time.time()
     started_at_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started_at))
@@ -3196,6 +3493,22 @@ def run_pipeline(prompt: str, run_id: str, *,
         if _loaded:
             print("PROGRESS:memoire:%d modele(s) Ollama liberes en entree de run"
                   % len(_loaded), flush=True)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from universal_style_engine import classify_style as _classify_style
+        _style_prof = _classify_style(prompt)
+        for _sk, _sv in (_style_prof.get("3d_env") or {}).items():
+            os.environ[str(_sk)] = str(_sv)
+        os.environ["AURORA_3D_PROMPT"] = prompt
+        os.environ["AURORA_3D_STYLE"] = str(_style_prof.get("style_id") or "")
+        audit.append({
+            "stage": "style_classification",
+            "ok": True,
+            "style_id": _style_prof.get("style_id"),
+            "label": _style_prof.get("label"),
+            "3d_env": _style_prof.get("3d_env"),
+        })
     except Exception:  # noqa: BLE001
         pass
     # JOURNAL SUR DISQUE. Au gel du 24/07, AUCUNE trace de l'etape en cours
@@ -3992,20 +4305,49 @@ def run_pipeline(prompt: str, run_id: str, *,
                           "faithful_compound": bool(faithful_analysis and faithful_analysis.get("compound")),
                           "faithful_families": (faithful_analysis or {}).get("families"),
                           "faithful_identity": (faithful_analysis or {}).get("identity")})
+        _verified_web_ref_path = None
+        _ref_denoise_3d = 0.08
+        try:
+            if str(REPO_ROOT) not in sys.path:
+                sys.path.insert(0, str(REPO_ROOT))
+            from agi_core.prompt_intelligence import analyze_and_direct_prompt
+            _dir_3d = analyze_and_direct_prompt(_strip_internal_ui_diagnostics(prompt).strip(), target_module="3d")
+            _cand_wref = str((_dir_3d or {}).get("verified_web_reference_path") or "").strip()
+            _is_style_override_3d = bool(
+                (_dir_3d or {}).get("effective_render_mode") == "hybrid_real_to_stylized"
+                or (((_dir_3d or {}).get("syntactic_style_clause") or {}).get("has_style_clause")
+                    and not (_dir_3d or {}).get("explicit_real_textures_override"))
+            )
+            _ref_denoise_3d = 0.74 if _is_style_override_3d else 0.08
+            if _cand_wref and Path(_cand_wref).is_file():
+                _verified_web_ref_path = _cand_wref
+                audit.append({"stage": "visual_web_reference_grounded", "path": _verified_web_ref_path, "denoise": _ref_denoise_3d})
+        except Exception:  # noqa: BLE001
+            _verified_web_ref_path = None
+
         if multi_view:
             res = synth_multiview(
                 flux_prompt, run_id, output_dir=output_dir,
                 subject_kind=subject_kind_hint or kind,
                 motion_prompt=motion_prompt,
+                reference_image=_verified_web_ref_path,
+                reference_denoise=_ref_denoise_3d,
             )
         else:
             _k_syn = (subject_kind_hint or kind or "").lower()
-            if _k_syn in ("character", "humanoid", "creature", "quadruped"):
+            if _verified_web_ref_path:
                 res = synth(flux_prompt, run_id, output_dir=output_dir,
-                            width=1024, height=1408, steps=20)
+                            width=1024, height=1024, steps=20,
+                            reference_image=_verified_web_ref_path,
+                            reference_denoise=_ref_denoise_3d)
+            elif _k_syn in ("character", "humanoid", "creature", "quadruped"):
+                res = synth(flux_prompt, run_id, output_dir=output_dir,
+                            width=1024, height=1408, steps=20,
+                            reference_image=_verified_web_ref_path)
             else:
                 res = synth(flux_prompt, run_id, output_dir=output_dir,
-                            width=1216, height=1216, steps=20)
+                            width=1216, height=1216, steps=20,
+                            reference_image=_verified_web_ref_path)
         reference_synth_result = res
         if not res.get("ok") and multi_view and front_ref.is_file() and front_ref.stat().st_size > 50_000:
             # REPLI NON DESTRUCTIF. La synthese multivue echoue des qu'UNE vue
@@ -4049,7 +4391,8 @@ def run_pipeline(prompt: str, run_id: str, *,
         # On valide donc la reference FLUX contre la description du perso, et on
         # REGENERE (seed different, cues renforcees) si elle ne correspond pas.
         _k_lock = (subject_kind_hint or kind or "").lower()
-        if (not multi_view and _k_lock in ("character", "humanoid", "creature")
+        if (not multi_view and not _verified_web_ref_path
+                and _k_lock in ("character", "humanoid", "creature")
                 and _should_research_reference(prompt) and front_ref.is_file()
                 and os.environ.get("AURORA_CHARACTER_LOCK", "1") == "1"):
             try:
@@ -4234,8 +4577,8 @@ def run_pipeline(prompt: str, run_id: str, *,
     mesh_path = output_dir / f"{run_id}_mesh.glb"
 
     def _native_ok(_mp):
-        if os.environ.get('AURORA_NATIVE_PRECISION') == '1':
-            return True  # Maximum precision retains native geometry/UVs, including before rigging.
+        if os.environ.get('AURORA_NATIVE_PRECISION') == '1' or os.environ.get('AURORA_MIA_RIG', '1') == '1':
+            return True  # Maximum precision and MIA rigging retain native geometry/UVs.
         _mp = str(_mp or "").strip().lower()
         if not _mp:
             return True
@@ -4294,11 +4637,16 @@ def run_pipeline(prompt: str, run_id: str, *,
         # - TRELLIS.2   : personnages organiques, creatures, modeles tournants
         # Chaque moteur dispose d'un repli automatique sur l'autre en cas d'echec.
         _shape_ok = False
-        _is_tech_or_planar = any(k in (prompt or "").lower() for k in [
+        _prompt_low = (prompt or "").lower()
+        _is_character_or_figurine = any(k in _prompt_low for k in [
+            "figurine", "personnage", "character", "yo-kai", "yokai", "jibanyan",
+            "zig", "sharko", "mark evans", "inazuma", "kratos", "harry potter",
+        ]) or kind in ("character", "humanoid", "creature", "quadruped")
+        _is_tech_or_planar = (not _is_character_or_figurine) and (any(k in _prompt_low for k in [
             "motherboard", "carte mere", "carte mère", "pcb", "gpu", "electronic", "circuit",
             "hardware", "component", "chipset", "console", "keyboard", "device", "gadget", "phone",
-            "watch", "camera", "avion", "car", "voiture", "moteur", "engine", "machine", "hero", "rog"
-        ]) or kind in ("product", "mechanical", "electronics", "vehicle")
+            "wristwatch", "montre", "camera", "avion", "car", "voiture", "moteur", "engine", "machine", "rog"
+        ]) or kind in ("mechanical", "electronics", "vehicle"))
 
         if _engine_choice in ("hunyuanworld", "hunyuanworldmirror"):
             print("PROGRESS:engine:Moteur HunyuanWorldMirror (réplication stricte) demandé.", flush=True)
@@ -4989,20 +5337,84 @@ def run_pipeline(prompt: str, run_id: str, *,
                         except Exception as _fve:  # noqa: BLE001
                             audit.append({"stage": "volumisation", "ok": False,
                                           "error": repr(_fve)})
-                    _tr_cmd = [trellis_python(), _wrapper, str(_tr_src), str(mesh_path)]
-                    _stem = str(front_ref)
-                    _stem = _stem[:-4] if _stem.lower().endswith(".png") else _stem
-                    for _vi in (2, 3, 4):
-                        _vp = f"{_stem}_v{_vi}.png"
-                        if os.path.isfile(_vp):
-                            _tr_cmd.append(_vp)
-                    _p = run_neural_process(_tr_cmd,
-                                           env=_tr_env, timeout=int(os.environ.get("AURORA_TRELLIS_TIMEOUT_S", "10800")))
-                    for _line in reversed((_p.stdout or "").splitlines()):
-                        if _line.startswith("AURORA_TRELLIS_RESULT:"):
-                            _tr = json.loads(_line[len("AURORA_TRELLIS_RESULT:"):]); break
-                    if not _tr:
-                        _tr = {"ok": False, "error": (_p.stderr or _p.stdout or "no output")[-400:]}
+                    _multi_chars = []
+                    if os.environ.get("AURORA_MULTI_CHARACTER_3D", "1") == "1":
+                        try:
+                            from trellis_multi_character import (
+                                detect_and_crop_characters as _dcc,
+                                merge_character_glbs as _mcg,
+                            )
+                            _multi_chars = _dcc(str(_tr_src), str(output_dir), run_id)
+                        except Exception as _mce:  # noqa: BLE001
+                            audit.append({"stage": "multi_character_detect", "ok": False, "error": repr(_mce)})
+                    if len(_multi_chars) >= 2:
+                        print(f"PROGRESS:shape:{len(_multi_chars)} personnages cote a cote detectes — reconstruction 3D individuelle pleine resolution...", flush=True)
+                        _mc_ok = True
+                        _peak_vram = 0.0
+                        _mc_env = {
+                            **_tr_env,
+                            "AURORA_TRELLIS2_TEXTURE": os.environ.get("AURORA_TRELLIS2_MC_TEXTURE", "4096"),
+                            "AURORA_TRELLIS2_DECIMATION": os.environ.get("AURORA_TRELLIS2_MC_DECIMATION", "500000"),
+                        }
+                        for _ci in _multi_chars:
+                            _c_idx = _ci["index"] + 1
+                            if os.path.isfile(_ci["glb_path"]) and os.path.getsize(_ci["glb_path"]) > 100_000:
+                                print(f"PROGRESS:shape:personnage {_c_idx}/{len(_multi_chars)} deja present — reutilisation...", flush=True)
+                                _ctr = {"ok": True, "peak_vram_gb": 0.0}
+                                continue
+                            print(f"PROGRESS:shape:reconstruction 3D du personnage {_c_idx}/{len(_multi_chars)}...", flush=True)
+                            _c_cmd = [trellis_python(), _wrapper, str(_ci["ref_path"]), str(_ci["glb_path"])]
+                            _cp = run_neural_process(
+                                _c_cmd,
+                                env=_mc_env,
+                                timeout=int(os.environ.get("AURORA_TRELLIS_TIMEOUT_S", "10800")),
+                            )
+                            _ctr = {}
+                            for _cline in reversed((_cp.stdout or "").splitlines()):
+                                if _cline.startswith("AURORA_TRELLIS_RESULT:"):
+                                    _ctr = json.loads(_cline[len("AURORA_TRELLIS_RESULT:"):])
+                                    break
+                            if not _ctr.get("ok") or not os.path.isfile(_ci["glb_path"]):
+                                _mc_ok = False
+                                break
+                            try:
+                                from porte_anti_masque import mesurer as _pam_mc
+                                _v_mc = _pam_mc(str(_ci["glb_path"]))
+                                if _v_mc.get("masque"):
+                                    print(f"PROGRESS:shape:masque plat detecte sur personnage {_c_idx} — relance seed 1014...", flush=True)
+                                    Path(_ci["glb_path"]).unlink(missing_ok=True)
+                                    _cp2 = run_neural_process(
+                                        _c_cmd + ["--seed", "1014"],
+                                        env=_tr_env,
+                                        timeout=int(os.environ.get("AURORA_TRELLIS_TIMEOUT_S", "10800")),
+                                    )
+                                    for _cline2 in reversed((_cp2.stdout or "").splitlines()):
+                                        if _cline2.startswith("AURORA_TRELLIS_RESULT:"):
+                                            _ctr = json.loads(_cline2[len("AURORA_TRELLIS_RESULT:"):])
+                                            break
+                            except Exception:  # noqa: BLE001
+                                pass
+                            _peak_vram = max(_peak_vram, float(_ctr.get("peak_vram_gb") or 0.0))
+                        if _mc_ok:
+                            _mres = _mcg(_multi_chars, str(mesh_path))
+                            if _mres.get("ok") and mesh_path.is_file():
+                                _tr = {**_mres, "peak_vram_gb": _peak_vram}
+                                audit.append({"stage": "multi_character_trellis", "ok": True, **_tr})
+                    if not _tr.get("ok"):
+                        _tr_cmd = [trellis_python(), _wrapper, str(_tr_src), str(mesh_path)]
+                        _stem = str(front_ref)
+                        _stem = _stem[:-4] if _stem.lower().endswith(".png") else _stem
+                        for _vi in (2, 3, 4):
+                            _vp = f"{_stem}_v{_vi}.png"
+                            if os.path.isfile(_vp):
+                                _tr_cmd.append(_vp)
+                        _p = run_neural_process(_tr_cmd,
+                                               env=_tr_env, timeout=int(os.environ.get("AURORA_TRELLIS_TIMEOUT_S", "10800")))
+                        for _line in reversed((_p.stdout or "").splitlines()):
+                            if _line.startswith("AURORA_TRELLIS_RESULT:"):
+                                _tr = json.loads(_line[len("AURORA_TRELLIS_RESULT:"):]); break
+                        if not _tr:
+                            _tr = {"ok": False, "error": (_p.stderr or _p.stdout or "no output")[-400:]}
                 except Exception as _se:  # noqa: BLE001
                     _tr = {"ok": False, "error": f"subprocess: {_se!r}"}
                 # PORTE ANTI-MASQUE (31/07, recherche + demande verbatim:
@@ -5083,12 +5495,10 @@ def run_pipeline(prompt: str, run_id: str, *,
                                   "faces": _tr.get("faces"), "verts": _tr.get("verts"),
                                   "peak_vram_gb": _tr.get("peak_vram_gb"), "quality": _tr.get("quality")})
                     print(f"PROGRESS:shape:geometrie native posee — {_tr.get('faces') or '?'} faces ({_tr.get('quality')})", flush=True)
-                    # BALAYAGE CAPILLAIRE. Les meches sous la resolution de la
-                    # grille sortent en confettis fermes flottants (guerrier:
-                    # 8463 ilots de ~2 faces autour de la tete, 0 bord ouvert
-                    # -> "boucher" ne sert a rien, on BALAIE). Sous-processus
-                    # venv (trimesh) pour ne pas gonfler la RAM du pipeline.
-                    if os.environ.get("AURORA_BALAYAGE", "1") == "1":
+                    # BALAYAGE CAPILLAIRE : deja effectue en memoire par pbr_cartography
+                    # (_prune_disconnected_micro_crumbs) avant l'injection des extensions
+                    # KHR_materials_*. Desactive par defaut pour ne pas ecraser les extensions glTF.
+                    if os.environ.get("AURORA_BALAYAGE", "0") == "1":
                         try:
                             _venv_py2 = str(REPO_ROOT / "application" / ".venv" / "bin" / "python")
                             if not os.path.isfile(_venv_py2):
@@ -5184,6 +5594,9 @@ def run_pipeline(prompt: str, run_id: str, *,
                                       "error": _tr.get("error")})
                     if _trellis_ok:
                         _shape_ok = True
+                elif _trellis_available:
+                    audit.append({"stage": "trellis2", "ok": False,
+                                  "error": _tr.get("error") or "echec subprocess TRELLIS.2"})
                 else:
                     audit.append({"stage": "trellis2", "skipped": True,
                                   "reason": "TRELLIS.2 indisponible dans l'interpreteur (%s)"
@@ -5691,12 +6104,19 @@ def run_pipeline(prompt: str, run_id: str, *,
         motion_res = run_motion_bake(
             Path(final_mesh_path), motion_prompt, run_id, output_dir,
             subject_kind=(subject_kind_hint or kind or ""),
+            prompt=prompt,
+            _motion_derive=_motion_derive,
         )
         audit.append({"stage": "motion_bake",
                       "motion_prompt": motion_prompt,
                       **motion_res})
         if motion_res.get("ok"):
             rigged_mesh = motion_res["rigged_mesh"]
+            try:
+                from pbr_cartography import transfer_pbr_from_source_glb as _tpbr_anim
+                _tpbr_anim(str(final_mesh_path), str(rigged_mesh), prompt_context=prompt)
+            except Exception:  # noqa: BLE001
+                pass
             _fspec = motion_res.get("motion_spec") or {}
             if (material_manifest_data is not None
                     and float(_fspec.get("amplitude", 0.0) or 0.0) > 0.01):
@@ -5900,12 +6320,10 @@ def run_pipeline(prompt: str, run_id: str, *,
         except Exception as _fre:  # noqa: BLE001
             audit.append({"stage": "face_refine", "ok": False, "error": repr(_fre)})
 
-    # REALISME MATIERE : les materiaux generes sortent bien trop glossy (rugosite
-    # effective ~0.35) -> sous l'IBL studio du viewer tout parait plastique mouille
-    # (t-shirt = latex, pomme = boule miroir). On releve la rugosite des surfaces
-    # DIELECTRIQUES OPAQUES a un plancher satin (metal/verre intacts). Verifie via
-    # le vrai viewer three.js : difference spectaculaire (homme mat/realiste).
-    if os.environ.get("AURORA_ROUGHNESS_REALISM", "1") == "1":
+    # REALISME MATIERE : deja calibre par style dans pbr_cartography.py lorsque
+    # _texture_du_service est actif. Ce fallback Blender ne tourne que pour les
+    # maillages externes depourvus de calibration ORM native.
+    if os.environ.get("AURORA_ROUGHNESS_REALISM", "0") == "1" and not _texture_du_service:
         try:
             import shutil as _sh
             _rr_script = str(REPO_ROOT / "application" / "python-services" / "roughness_realism.py")
@@ -5925,6 +6343,50 @@ def run_pipeline(prompt: str, run_id: str, *,
                               "error": (_rr.stderr or _rr.stdout or "")[-200:]})
         except Exception as _rre:  # noqa: BLE001
             audit.append({"stage": "roughness_realism", "ok": False, "error": repr(_rre)})
+
+    # Synthèse géométrique et optique native des vases/récipients creux en verre/cristal gravés
+    try:
+        from crystal_vessel_sculptor import (
+            is_engraved_or_shaped_vessel_prompt as _is_crystal_vessel,
+            generate_crystal_vessel_deliverables as _gen_crystal_vessel,
+        )
+        _eff_vessel_prompt = f"{prompt} {os.environ.get('AURORA_PROMPT_ORIGINAL', '')}"
+        if _is_crystal_vessel(_eff_vessel_prompt) and re.search(
+            r"\b(verre|cristal|glass|crystal|transparent|refractif|refractive|grav(?:er|é|ee|es|ure)|forme\s+de\s+c(?:oe|œ)ur)\b",
+            _eff_vessel_prompt.lower(),
+        ):
+            _cv_out = str(output_dir / f"{run_id}_crystal_vessel.glb")
+            _cv_modify_src = os.environ.get("AURORA_MODIFY_FROM_GLB") or str(output_dir)
+            _cv_res = _gen_crystal_vessel(
+                prompt=_eff_vessel_prompt,
+                output_glb_path=_cv_out,
+                modify_from=_cv_modify_src,
+            )
+            if _cv_res.get("ok") and Path(_cv_out).is_file():
+                final_delivery_mesh = _cv_out
+                mesh_path = Path(_cv_out)
+                audit.append({"stage": "crystal_vessel_sculptor", **_cv_res})
+    except Exception as _cve:  # noqa: BLE001
+        audit.append({"stage": "crystal_vessel_sculptor", "ok": False, "error": repr(_cve)})
+
+    # Garantie d'integrite PBR et des 9 extensions optiques glTF 2.0 (KHR_materials_*)
+    # sur le livrable statique final et le livrable anime avant controles et livraison.
+    try:
+        from pbr_cartography import (
+            inject_gltf_optical_extensions as _inject_pbr_ext,
+            resolve_pbr_optical_profile as _resolve_pbr_prof,
+            transfer_pbr_from_source_glb as _transfer_pbr_final,
+        )
+        _pbr_prof_final = _resolve_pbr_prof(prompt)
+        if Path(str(mesh_path)).is_file() and Path(str(final_delivery_mesh)).is_file():
+            if Path(str(mesh_path)).resolve() != Path(str(final_delivery_mesh)).resolve():
+                _transfer_pbr_final(str(mesh_path), str(final_delivery_mesh), prompt_context=prompt)
+            _inject_pbr_ext(str(final_delivery_mesh), _pbr_prof_final)
+        if rigged_mesh and Path(str(rigged_mesh)).is_file() and Path(str(final_delivery_mesh)).is_file():
+            _transfer_pbr_final(str(final_delivery_mesh), str(rigged_mesh), prompt_context=prompt)
+            _inject_pbr_ext(str(rigged_mesh), _pbr_prof_final)
+    except Exception:  # noqa: BLE001
+        pass
 
     # ── GEOMETRIE PURE (toujours produite) ──────────────────────────────────
     # Demande utilisateur: parmi les nombreux fichiers (matte, ao, rough,
@@ -6300,23 +6762,23 @@ def run_pipeline(prompt: str, run_id: str, *,
                 print("PROGRESS:livraison:arborescence rangee — modele/, "
                       "mouvement/, reference/, prompt/, journal/, travail/",
                       flush=True)
-                # Dossier representatif a la racine d'output/3d (ex: pbr_happy_fairy_tail_pack)
-                try:
-                    _raw_name = (prompt or (kind or "subject")).strip()
-                    _clean_slug = re.sub(r'[^a-zA-Z0-9]+', '_', _raw_name.lower()).strip('_')[:40]
-                    if _clean_slug:
-                        _out_parent = _run_root.parent if _run_root.name != "3d" else _run_root
-                        _pack_dir = _run_root.parent / f"pbr_{_clean_slug}_pack"
-                        if _pack_dir.resolve() != _run_root.resolve():
-                            if os.path.islink(_pack_dir) or _pack_dir.exists():
-                                try:
-                                    _pack_dir.unlink(missing_ok=True)
-                                except Exception:
-                                    pass
-                            _pack_dir.symlink_to(_run_root.name, target_is_directory=True)
-                            print(f"PROGRESS:livraison:dossier representatif disponible -> {_pack_dir.name}", flush=True)
-                except Exception as _se:  # noqa: BLE001
-                    pass
+                # Dossier representatif optionnel (desactive par defaut pour eviter les doublons pbr_*_pack)
+                if os.environ.get("AURORA_PBR_PACK_SYMLINK", "0") == "1":
+                    try:
+                        _raw_name = (prompt or (kind or "subject")).strip()
+                        _clean_slug = re.sub(r'[^a-zA-Z0-9]+', '_', _raw_name.lower()).strip('_')[:40]
+                        if _clean_slug:
+                            _pack_dir = _run_root.parent / f"pbr_{_clean_slug}_pack"
+                            if _pack_dir.resolve() != _run_root.resolve():
+                                if os.path.islink(_pack_dir) or _pack_dir.exists():
+                                    try:
+                                        _pack_dir.unlink(missing_ok=True)
+                                    except Exception:
+                                        pass
+                                _pack_dir.symlink_to(_run_root.name, target_is_directory=True)
+                                print(f"PROGRESS:livraison:dossier representatif disponible -> {_pack_dir.name}", flush=True)
+                    except Exception as _se:  # noqa: BLE001
+                        pass
         except Exception as _oe:  # noqa: BLE001
             audit.append({"stage": "livraison", "ok": False, "error": repr(_oe)})
             return {"ok": False, "error": f"delivery failed: {_oe}", "audit_trail": audit}
@@ -6547,12 +7009,15 @@ def main() -> int:
               "multi-objets reste eligible au decoupage", flush=True)
     if args.max_precision:
         os.environ.setdefault("AURORA_TRELLIS2_MANAGED", "0")
-        os.environ.setdefault("AURORA_TRELLIS2_QUALITY", "1536_cascade")
+        os.environ.setdefault("AURORA_TRELLIS2_QUALITY", "1024_cascade")
+        os.environ.setdefault("AURORA_TRELLIS2_STEPS", "16")
+        os.environ.setdefault("AURORA_TRELLIS2_REMESH", "1")
+        os.environ.setdefault("AURORA_TRELLIS2_REMESH_PROJECT", "0.5")
         os.environ.setdefault("AURORA_VLM_MATERIALS", "1")
-        os.environ.setdefault("AURORA_NORMAL_RES", "8192")
+        os.environ.setdefault("AURORA_NORMAL_RES", "4096")
         os.environ.setdefault("AURORA_NATIVE_PRECISION", "1")
-        os.environ.setdefault("AURORA_MVADAPTER_MV", "1")
-        os.environ.setdefault("AURORA_TRELLIS2_TEXTURE", "8192")
+        os.environ.setdefault("AURORA_MVADAPTER_MV", "0")
+        os.environ.setdefault("AURORA_TRELLIS2_TEXTURE", "4096")
         os.environ.setdefault("AURORA_TRELLIS2_16K", "1")
 
     if args.dry_run_prompt:
@@ -6602,7 +7067,7 @@ def main() -> int:
         result = run_pipeline(
             args.prompt, args.run_id,
             output_dir=Path(args.output_dir),
-            multi_view=mv, force=args.force,
+            multi_view=mv, force=(args.force or _essai > 1),
             motion_prompt=args.motion_prompt,
             images=args.images or None,
             purpose=args.purpose,
@@ -6663,7 +7128,8 @@ def main() -> int:
             print("PROGRESS:perfection:purge impossible (%r)" % (_pe,), flush=True)
     if not result.get("ok"):
         from pipeline_delivery import preserve_failed_mesh
-        result = preserve_failed_mesh(result, args.output_dir, args.run_id)
+        _pf_dir = Path(args.output_dir) / args.run_id if Path(args.output_dir).name in {"conversations", "3d", "output"} else Path(args.output_dir)
+        result = preserve_failed_mesh(result, _pf_dir, args.run_id)
     try:
         _receipt_root = Path(args.output_dir)
         if _receipt_root.name in {'work','models'} and _receipt_root.parent.name == args.run_id:

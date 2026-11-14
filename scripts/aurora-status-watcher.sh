@@ -23,6 +23,9 @@ while true; do
     if bash "$TUNNEL_CHECKER" "$URL" 15 >/dev/null; then
       printf '%s\n' "$URL" > "$URL_FILE"
       printf '%s\n' "$URL" > "$LEGACY_URL_FILE"
+      mkdir -p "$ROOT_DIR/interface/tunnel"
+      printf '%s\n' "$URL" > "$ROOT_DIR/interface/tunnel/tunnel.txt"
+      printf '%s\n' "$URL" > "$ROOT_DIR/interface/tunnel/tunnel_url.txt"
       STATE=open  # the new public URL was verified in this cycle
       LAST_URL="$URL"
     else

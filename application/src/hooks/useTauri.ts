@@ -455,8 +455,10 @@ async function ollamaGenerateStreamAsNonStream(
   }
   const body: Record<string, unknown> = { model, prompt, stream: true }
   const generationOptions: Record<string, number> = {}
-  if (num_ctx !== undefined) generationOptions.num_ctx = num_ctx
-  if (num_predict !== undefined) generationOptions.num_predict = num_predict
+  if (num_ctx !== undefined) generationOptions.num_ctx = Math.max(num_ctx, 16384)
+  if (num_predict !== undefined) {
+    generationOptions.num_predict = (num_predict >= 32 && num_predict < 4096) ? 4096 : num_predict
+  }
   if (Object.keys(generationOptions).length) body.options = generationOptions
 
   const bridge = getBridgeUrl()
@@ -473,7 +475,7 @@ async function ollamaGenerateStreamAsNonStream(
   // v120: increased to 480_000 for heavy SWAP workloads (up to 70GB SWAP allowed).
   // v126: meme correction que ollamaChatStream — budget REARME par tentative et
   // abandon porteur d une raison nommee. Voir ollamaFirstByteWatchdog.ts.
-  const HARD_TIMEOUT_MS = firstByteTimeoutMs ?? 480_000
+  const HARD_TIMEOUT_MS = firstByteTimeoutMs ?? 1_800_000
   const watchdog = createFirstByteWatchdog({ model, budgetMs: HARD_TIMEOUT_MS, callerSignal: signal })
 
   let response: Response | null = null
@@ -662,8 +664,12 @@ export async function ollamaChatStream(
   if (options?.top_k !== undefined) streamOpts.top_k = options.top_k
   if (options?.min_p !== undefined) streamOpts.min_p = options.min_p
   if (options?.repeat_penalty !== undefined) streamOpts.repeat_penalty = options.repeat_penalty
-  if (options?.num_ctx) streamOpts.num_ctx = options.num_ctx
-  if (options?.num_predict !== undefined) streamOpts.num_predict = options.num_predict
+  if (options?.num_ctx) streamOpts.num_ctx = Math.max(options.num_ctx, 16384)
+  if (options?.num_predict !== undefined) {
+    streamOpts.num_predict = (options.num_predict >= 32 && options.num_predict < 4096)
+      ? 4096
+      : options.num_predict
+  }
   if (Object.keys(streamOpts).length > 0) body.options = streamOpts
 
   // Priorite: Tauri → bridge proxy (with keepalive) → direct Ollama fallback.
@@ -703,7 +709,7 @@ export async function ollamaChatStream(
   // anonyme qui a tue un run de 39 minutes et 41 fichiers. Voir
   // ollamaFirstByteWatchdog.ts pour les trois mesures qui excluent les autres
   // pistes.
-  const HARD_TIMEOUT_MS = options?.firstByteTimeoutMs ?? 480_000
+  const HARD_TIMEOUT_MS = options?.firstByteTimeoutMs ?? 1_800_000
   const watchdog = createFirstByteWatchdog({
     model,
     budgetMs: HARD_TIMEOUT_MS,
@@ -785,14 +791,40 @@ export async function ollamaChatStream(
   }
 
   try {
+    let emittedContentChars = 0
+    let thinkingAccum = ''
     await readOllamaStream(response.body, (json) => {
       if (typeof json.message?.content === 'string') {
+        if (json.message.content.length > 0) emittedContentChars += json.message.content.length
         try { onToken(json.message.content) } catch { /* callback error — never crash stream */ }
       }
-      if (typeof json.message?.thinking === 'string' && options?.onThinking) {
-        try { options.onThinking(json.message.thinking) } catch { /* callback error — never crash stream */ }
+      if (typeof json.message?.thinking === 'string') {
+        thinkingAccum += json.message.thinking
+        if (options?.onThinking) {
+          try { options.onThinking(json.message.thinking) } catch { /* callback error — never crash stream */ }
+        }
       }
     })
+    // If a thinking model (`deepseek-r1:32b`, `Qwen3.8-27B-Uncensored`, `qwen3-vl:30b`)
+    // placed its entire answer or JSON inside `message.thinking` with `content === ""`,
+    // salvage the structured block or final paragraphs so callers never receive empty output.
+    if (emittedContentChars === 0 && thinkingAccum.trim().length > 0) {
+      const rawThink = thinkingAccum.trim()
+      const fenceMatches = [...rawThink.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)]
+      let salvaged = fenceMatches.length > 0 ? fenceMatches[fenceMatches.length - 1][1].trim() : ''
+      if (!salvaged) {
+        const jsonMatch = rawThink.match(/\{[\s\S]*\}/)
+        if (jsonMatch) {
+          salvaged = jsonMatch[0].trim()
+        } else {
+          const paras = rawThink.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean)
+          salvaged = paras.length >= 2 ? paras.slice(-2).join('\n\n') : rawThink
+        }
+      }
+      if (salvaged) {
+        try { onToken(salvaged) } catch { /* callback error — never crash stream */ }
+      }
+    }
     try { onDone() } catch { /* callback error — never crash stream */ }
   } finally {
     watchdog.dispose()
@@ -955,15 +987,70 @@ export async function comfyuiQueuePrompt(workflow: Record<string, unknown>) {
 }
 
 /**
+ * Normalise et valide un File/Blob image en vrai PNG matriciel 8-bit via createImageBitmap + Canvas.
+ * Rejette immédiatement tout document PDF, HTML ou SVG afin que ComfyUI LoadImage ne reçoive jamais
+ * un fichier illisible (`cannot identify image file`).
+ */
+async function ensureValidRasterPngFile(file: File | Blob, requestedName: string): Promise<File> {
+  if (!file || file.size < 32) {
+    throw new Error('Fichier image vide ou invalide')
+  }
+  const mime = (file.type || '').toLowerCase()
+  if (mime.includes('pdf') || mime.includes('html') || mime.includes('svg') || mime.includes('xml')) {
+    throw new Error(`Type de fichier non-matriciel rejeté (${mime})`)
+  }
+  const headerBuf = await file.slice(0, 24).arrayBuffer()
+  const headerStr = new TextDecoder('ascii', { fatal: false }).decode(new Uint8Array(headerBuf)).trimStart()
+  if (
+    headerStr.startsWith('%PDF-') ||
+    headerStr.startsWith('<!DOC') ||
+    headerStr.startsWith('<html') ||
+    headerStr.startsWith('<HTML') ||
+    headerStr.startsWith('<?xml') ||
+    headerStr.startsWith('<svg')
+  ) {
+    throw new Error('Document non-image (PDF/HTML/SVG) rejeté avant envoi à ComfyUI')
+  }
+
+  const safeStem = (requestedName || `ref_${Date.now()}.png`).replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9._-]/g, '_') || `ref_${Date.now()}`
+  const finalPngName = `${safeStem}.png`
+
+  if (typeof createImageBitmap === 'function' && typeof document !== 'undefined') {
+    const bmp = await createImageBitmap(file)
+    try {
+      if (bmp.width < 16 || bmp.height < 16) {
+        throw new Error(`Image trop petite (${bmp.width}x${bmp.height})`)
+      }
+      const canvas = document.createElement('canvas')
+      canvas.width = bmp.width
+      canvas.height = bmp.height
+      const ctx = canvas.getContext('2d')
+      if (!ctx) throw new Error('Contexte Canvas 2D indisponible')
+      ctx.drawImage(bmp, 0, 0)
+      const pngBlob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
+      if (!pngBlob || pngBlob.size < 32) {
+        throw new Error('Échec de l’encodage PNG de l’image de référence')
+      }
+      return new File([pngBlob], finalPngName, { type: 'image/png' })
+    } finally {
+      bmp.close()
+    }
+  }
+
+  return file instanceof File && file.name.endsWith('.png')
+    ? file
+    : new File([file], finalPngName, { type: 'image/png' })
+}
+
+/**
  * Upload an image to ComfyUI's input folder so a workflow can then reference
  * it by filename (LoadImage node). Returns `{ name }` — the filename to pass
  * into `referenceImage.filename` in `createFluxWorkflow`.
  */
 export async function comfyuiUploadImage(file: File | Blob, filename?: string): Promise<{ name: string; subfolder?: string }> {
-  const name = filename || (file instanceof File ? file.name : `ref_${Date.now()}.png`)
-  const form = new FormData()
-  form.append('image', file, name)
-  form.append('overwrite', 'true')
+  const rawName = filename || (file instanceof File ? file.name : `ref_${Date.now()}.png`)
+  const validatedPngFile = await ensureValidRasterPngFile(file, rawName)
+  const name = validatedPngFile.name
 
   const bridgeUrl = getBridgeUrl()
   const base = bridgeUrl
@@ -976,6 +1063,9 @@ export async function comfyuiUploadImage(file: File | Blob, filename?: string): 
   const errors: string[] = []
   for (const url of endpoints) {
     try {
+      const form = new FormData()
+      form.append('image', validatedPngFile, name)
+      form.append('overwrite', 'true')
       const resp = await fetch(url, { method: 'POST', body: form, signal: AbortSignal.timeout(30_000) })
       if (resp.ok) {
         const data = await resp.json().catch(() => ({ name }))

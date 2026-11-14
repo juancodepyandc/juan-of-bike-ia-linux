@@ -370,7 +370,7 @@ export default function AuroraV4AppShell({ activeModule, onActivateModule, child
           .aurora-v4-search .search-label, .aurora-v4-search kbd, .aurora-v4-model, .aurora-v4-local, .aurora-v4-mascot { display: none !important; }
           .aurora-v4-header-actions { gap: 4px !important; margin-left: 0 !important; }
           .aurora-v4-header-actions > button { width: 44px; height: 44px; align-items: center; justify-content: center; }
-          .aurora-v4-reinforced-bar, .aurora-v4-agi-studio-ribbon { display: none !important; }
+          .aurora-v4-agi-studio-ribbon { display: none !important; }
           .aurora-v4-dock { display: none !important; }
           .aurora-v4-mobile-nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 6px; padding: 8px max(12px,env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left)); background: #080c17f5; backdrop-filter: blur(20px); border-top: 1px solid #ffffff15; }
           .aurora-v4-mobile-nav button { min-width: 0; height: 56px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; border: 1px solid transparent; border-radius: 16px; color: #9da8c1; background: transparent; font: inherit; font-size: 11px; font-weight: 600; cursor: pointer; }

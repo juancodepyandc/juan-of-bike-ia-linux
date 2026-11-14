@@ -1,25 +1,29 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-STATE = ROOT / "Outputs" / "auto_rl"
-PYTHON = ROOT / "application" / ".venv" / "bin" / "python"
-TEXT_MODULES = {"code", "conversation", "cyber", "cowork", "learning"}
-LABELS = {"3d": "3D · TRELLIS.2", "code": "Code · Qwen3-8B", "image": "Image · Flux.2", "audio": "Voix · Kokoro",
-          "conversation": "Conversation · Qwen3-8B", "cyber": "Cyber · Qwen3-8B", "cowork": "Cowork · Qwen3-8B", "learning": "Apprentissage · Qwen3-8B",
-          "video": "Vidéo · Wan2.2 5B", "animation": "Animation · HY-Motion"}
+STATE = ROOT / "auto_rl" / "state"
+_VENV_POSIX = ROOT / "application" / ".venv" / "bin" / "python"
+_VENV_WIN = ROOT / "application" / ".venv" / "Scripts" / "python.exe"
+PYTHON = _VENV_POSIX if _VENV_POSIX.exists() else (_VENV_WIN if _VENV_WIN.exists() else Path(sys.executable))
+TEXT_MODULES = {"code", "conversation", "cyber", "cowork", "learning", "business", "simulator"}
+LABELS = {"3d": "3D & CAO", "code": "Code", "image": "Image", "audio": "Voix",
+          "conversation": "Conversation", "cyber": "Cybersécurité", "cowork": "Cowork", "learning": "Académie",
+          "business": "Business", "drawing": "Dessin", "simulator": "Simulateur",
+          "video": "Vidéo", "animation": "Animation"}
 
 
 def defaults(module="3d"):
     return {
         "schema": 1, "module": module, "state_dir": str(STATE),
-        "trainer": "surrogate_es" if module in {"image", "video", "animation"} else "preference_lora" if module in {"3d", "code", "conversation", "cyber", "cowork", "learning"} else "evolution",
+        "trainer": "surrogate_es" if module in {"image", "drawing", "video", "animation"} else "preference_lora" if module in ({"3d"} | TEXT_MODULES) else "evolution",
         "kaggle_max_session": False, "rollouts_per_task": 3, "train_learning_rate": 0.00005,
-        "oracle_teaching": module in {"conversation", "learning"},
+        "oracle_teaching": module in TEXT_MODULES,
         "training_context_length": 3072,
-        "dpo_beta": 0.1 if module in {"code", "conversation", "cyber", "cowork", "learning"} else 100.0, "anchor_penalty": 0.1,
+        "dpo_beta": 0.1 if module in TEXT_MODULES else 100.0, "anchor_penalty": 0.1,
         "comfy_unet": str(ROOT / "modele/comfyui/models/unet/flux2-dev-Q4_K_M.gguf"),
         "comfy_clip": str(ROOT / "modele/comfyui/models/text_encoders/mistral_3_small_flux2_fp8.safetensors"),
         "comfy_vae": str(ROOT / "modele/comfyui/models/vae/flux2-vae.safetensors"),
@@ -40,19 +44,19 @@ def defaults(module="3d"):
         "failure_replay_tasks": 4, "failure_memory_limit": 256,
         "failure_score_threshold": 0.999,
         "mode": "manual", "cycles": 1, "max_rejections": 3,
-        "max_hours": 8, "minimum_free_gb": 12, "max_vram_gb": 14.5,
+        "max_hours": 8, "minimum_free_gb": 12, "max_vram_gb": 15.8,
         "seed": 20260912, "prompt": "", "reference_image": "",
         "train_tasks": 6 if module in TEXT_MODULES else 3, "eval_tasks": 3, "eval_seeds": [41, 137],
         "iterations": 2, "directions": 2, "sigma": 0.08, "learning_rate": 0.04,
         "rank": 4, "max_layers": 8, "trust_radius": 0.5, "drift_penalty": 0.1,
         "min_gain": 0.002, "regression_tolerance": 0.01, "auto_min_tasks": 8,
-        "generation": {"batch_size": 1, "max_new_tokens": 768,
-                       "temperature": 0.7, "top_p": 0.9,
-                       "steps": 50 if module == "animation" else 20 if module == "video" else 12 if module == "3d" else 4,
-                       "frames": 33, "fps": 16, "duration": 3.0, "motion_cfg": 5.0, "video_cfg": 5.0, "video_shift": 8.0,
-                       "width": 512, "height": 512, "trellis_pipeline": "512",
-                       "texture_size": 1024, "decimation_target": 100000,
-                       "max_num_tokens": 32768, "guidance_scale": 0.0,
+        "generation": {"batch_size": 1, "max_new_tokens": 16384, "num_ctx": 32768,
+                       "temperature": 0.4, "top_p": 0.9,
+                       "steps": 50 if module == "animation" else 28 if module == "video" else 36 if module == "3d" else 28,
+                       "frames": 49, "fps": 16, "duration": 3.0, "motion_cfg": 5.0, "video_cfg": 5.0, "video_shift": 8.0,
+                       "width": 1024, "height": 1024 if module != "video" else 576, "trellis_pipeline": "1024_cascade",
+                       "texture_size": 4096, "decimation_target": 180000,
+                       "max_num_tokens": 32768, "guidance_scale": 3.5 if module in {"image", "drawing"} else 0.0,
                        # TRELLIS.2 reconstruit la topologie par Dual Contouring
                        # AVANT le bake de texture: la couleur survit, et la
                        # surface sort manifolde, sans auto-intersection. Le
@@ -64,13 +68,29 @@ def defaults(module="3d"):
                        "judge_face_limit": 250000,
                        "voice": "ff_siwis", "speed": 1.0},
         "models": {"3d": "microsoft/TRELLIS.2-4B", "code": "Qwen/Qwen3-8B",
-                   "image": "Comfy-Org/flux2-dev", "audio": "hexgrad/Kokoro-82M",
+                   "image": "Comfy-Org/flux2-dev", "drawing": "Comfy-Org/flux2-dev", "audio": "hexgrad/Kokoro-82M",
                    "conversation": "Qwen/Qwen3-8B", "cyber": "Qwen/Qwen3-8B", "cowork": "Qwen/Qwen3-8B",
-                   "learning": "Qwen/Qwen3-8B", "video": "Wan-AI/Wan2.2-TI2V-5B",
+                   "learning": "Qwen/Qwen3-8B", "business": "Qwen/Qwen3-8B", "simulator": "Qwen/Qwen3-8B",
+                   "video": "Wan-AI/Wan2.2-TI2V-5B",
                    "animation": "tencent/HY-Motion-1.0", "motion_text": "Qwen/Qwen3-8B",
                    "motion_clip": "openai/clip-vit-large-patch14",
                    "clip": "openai/clip-vit-base-patch32",
                    "asr": "Systran/faster-whisper-large-v3"},
+        "flagship_ollama_models": {
+            "code": "qwen3-coder-next:q4_K_M",
+            "cyber": "qwen-cyber:latest",
+            "conversation": "orcarouter/Qwen3.8-27B-Uncensored:latest",
+            "learning": "deepseek-r1:32b",
+            "business": "deepseek-r1:32b",
+            "cowork": "orcarouter/Qwen3.8-27B-Uncensored:latest",
+            "simulator": "deepseek-r1:32b",
+            "3d": "qwen3-vl:30b",
+            "image": "qwen3-vl:30b",
+            "drawing": "qwen3-vl:30b",
+            "video": "qwen3-vl:30b",
+            "animation": "deepseek-r1:32b",
+            "audio": "orcarouter/Qwen3.8-27B-Uncensored:latest",
+        },
         "trellis_root": str(Path.home() / ".local/share/auroraia/external/TRELLIS.2"),
         "python_image": "docker.io/library/python:3.12-slim",
         "cpp_image": "localhost/aurora-rl-cpp:1", "sandbox_timeout": 12,

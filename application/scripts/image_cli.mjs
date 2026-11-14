@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, dirname, extname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
@@ -23,7 +23,61 @@ import {
 } from '../src/services/selfInformedReference.ts'
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url))
+const REPO_ROOT = resolve(SCRIPT_DIR, '..', '..')
 const REF_SEARCH_PY = resolve(SCRIPT_DIR, '..', 'python-services', 'reference_visual_search.py')
+
+function readReferencePromptContext(refPath) {
+  if (!refPath || refPath.startsWith('data:image/')) return ''
+  const sidecarCandidates = [
+    refPath.replace(/\.[^./\\]+$/, '.json'),
+    join(dirname(refPath), 'metadata.json'),
+  ]
+  for (const cand of sidecarCandidates) {
+    try {
+      if (existsSync(cand)) {
+        const meta = JSON.parse(readFileSync(cand, 'utf8'))
+        const parts = [meta.prompt, meta.directed_prompt_en].filter(Boolean)
+        if (parts.length > 0) return parts.join(' — ')
+      }
+    } catch {
+      // ignore invalid sidecar json
+    }
+  }
+  return ''
+}
+
+function runCognitivePromptDirector(rawPrompt, { mode = '', style = 'none', context = '', hasReference = false, refImagePath = '' } = {}) {
+  try {
+    const cliArgs = [
+      '-m',
+      'agi_core.prompt_intelligence',
+      '--prompt',
+      String(rawPrompt || ''),
+      '--module',
+      'image',
+      '--mode',
+      String(mode || ''),
+      '--style',
+      String(style || 'none'),
+      '--context',
+      String(context || ''),
+    ]
+    if (hasReference) cliArgs.push('--has-reference')
+    if (refImagePath && !String(refImagePath).startsWith('data:image/') && existsSync(String(refImagePath))) {
+      cliArgs.push('--ref-image', String(refImagePath))
+    }
+    const stdout = execFileSync('python3', cliArgs, {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+      timeout: 120000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    return JSON.parse(stdout)
+  } catch (err) {
+    console.error(`[cognitive-director] fallback (${err?.message || err})`)
+    return null
+  }
+}
 
 const DEFAULT_COMFY = process.env.COMFY_URL || 'http://127.0.0.1:8188'
 const DEFAULT_OLLAMA = process.env.OLLAMA_URL || 'http://127.0.0.1:11434'
@@ -518,7 +572,7 @@ async function main() {
     throw new Error(`--stitch-direction invalide: ${stitchDirection} (right|down|left|up)`)
   }
   if (ref2Path && !refPath) throw new Error('--ref2 (source) requiert --ref (image de base/destination)')
-  const refDenoise = args.denoise === undefined ? 0.7 : numberOpt(args.denoise, 0.7)
+  const refDenoise = args.denoise === undefined ? null : numberOpt(args.denoise, null)
 
   mkdirSync(outDir, { recursive: true })
   await comfy(comfyUrl, '/system_stats').catch(() => {
@@ -548,10 +602,28 @@ async function main() {
   let entityClause = ''
   const targetToResearch = detectSubjectToResearch(prompt, intent)
 
+  await freeComfyVram(comfyUrl)
+  const refPromptContext = refPath ? readReferencePromptContext(refPath) : ''
+  const cognitiveResult = runCognitivePromptDirector(prompt, {
+    mode: refPath || intent.isEditIntent ? 'modification' : 'creation',
+    style,
+    context: refPromptContext,
+    hasReference: Boolean(refPath),
+    refImagePath: refPath || '',
+  })
+  if (cognitiveResult?.director_model) {
+    helperModelUsed = cognitiveResult.director_model
+  }
+  if (cognitiveResult?.open_world_entity?.canonical_label) {
+    entityTarget = cognitiveResult.open_world_entity.canonical_label
+    entityDescription = cognitiveResult.open_world_entity.visual_description_en || ''
+  }
+
   if (refPath) {
     const upload = await uploadReference(comfyUrl, refPath)
     const referenceFilename = upload.name
-    const wantsKontext = intent.isEditIntent || Boolean(ref2Path)
+    const isFullRestyle = intent.editMode === 'restyle' || cognitiveResult?.effective_render_mode === 'hybrid_real_to_stylized'
+    const wantsKontext = (intent.isEditIntent && !isFullRestyle) || Boolean(ref2Path)
     const kontextModel = wantsKontext ? await detectKontext(comfyUrl).catch(() => null) : null
 
     if (kontextModel && wantsKontext) {
@@ -587,16 +659,12 @@ async function main() {
         entityTarget = target.subject
         entityDescription = forced
         entityReferenceCount = 0
-      } else if (target && !args['no-research']) {
+      } else if (target && !args['no-research'] && !cognitiveResult?.directed_prompt_en) {
         const resolved = await resolveSubjectReference(target, {
           ...makeSelfInformDeps({ comfyUrl, ollamaUrl, visionModel, textModel: helperModel }),
           onProgress: (m) => console.error(`[research] ${m}`),
         })
         if (resolved.appearanceDescription) entityClause = buildAppearanceClause(target, resolved.appearanceDescription)
-        // NB: on n'AUTO-stitch PAS l'image trouvee (un sujet isole sur fond neutre
-        // fait "collapser" Kontext, qui recrache la reference au lieu d'editer la
-        // base). La description consensus, tres precise, suffit en mono-image et
-        // PRESERVE la scene de base. Le stitch reste reserve a --ref2 (explicite).
         void autoSecondReference
         if (resolved.advisory) console.error(`warning: ${resolved.advisory}`)
         entityTarget = resolved.subject
@@ -650,9 +718,6 @@ async function main() {
         engine = 'kontext-staged'
       }
 
-      // Source UNIQUE de l'instruction Kontext (identique a l'UI useImageViewLogic) :
-      // coeur traduit + apparence, AUCUN contrat d'orchestrateur (qui deviendrait
-      // du guidage positif faute de canal negatif dans le graphe Kontext).
       workflow = stagedReplacementPlan ? null : createFluxKontextWorkflow({
         instruction: assembleKontextInstruction({
           rawPrompt: prompt,
@@ -672,11 +737,16 @@ async function main() {
         height,
       })
     } else {
-      const englishPrompt = looksFrench(intent.cleanedPrompt) ? applyEditLexicon(intent.cleanedPrompt) : intent.cleanedPrompt
-      const denoise = refDenoise ?? (intent.isEditIntent ? resolveReferenceDenoise(intent, 0.58, style) : 0.58)
+      const directedPrompt = String(cognitiveResult?.directed_prompt_en || '').trim()
+      const englishPrompt = directedPrompt || (looksFrench(intent.cleanedPrompt) ? applyEditLexicon(intent.cleanedPrompt) : intent.cleanedPrompt)
+      const denoise = refDenoise ?? (isFullRestyle ? 0.74 : intent.isEditIntent ? resolveReferenceDenoise(intent, 0.58, style) : 0.58)
+      const mergedNegative = [buildNegativePrompt(negative, intent.removals), cognitiveResult?.negative_prompt_en]
+        .filter(Boolean)
+        .join(', ')
+      engine = 'flux2-reference-latent'
       workflow = createFluxWorkflow({
         prompt: [englishPrompt || intent.cleanedPrompt, entityClause].filter(Boolean).join('\n\n'),
-        negativePrompt: buildNegativePrompt(negative, intent.removals),
+        negativePrompt: mergedNegative,
         style,
         width,
         height,
@@ -694,7 +764,7 @@ async function main() {
       entityTarget = targetToResearch.subject
       entityDescription = forced
       entityReferenceCount = 0
-    } else if (targetToResearch && !args['no-research']) {
+    } else if (targetToResearch && !args['no-research'] && !cognitiveResult?.directed_prompt_en) {
       const helperModel = await resolveOllamaTextModel(ollamaUrl, args['translate-model'] || process.env.TRANSLATE_MODEL)
       const visionModel = await resolveOllamaVisionModel(ollamaUrl, args['vision-model'] || process.env.VISION_MODEL)
       helperModelUsed = helperModel
@@ -711,35 +781,55 @@ async function main() {
       entityReferenceCount = resolved.referenceCount
     }
 
-    const englishPrompt = looksFrench(intent.cleanedPrompt) ? applyEditLexicon(intent.cleanedPrompt) : intent.cleanedPrompt
+    const directedPrompt = String(cognitiveResult?.directed_prompt_en || '').trim()
+    const englishPrompt = directedPrompt || (looksFrench(intent.cleanedPrompt) ? applyEditLexicon(intent.cleanedPrompt) : intent.cleanedPrompt)
 
     const brief = parseBrief(englishPrompt || intent.cleanedPrompt)
     const builtPrompt = buildPrompt({
       ...brief,
       subject: englishPrompt || intent.cleanedPrompt,
       context: entityClause || brief.context,
-      negativeHints: [negative, ...intent.removals].filter(Boolean),
+      negativeHints: [negative, cognitiveResult?.negative_prompt_en, ...intent.removals].filter(Boolean),
     })
 
+    let webReferenceImageOpt
+    const webRefPath = String(cognitiveResult?.verified_web_reference_path || '').trim()
+    if (!args['no-research'] && webRefPath && existsSync(webRefPath)) {
+      try {
+        const webRefUpload = await uploadReference(comfyUrl, webRefPath)
+        if (webRefUpload?.name) {
+          const isWebRefRestyle = cognitiveResult?.effective_render_mode === 'hybrid_real_to_stylized' || Boolean(cognitiveResult?.syntactic_style_clause?.has_style_clause && !cognitiveResult?.explicit_real_textures_override)
+          const explicitDenoise = args.denoise !== undefined ? Number(args.denoise) : NaN
+          webReferenceImageOpt = { filename: webRefUpload.name, denoise: Number.isFinite(explicitDenoise) ? explicitDenoise : (isWebRefRestyle ? 0.74 : 0.08) }
+          engine = 'flux2-web-reference-latent'
+          entityReferenceCount = 1
+        }
+      } catch (err) {
+        console.error(`[web-reference] upload warning: ${err?.message || err}`)
+      }
+    }
+
     workflow = createFluxWorkflow({
-      prompt: [builtPrompt.positive, entityClause].filter(Boolean).join('\n\n'),
-      negativePrompt: builtPrompt.negative,
+      prompt: [directedPrompt || builtPrompt.positive, entityClause].filter(Boolean).join('\n\n'),
+      negativePrompt: [builtPrompt.negative, cognitiveResult?.negative_prompt_en].filter(Boolean).join(', '),
       style,
       width,
       height,
       steps,
       filenamePrefix: tag,
       seed,
+      referenceImage: webReferenceImageOpt,
       editIntent: intent,
     })
   }
 
   if (helperModelUsed) await unloadOllamaModel(ollamaUrl, helperModelUsed)
   if (visionModelUsed) await unloadOllamaModel(ollamaUrl, visionModelUsed)
-  await freeComfyVram(comfyUrl)
 
   console.log(JSON.stringify({
     prompt,
+    directedPromptEn: cognitiveResult?.directed_prompt_en || undefined,
+    effectiveRenderMode: cognitiveResult?.effective_render_mode || undefined,
     mode: intent.editMode,
     engine,
     stages: stagedReplacementPlan ? stagedReplacementPlan.stages.map((stage) => stage.id) : undefined,
@@ -756,9 +846,10 @@ async function main() {
   }, null, 2))
 
   await unloadAllOllamaModels(ollamaUrl)
-  await freeComfyVram(comfyUrl)
-  await new Promise((r) => setTimeout(r, 2500))
-  await freeComfyVram(comfyUrl)
+  if (process.env.KEEP_COMFY_WARM !== '1') {
+    await freeComfyVram(comfyUrl)
+    await new Promise((r) => setTimeout(r, 1000))
+  }
 
   try {
     let imageBuffer
@@ -803,9 +894,22 @@ async function main() {
     const destMeta = join(targetSubdir, 'metadata.json')
 
     writeFileSync(destImage, imageBuffer)
-    
+
+    const isModification = Boolean(refPath) || Boolean(intent.isEditIntent)
+    const officialFolder = isModification ? 'modifications' : 'creations'
+    const officialDir = resolve(SCRIPT_DIR, '..', 'output', 'image', officialFolder)
+    mkdirSync(officialDir, { recursive: true })
+    const nowIso = new Date().toISOString()
+    const tsStr = nowIso.replace(/T/, '_').replace(/:/g, '').slice(0, 17)
+    const officialFilename = `${tsStr}_${promptSlug}.png`
+    const officialDestImage = join(officialDir, officialFilename)
+    const officialDestMeta = join(officialDir, `${tsStr}_${promptSlug}.json`)
+    writeFileSync(officialDestImage, imageBuffer)
+
     const promptTextContent = [
       `PROMPT: ${prompt}`,
+      `DIRECTED_PROMPT_EN: ${cognitiveResult?.directed_prompt_en || 'aucun'}`,
+      `EFFECTIVE_RENDER_MODE: ${cognitiveResult?.effective_render_mode || 'auto'}`,
       `INTENTION: ${intent.editMode}`,
       `STYLE: ${style}`,
       `STEPS: ${steps}`,
@@ -815,13 +919,21 @@ async function main() {
       `REFERENCE_SOURCE: ${ref2Path || 'aucune'}`,
       `ENTITE_DETECTEE: ${entityTarget || 'aucune'}`,
       `DESCRIPTION_ENTITE: ${entityDescription || 'aucune'}`,
-      `DATE: ${new Date().toISOString()}`,
+      `OFFICIAL_PATH: ${officialDestImage}`,
+      `DATE: ${nowIso}`,
     ].join('\n')
     writeFileSync(destPrompt, promptTextContent)
 
     const metaContent = {
+      filename: officialFilename,
       prompt,
+      directed_prompt_en: cognitiveResult?.directed_prompt_en || undefined,
+      negative_prompt_en: cognitiveResult?.negative_prompt_en || undefined,
+      effective_render_mode: cognitiveResult?.effective_render_mode || undefined,
+      open_world_entity: cognitiveResult?.open_world_entity || undefined,
       mode: intent.editMode,
+      folder: officialFolder,
+      is_modification: isModification,
       engine,
       style,
       steps,
@@ -830,14 +942,19 @@ async function main() {
       ref2: ref2Path || undefined,
       entity: entityTarget,
       entityDescription: entityDescription || undefined,
-      timestamp: new Date().toISOString(),
+      created_at: nowIso,
+      timestamp: nowIso,
     }
     writeFileSync(destMeta, JSON.stringify(metaContent, null, 2))
+    writeFileSync(officialDestMeta, JSON.stringify(metaContent, null, 2))
 
     console.log(`saved ${destImage}`)
+    console.log(`saved_official ${officialDestImage}`)
     console.log(`saved ${destPrompt}`)
   } finally {
-    await freeComfyVram(comfyUrl)
+    if (process.env.KEEP_COMFY_WARM !== '1') {
+      await freeComfyVram(comfyUrl)
+    }
     if (helperModelUsed) await unloadOllamaModel(ollamaUrl, helperModelUsed)
     if (visionModelUsed) await unloadOllamaModel(ollamaUrl, visionModelUsed)
   }

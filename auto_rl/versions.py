@@ -19,8 +19,8 @@ def preference(module, state=STATE):
     module = _canon_mod(module)
     if module not in LABELS and module not in EXTRA_UI_MODULES:
         raise ValueError('Module inconnu')
-    value = read_json(Path(state)/'inference_preferences.json', {}).get(module, 'base')
-    return value if value in {'base', 'validated'} else 'base'
+    value = read_json(Path(state)/'inference_preferences.json', {}).get(module, 'validated')
+    return value if value in {'base', 'validated'} else 'validated'
 
 
 selected_version = preference
@@ -37,7 +37,7 @@ def select(module, version, state=STATE, allow_pending=False):
         raise ValueError('Choisir la base officielle ou la dernière version validée')
     if version == 'validated' and not allow_pending:
         from .runtime import validated_record
-        if module not in LABELS or not validated_record(module, state):
+        if (module not in LABELS and module not in EXTRA_UI_MODULES) or not validated_record(module, state):
             raise ValueError('Aucune version validée disponible pour ce module')
     with exclusive_lock(Path(state)/'inference_preferences.lock'):
         values = read_json(Path(state)/'inference_preferences.json', {})

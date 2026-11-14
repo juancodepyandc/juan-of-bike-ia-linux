@@ -874,11 +874,11 @@ export async function resilientOllamaChatStream(
 export async function resilientOllamaGenerate(
   model: string,
   prompt: string,
-  opts?: ResilienceOptions & { num_ctx?: number },
+  opts?: ResilienceOptions & { num_ctx?: number; num_predict?: number },
 ) {
   // Niveaux de contexte a essayer en cas d echec memoire
   // undefined = defaut Ollama, puis reduction progressive
-  const ctxLevels = [opts?.num_ctx, 4096, 2048].filter(
+  const ctxLevels = [opts?.num_ctx, 16384, 8192, 4096].filter(
     (v): v is number | undefined => v === undefined || (typeof v === 'number' && v > 0),
   )
   // Deduplicate: si opts.num_ctx est deja 4096 ou 2048, ne pas re-essayer
@@ -891,6 +891,7 @@ export async function resilientOllamaGenerate(
       return await withResilience(model, opts, (selectedModel, attemptSignal) =>
         ollamaGenerate(selectedModel, prompt, {
           num_ctx: ctx,
+          num_predict: opts?.num_predict,
           signal: attemptSignal,
           firstByteTimeoutMs: opts?.firstByteTimeoutMs,
         }),
@@ -912,7 +913,7 @@ export async function resilientOllamaGenerate(
         maxAttempts: uniqueCtxLevels.length,
         action: 'retry',
         model,
-        error: `Memoire insuffisante — reduction du contexte a num_ctx=${uniqueCtxLevels[i + 1] ?? 2048}`,
+        error: `Memoire insuffisante — reduction du contexte a num_ctx=${uniqueCtxLevels[i + 1] ?? 4096}`,
       })
     }
   }
@@ -920,7 +921,8 @@ export async function resilientOllamaGenerate(
   // Fallback ultime — ne devrait jamais arriver, mais pour la surete
   return withResilience(model, opts, (selectedModel, attemptSignal) =>
     ollamaGenerate(selectedModel, prompt, {
-      num_ctx: 2048,
+      num_ctx: 4096,
+      num_predict: opts?.num_predict,
       signal: attemptSignal,
       firstByteTimeoutMs: opts?.firstByteTimeoutMs,
     }),

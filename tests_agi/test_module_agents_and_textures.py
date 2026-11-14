@@ -172,9 +172,11 @@ class TestModuleAgentsAndTextures(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tuple(plan["loop_phases"]), LOOP_PHASES)
         self.assertEqual(len(plan["phases_trace"]), 7)
         self.assertGreaterEqual(len(plan["dag_nodes"]), 2)
-        self.assertEqual(len(plan["operational_loops"]), 8)
+        self.assertEqual(len(plan["operational_loops"]), 10)
         self.assertTrue(all(plan["operational_loops"].values()))
         self.assertIn("counterfactual_evaluation", plan)
+        self.assertIn("formal_constraints", plan)
+        self.assertIn("reinforced_model_arbitration", plan)
         self.assertEqual(len(plan["counterfactual_evaluation"]["hypotheses"]), 3)
         self.assertGreaterEqual(len(plan["handoff_contracts"]), 1)
 

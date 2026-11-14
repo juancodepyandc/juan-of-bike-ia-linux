@@ -100,14 +100,14 @@ def execute_cycle(c, cycle_number=1):
         status.update("curriculum", "Préparation des sujets d'entraînement et de l'audit réservé…", progress_percent=3)
         if c.get("prepared_tasks"):
             tasks = read_json(c["prepared_tasks"])
-        elif c["module"] in {"3d", "image"}:
+        elif c["module"] in {"3d", "image", "drawing"}:
             tasks = visual_tasks(c, task_dir, check, paths)
         elif c["module"] == "audio":
             tasks = audio_tasks(c)
         else:
             tasks = None
         status.update("loading", "Chargement du modèle de base gelé et des juges…", progress_percent=5)
-        if c['stage'] != 'remote' and c['module'] not in {'image','video'}:
+        if c['stage'] != 'remote' and c['module'] not in {'image','drawing','video'}:
             from .resources import reclaim_comfy_ram
             reclaim_comfy_ram(state)
         backend = make_backend(c, paths)
@@ -296,7 +296,12 @@ def execute_cycle(c, cycle_number=1):
             atomic_json(run/"observations.json", observations)
             result_dir, _ = train_on_kaggle(c,run,[(initial_file,"initial.safetensors"),(run/"observations.json","observations.json")],{"surrogate_es":True},status,check)
             backend.adapter.load(result_dir/"candidate.safetensors")
-            best=backend.adapter.vector()
+            kaggle_vec = backend.adapter.vector()
+            _, kaggle_reward = evaluate(kaggle_vec, train_tasks, [train_seed], "train/kaggle_surrogate_check", True)
+            if kaggle_reward > best_reward:
+                best, best_reward = kaggle_vec.clone(), kaggle_reward
+            else:
+                backend.adapter.set_vector(best)
             cloud_metrics=read_json(result_dir/"training_metrics.json")
             atomic_json(run/"training_metrics.json",cloud_metrics)
         candidate_path = run / "candidate.safetensors"

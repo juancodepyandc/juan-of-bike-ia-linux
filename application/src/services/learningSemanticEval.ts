@@ -158,15 +158,15 @@ export async function evaluateAnswerSemantically(
           { role: 'user', content: buildUserMessage(input) },
         ],
         stream: false,
-        options: { temperature: 0.2, num_ctx: 4096, num_predict: 400 },
+        options: { temperature: 0.2, num_ctx: 32768, num_predict: 4096 },
       }),
       signal: ctrl.signal,
     })
     if (!resp.ok) {
       return fallbackHeuristic(input, `HTTP ${resp.status}`)
     }
-    const data = await resp.json() as { message?: { content?: string }; response?: string }
-    const text = data?.message?.content ?? data?.response ?? ''
+    const data = await resp.json() as { message?: { content?: string; thinking?: string }; response?: string }
+    const text = (data?.message?.content || data?.response || data?.message?.thinking || '')
     const parsed = parseLLMJson(text)
     if (parsed) return parsed
     return fallbackHeuristic(input, `parse-fail`)
@@ -269,13 +269,13 @@ export async function regenerateSimilarExo(
             ].join('\n\n') },
         ],
         stream: false,
-        options: { temperature: 0.7, num_ctx: 4096, num_predict: 600 },
+        options: { temperature: 0.7, num_ctx: 32768, num_predict: 4096 },
       }),
       signal: ctrl.signal,
     })
     if (!resp.ok) return { type: input.prevType, question: '', reponse: '', error: `HTTP ${resp.status}` }
-    const data = await resp.json() as { message?: { content?: string }; response?: string }
-    const text = data?.message?.content ?? data?.response ?? ''
+    const data = await resp.json() as { message?: { content?: string; thinking?: string }; response?: string }
+    const text = (data?.message?.content || data?.response || data?.message?.thinking || '')
     const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/)
     const candidate = fenced ? fenced[1] : text
     const first = candidate.indexOf('{'); const last = candidate.lastIndexOf('}')

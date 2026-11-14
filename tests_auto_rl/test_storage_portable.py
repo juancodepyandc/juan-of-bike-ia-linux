@@ -26,3 +26,35 @@ class PortableStorageTests(unittest.TestCase):
             atomic_json(path,value)
             self.assertEqual(read_json(path),value)
             self.assertIn('東京',path.read_text(encoding='utf-8'))
+
+    def test_control_process_identity_works_without_procfs(self):
+        import os
+        from unittest.mock import patch
+        from auto_rl import control
+        with patch.object(Path, "read_text", side_effect=OSError("no /proc on macOS/Windows/BSD")):
+            ident = control.process_identity(os.getpid())
+            self.assertIsNotNone(ident)
+            self.assertIn(str(os.getpid()), str(ident))
+            self.assertIsNone(control.process_identity(-999999))
+
+    def test_reclaim_comfy_ram_survives_missing_systemctl(self):
+        from unittest.mock import patch
+        from auto_rl import resources
+        with patch("subprocess.run", side_effect=FileNotFoundError("no systemctl on Alpine/Void/macOS/Windows")):
+            resources.reclaim_comfy_ram()
+
+    def test_before_after_report_desktop_and_font_fallback(self):
+        from auto_rl import before_after_report
+        self.assertIsInstance(before_after_report.BUREAU_STUDIO_DIR, Path)
+        font = before_after_report._load_font(14, bold=True)
+        self.assertIsNotNone(font)
+
+    def test_all_12_modules_have_active_reinforced_safetensors(self):
+        from auto_rl.reinforced_registry import get_reinforced_overview
+        status = get_reinforced_overview()
+        modules = status.get("modules", {})
+        self.assertGreaterEqual(len(modules), 12)
+        for mod_id, info in modules.items():
+            self.assertTrue(info.get("reinforced_available"), f"Module {mod_id} missing reinforced_available")
+            self.assertEqual(info.get("effective_variant"), "renforce", f"Module {mod_id} not active as renforce")
+

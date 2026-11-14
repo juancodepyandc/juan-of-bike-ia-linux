@@ -37,7 +37,7 @@ def design_scene(prompt: str, output_dir: Path) -> dict:
     user_prompt = f"Design this scene: {prompt}"
     
     log.info(f"Asking LLM Architect to design scene for: {prompt}")
-    resp = _ask_ollama(user_prompt, [], sys_prompt, model="qwen2.5:7b")
+    resp = _ask_ollama(user_prompt, [], sys_prompt, model="deepseek-r1:32b")
     
     try:
         if "```json" in resp:

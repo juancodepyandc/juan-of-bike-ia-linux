@@ -356,11 +356,28 @@ async function runWriteFile(
   content: string,
   runtime: CoworkRuntime,
 ): Promise<Omit<CoworkActionResult, 'durationMs'>> {
-  if (runtime !== 'tauri-desktop') {
-    return writeFileViaBridge(path, content)
+  const snapshot = await captureFilePreImageSnapshot(path, runtime)
+  try {
+    if (runtime !== 'tauri-desktop') {
+      const res = await writeFileViaBridge(path, content)
+      if (res.ok) recordTransactionMutation({ kind: 'write_file', path, content }, snapshot)
+      return res
+    }
+    await fsWriteText(path, content)
+    recordTransactionMutation({ kind: 'write_file', path, content }, snapshot)
+    return {
+      ok: true,
+      output: `Ecrit ${content.length} octets dans ${path}.`,
+      data: { path, bytes: content.length, preExisted: snapshot.existed, contentHash: fnv1aHashHex(content) },
+    }
+  } catch (err) {
+    // Reprise transactionnelle : si l ecriture a echoue en cours de route et que
+    // le fichier existait avant, on restaure son contenu pre-image.
+    if (snapshot.existed) {
+      await restoreFileFromSnapshot(snapshot, runtime).catch(() => {})
+    }
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
   }
-  await fsWriteText(path, content)
-  return { ok: true, output: `Ecrit ${content.length} octets dans ${path}.`, data: { path, bytes: content.length } }
 }
 
 async function writeFileViaBridge(
@@ -393,7 +410,27 @@ async function runEditFile(
   const readResult = await runReadFile(path, runtime)
   if (!readResult.ok) return readResult
   const original = readResult.output ?? ''
-  const occurrences = countOccurrences(original, oldText)
+  let effectiveOld = oldText
+  let effectiveNew = newText
+  let occurrences = countOccurrences(original, effectiveOld)
+
+  // Reconciliation canonique des fins de ligne (CRLF <-> LF) lorsque le match
+  // exact echoue uniquement a cause d une difference de convention d OS.
+  if (occurrences === 0 && oldText.includes('\n')) {
+    const fileUsesCrlf = original.includes('\r\n')
+    const normalizedOld = fileUsesCrlf
+      ? oldText.replace(/\r?\n/g, '\r\n')
+      : oldText.replace(/\r\n/g, '\n')
+    const normalizedOccurrences = countOccurrences(original, normalizedOld)
+    if (normalizedOccurrences > 0) {
+      effectiveOld = normalizedOld
+      effectiveNew = fileUsesCrlf
+        ? newText.replace(/\r?\n/g, '\r\n')
+        : newText.replace(/\r\n/g, '\n')
+      occurrences = normalizedOccurrences
+    }
+  }
+
   if (occurrences === 0) {
     return { ok: false, error: `oldText introuvable dans ${path}.` }
   }
@@ -403,7 +440,7 @@ async function runEditFile(
       error: `oldText apparait ${occurrences} fois dans ${path}. Aurora doit fournir un contexte plus large pour cibler un seul match.`,
     }
   }
-  const updated = original.replace(oldText, newText)
+  const updated = original.replace(effectiveOld, effectiveNew)
   return runWriteFile(path, updated, runtime)
 }
 
@@ -411,13 +448,17 @@ async function runDeleteFile(
   path: string,
   runtime: CoworkRuntime,
 ): Promise<Omit<CoworkActionResult, 'durationMs'>> {
+  const snapshot = await captureFilePreImageSnapshot(path, runtime)
   if (runtime !== 'tauri-desktop') {
-    return deleteFileViaBridge(path)
+    const res = await deleteFileViaBridge(path)
+    if (res.ok) recordTransactionMutation({ kind: 'delete_file', path }, snapshot)
+    return res
   }
   // Use the existing fs_remove_dir_all command — it handles both files and dirs.
   const { invoke } = await import('@tauri-apps/api/core')
   await invoke('fs_remove_dir_all', { path })
-  return { ok: true, output: `Supprime : ${path}.`, data: { path } }
+  recordTransactionMutation({ kind: 'delete_file', path }, snapshot)
+  return { ok: true, output: `Supprime : ${path}.`, data: { path, backedUpInJournal: snapshot.existed } }
 }
 
 async function deleteFileViaBridge(path: string): Promise<Omit<CoworkActionResult, 'durationMs'>> {
@@ -976,5 +1017,482 @@ export async function reportTrendSignalEvent(
     }).catch(() => {})
   } catch {
     // Pure observability — never propagate.
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Journal transactionnel Pre-Image (Write-Ahead Snapshot) & Reprise LIFO
+// ---------------------------------------------------------------------------
+
+export type FilePreImageSnapshot = {
+  path: string
+  existed: boolean
+  content: string
+  bytes: number
+  fnv1aHash: string
+  capturedAt: number
+}
+
+export type TransactionMutationEntry = {
+  action: CoworkAction
+  snapshot: FilePreImageSnapshot
+  recordedAt: number
+}
+
+export type TransactionContext = {
+  id: string
+  startedAt: number
+  status: 'active' | 'committed' | 'rolled_back'
+  mutations: TransactionMutationEntry[]
+}
+
+export type TransactionCommitReport = {
+  transactionId: string
+  committedMutations: number
+  durationMs: number
+}
+
+export type TransactionRollbackReport = {
+  transactionId: string
+  restoredPaths: string[]
+  deletedCreatedPaths: string[]
+  failedRestorations: Array<{ path: string; error: string }>
+  fullyRestored: boolean
+}
+
+export type TransactionalRetryOptions = {
+  maxRetries?: number
+  baseBackoffMs?: number
+  rollbackOnFailure?: boolean
+}
+
+export type DagExecutionOptions = {
+  rollbackOnFailure?: boolean
+  maxParallelReads?: number
+  onWaveStart?: (waveIndex: number, actionIndices: number[]) => void
+}
+
+export type DagExecutionReport = {
+  transactionId: string
+  results: CoworkActionResult[]
+  wavesExecuted: number[][]
+  criticalPathIndices: number[]
+  criticalPathDurationMs: number
+  rolledBack: boolean
+  rollbackReport?: TransactionRollbackReport
+}
+
+const MAX_TRANSACTIONS_IN_MEMORY = 32
+const _transactions = new Map<string, TransactionContext>()
+let _activeTransactionId: string | null = null
+
+export function fnv1aHashHex(input: string): string {
+  let hash = 0x811c9dc5
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i)
+    hash = Math.imul(hash, 0x01000193) >>> 0
+  }
+  return hash.toString(16).padStart(8, '0')
+}
+
+async function captureFilePreImageSnapshot(
+  path: string,
+  runtime: CoworkRuntime,
+): Promise<FilePreImageSnapshot> {
+  try {
+    const readRes = await runReadFile(path, runtime)
+    if (readRes.ok && typeof readRes.output === 'string') {
+      return {
+        path,
+        existed: true,
+        content: readRes.output,
+        bytes: readRes.output.length,
+        fnv1aHash: fnv1aHashHex(readRes.output),
+        capturedAt: Date.now(),
+      }
+    }
+  } catch {
+    // Fichier inexistant ou non lisible avant mutation
+  }
+  return {
+    path,
+    existed: false,
+    content: '',
+    bytes: 0,
+    fnv1aHash: fnv1aHashHex(''),
+    capturedAt: Date.now(),
+  }
+}
+
+async function restoreFileFromSnapshot(
+  snapshot: FilePreImageSnapshot,
+  runtime: CoworkRuntime,
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    if (!snapshot.existed) {
+      if (runtime !== 'tauri-desktop') {
+        const res = await deleteFileViaBridge(snapshot.path)
+        return { ok: res.ok, error: res.error }
+      }
+      const { invoke } = await import('@tauri-apps/api/core')
+      await invoke('fs_remove_dir_all', { path: snapshot.path })
+      return { ok: true }
+    }
+    if (runtime !== 'tauri-desktop') {
+      const res = await writeFileViaBridge(snapshot.path, snapshot.content)
+      return { ok: res.ok, error: res.error }
+    }
+    await fsWriteText(snapshot.path, snapshot.content)
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+function recordTransactionMutation(action: CoworkAction, snapshot: FilePreImageSnapshot): void {
+  if (!_activeTransactionId) {
+    beginCoworkTransaction('default_auto_tx')
+  }
+  const tx = _activeTransactionId ? _transactions.get(_activeTransactionId) : undefined
+  if (!tx || tx.status !== 'active') return
+  tx.mutations.push({
+    action,
+    snapshot,
+    recordedAt: Date.now(),
+  })
+}
+
+export function beginCoworkTransaction(transactionId?: string): string {
+  const id = transactionId || `cowork_tx_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  if (_transactions.size >= MAX_TRANSACTIONS_IN_MEMORY) {
+    const oldestKey = _transactions.keys().next().value
+    if (oldestKey) _transactions.delete(oldestKey)
+  }
+  _transactions.set(id, {
+    id,
+    startedAt: Date.now(),
+    status: 'active',
+    mutations: [],
+  })
+  _activeTransactionId = id
+  return id
+}
+
+export function commitCoworkTransaction(transactionId?: string): TransactionCommitReport {
+  const id = transactionId || _activeTransactionId || 'default_auto_tx'
+  const tx = _transactions.get(id)
+  if (!tx) {
+    return { transactionId: id, committedMutations: 0, durationMs: 0 }
+  }
+  tx.status = 'committed'
+  if (_activeTransactionId === id) _activeTransactionId = null
+  return {
+    transactionId: id,
+    committedMutations: tx.mutations.length,
+    durationMs: Math.max(0, Date.now() - tx.startedAt),
+  }
+}
+
+export function getTransactionSnapshots(transactionId?: string): ReadonlyArray<FilePreImageSnapshot> {
+  const id = transactionId || _activeTransactionId || 'default_auto_tx'
+  const tx = _transactions.get(id)
+  if (!tx) return []
+  return tx.mutations.map((m) => m.snapshot)
+}
+
+/**
+ * Rollback transactionnel LIFO : parcourt les mutations enregistrees a l envers
+ * et restaure l etat exact pre-image de chaque fichier touche.
+ */
+export async function rollbackCoworkTransaction(
+  transactionId: string | undefined,
+  runtime: CoworkRuntime,
+): Promise<TransactionRollbackReport> {
+  const id = transactionId || _activeTransactionId || 'default_auto_tx'
+  const tx = _transactions.get(id)
+  if (!tx) {
+    return {
+      transactionId: id,
+      restoredPaths: [],
+      deletedCreatedPaths: [],
+      failedRestorations: [],
+      fullyRestored: true,
+    }
+  }
+
+  const restoredPaths: string[] = []
+  const deletedCreatedPaths: string[] = []
+  const failedRestorations: Array<{ path: string; error: string }> = []
+  const processedPaths = new Set<string>()
+
+  // Pour chaque chemin modifie plusieurs fois dans la meme transaction, c est
+  // le PREMIER snapshot capture (etat initial avant toute mutation de la tx)
+  // qui detient la verite pre-image. On deduplique en gardant le plus ancien
+  // snapshot par chemin, applique dans l ordre inverse d apparition.
+  const earliestSnapshotByPath = new Map<string, FilePreImageSnapshot>()
+  for (const entry of tx.mutations) {
+    if (!earliestSnapshotByPath.has(entry.snapshot.path)) {
+      earliestSnapshotByPath.set(entry.snapshot.path, entry.snapshot)
+    }
+  }
+
+  for (let i = tx.mutations.length - 1; i >= 0; i -= 1) {
+    const { snapshot } = tx.mutations[i]
+    if (processedPaths.has(snapshot.path)) continue
+    processedPaths.add(snapshot.path)
+
+    const initialSnapshot = earliestSnapshotByPath.get(snapshot.path) ?? snapshot
+    const res = await restoreFileFromSnapshot(initialSnapshot, runtime)
+    if (res.ok) {
+      if (initialSnapshot.existed) restoredPaths.push(initialSnapshot.path)
+      else deletedCreatedPaths.push(initialSnapshot.path)
+    } else {
+      failedRestorations.push({ path: initialSnapshot.path, error: res.error || 'echec restauration' })
+    }
+  }
+
+  tx.status = 'rolled_back'
+  if (_activeTransactionId === id) _activeTransactionId = null
+
+  return {
+    transactionId: id,
+    restoredPaths,
+    deletedCreatedPaths,
+    failedRestorations,
+    fullyRestored: failedRestorations.length === 0,
+  }
+}
+
+function isTransientRetryableAction(action: CoworkAction, errorMsg: string): boolean {
+  const transientPattern = /timeout|timed out|network|econnreset|econnrefused|socket|502|503|504|temporar/i
+  if (!transientPattern.test(errorMsg)) return false
+  return ['fetch', 'web_search', 'read_file', 'list_dir', 'browser', 'connector'].includes(action.kind)
+}
+
+/**
+ * Execute une action avec reprise transactionnelle sur erreur transitoire
+ * et restauration automatique du snapshot en cas de corruption/echec d ecriture.
+ */
+export async function runActionWithTransactionalRecovery(
+  action: CoworkAction,
+  runtime: CoworkRuntime,
+  workspaceRoot: string,
+  signal?: AbortSignal,
+  options: TransactionalRetryOptions = {},
+): Promise<CoworkActionResult> {
+  const maxRetries = Math.max(0, Math.min(3, options.maxRetries ?? 1))
+  const baseBackoffMs = Math.max(50, options.baseBackoffMs ?? 250)
+  const txId = beginCoworkTransaction()
+
+  let lastResult = await runAction(action, runtime, workspaceRoot, signal)
+  let attempt = 0
+
+  while (!lastResult.ok && attempt < maxRetries && !signal?.aborted) {
+    const errText = lastResult.error || ''
+    if (!isTransientRetryableAction(action, errText)) break
+    attempt += 1
+    const delayMs = baseBackoffMs * Math.pow(2, attempt - 1)
+    await new Promise((resolve) => setTimeout(resolve, delayMs))
+    lastResult = await runAction(action, runtime, workspaceRoot, signal)
+  }
+
+  if (!lastResult.ok && options.rollbackOnFailure !== false) {
+    await rollbackCoworkTransaction(txId, runtime)
+  } else {
+    commitCoworkTransaction(txId)
+  }
+
+  return lastResult
+}
+
+/**
+ * Ordonnance et execute un ensemble d actions selon un DAG causal (tri
+ * topologique de Kahn par vagues de dependances + calcul du chemin critique CPM)
+ * avec barriere transactionnelle et rollback LIFO automatique sur erreur.
+ */
+export async function runPlanDagTransactional(
+  actions: CoworkAction[],
+  runtime: CoworkRuntime,
+  workspaceRoot: string,
+  signal?: AbortSignal,
+  options: DagExecutionOptions = {},
+): Promise<DagExecutionReport> {
+  const txId = beginCoworkTransaction()
+  const n = actions.length
+  if (n === 0) {
+    commitCoworkTransaction(txId)
+    return {
+      transactionId: txId,
+      results: [],
+      wavesExecuted: [],
+      criticalPathIndices: [],
+      criticalPathDurationMs: 0,
+      rolledBack: false,
+    }
+  }
+
+  // Construction du graphe de dependances causales (RAW, WAR, WAW, barriere finish/reply)
+  const dependsOn: number[][] = Array.from({ length: n }, () => [])
+  const dependents: number[][] = Array.from({ length: n }, () => [])
+
+  const extractTargetKey = (act: CoworkAction): string | null => {
+    if ('path' in act && typeof act.path === 'string' && act.path.trim()) {
+      return `fs:${act.path.trim().replace(/\\/g, '/')}`
+    }
+    if (act.kind === 'screenshot_desktop' || (act.kind === 'browser' && act.operation === 'screenshot')) {
+      return 'visual:screenshot'
+    }
+    if (act.kind === 'vision_describe') {
+      return 'visual:screenshot'
+    }
+    return null
+  }
+
+  const isMutatingKind = (act: CoworkAction): boolean =>
+    ['write_file', 'edit_file', 'delete_file', 'shell', 'ephemeral_tool', 'file_bundle'].includes(act.kind)
+
+  for (let i = 0; i < n; i += 1) {
+    const a = actions[i]
+    const keyA = extractTargetKey(a)
+    const mutA = isMutatingKind(a)
+
+    if (a.kind === 'finish' || a.kind === 'reply' || a.kind === 'voice_speak') {
+      for (let j = 0; j < i; j += 1) {
+        dependsOn[i].push(j)
+        dependents[j].push(i)
+      }
+      continue
+    }
+
+    for (let j = 0; j < i; j += 1) {
+      const b = actions[j]
+      const keyB = extractTargetKey(b)
+      const mutB = isMutatingKind(b)
+      const sharesResource = keyA !== null && keyA === keyB
+      const shellFence = a.kind === 'shell' || b.kind === 'shell'
+      if ((sharesResource && (mutA || mutB || a.kind === 'vision_describe')) || (shellFence && (mutA || mutB))) {
+        if (!dependsOn[i].includes(j)) {
+          dependsOn[i].push(j)
+          dependents[j].push(i)
+        }
+      }
+    }
+  }
+
+  // Tri topologique de Kahn par vagues (wavefronts)
+  const inDegree = dependsOn.map((deps) => deps.length)
+  const remaining = new Set<number>(Array.from({ length: n }, (_, i) => i))
+  const waves: number[][] = []
+
+  while (remaining.size > 0) {
+    const wave: number[] = []
+    for (const idx of remaining) {
+      if (inDegree[idx] === 0) wave.push(idx)
+    }
+    if (wave.length === 0) {
+      // Garde-fou cycle : drainer dans l ordre sequentiel restant
+      const fallbackIdx = remaining.values().next().value
+      if (fallbackIdx === undefined) break
+      wave.push(fallbackIdx)
+    }
+    wave.sort((a, b) => a - b)
+    waves.push(wave)
+    for (const idx of wave) {
+      remaining.delete(idx)
+      for (const dep of dependents[idx]) {
+        inDegree[dep] = Math.max(0, inDegree[dep] - 1)
+      }
+    }
+  }
+
+  const results: CoworkActionResult[] = new Array(n)
+  const wavesExecuted: number[][] = []
+  let failed = false
+  const maxParallel = Math.max(1, options.maxParallelReads ?? 4)
+
+  for (let w = 0; w < waves.length; w += 1) {
+    if (signal?.aborted || failed) break
+    const wave = waves[w]
+    options.onWaveStart?.(w, wave)
+    wavesExecuted.push(wave)
+
+    const allReadOnly = wave.every((idx) => !isMutatingKind(actions[idx]))
+    if (allReadOnly && wave.length > 1) {
+      // Execution parallele bornee pour les vagues purement observatrices
+      for (let offset = 0; offset < wave.length; offset += maxParallel) {
+        const chunk = wave.slice(offset, offset + maxParallel)
+        const chunkResults = await Promise.all(
+          chunk.map((idx) => runAction(actions[idx], runtime, workspaceRoot, signal)),
+        )
+        for (let k = 0; k < chunk.length; k += 1) {
+          results[chunk[k]] = chunkResults[k]
+          if (!chunkResults[k].ok) failed = true
+        }
+        if (failed) break
+      }
+    } else {
+      for (const idx of wave) {
+        if (signal?.aborted) break
+        const res = await runAction(actions[idx], runtime, workspaceRoot, signal)
+        results[idx] = res
+        if (!res.ok) {
+          failed = true
+          break
+        }
+      }
+    }
+  }
+
+  // Calcul a posteriori du chemin critique reel (CPM) avec les durees mesurees
+  const longest = new Array<number>(n).fill(0)
+  const pred = new Array<number>(n).fill(-1)
+  for (const wave of waves) {
+    for (const idx of wave) {
+      const dur = results[idx]?.durationMs ?? 0
+      let maxPrev = 0
+      for (const p of dependsOn[idx]) {
+        if (longest[p] > maxPrev) {
+          maxPrev = longest[p]
+          pred[idx] = p
+        }
+      }
+      longest[idx] = maxPrev + dur
+    }
+  }
+
+  let endNode = 0
+  for (let i = 1; i < n; i += 1) {
+    if (longest[i] > longest[endNode]) endNode = i
+  }
+  const criticalPathIndices: number[] = []
+  let cursor = endNode
+  let guard = 0
+  while (cursor !== -1 && guard <= n) {
+    criticalPathIndices.unshift(cursor)
+    cursor = pred[cursor] ?? -1
+    guard += 1
+  }
+
+  if (failed && options.rollbackOnFailure !== false) {
+    const rollbackReport = await rollbackCoworkTransaction(txId, runtime)
+    return {
+      transactionId: txId,
+      results,
+      wavesExecuted,
+      criticalPathIndices,
+      criticalPathDurationMs: longest[endNode] ?? 0,
+      rolledBack: true,
+      rollbackReport,
+    }
+  }
+
+  commitCoworkTransaction(txId)
+  return {
+    transactionId: txId,
+    results,
+    wavesExecuted,
+    criticalPathIndices,
+    criticalPathDurationMs: longest[endNode] ?? 0,
+    rolledBack: false,
   }
 }

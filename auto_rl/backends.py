@@ -35,23 +35,25 @@ def resolve_paths(c):
         from .temporal_backend import temporal_paths
         return temporal_paths(c)
     wanted = [c["module"]]
-    if c["module"] in {"3d", "image"}:
+    if c["module"] in {"3d", "image", "drawing"}:
         wanted.append("clip")
     if c["module"] == "3d":
         wanted.append("image")
     if c["module"] == "audio":
         wanted.append("asr")
-    paths = {k: (str(Path(c["comfy_unet"]).resolve()) if k == "image" and c["module"] == "image" and c.get("trainer") == "surrogate_es" else local_snapshot(c["models"][k])) for k in wanted}
-    if c["module"] == "image":
+    paths = {k: (str(Path(c["comfy_unet"]).resolve()) if k in {"image", "drawing"} and c["module"] in {"image", "drawing"} and c.get("trainer") == "surrogate_es" else local_snapshot(c["models"][k])) for k in wanted}
+    if c["module"] in {"image", "drawing"}:
+        mod_key = c["module"]
         if c.get("trainer") == "surrogate_es":
-            if not Path(paths["image"]).is_file():
-                raise RuntimeError("GGUF FLUX.2 absent : " + paths["image"])
+            if not Path(paths[mod_key]).is_file():
+                raise RuntimeError("GGUF FLUX.2 absent : " + paths[mod_key])
+            paths["image"] = paths[mod_key]
             for key in ("comfy_clip", "comfy_vae"):
                 source = Path(c[key]).resolve()
                 if not source.is_file():
                     raise RuntimeError("Poids ComfyUI absents : " + str(source))
                 paths[key] = str(source)
-        elif not (Path(paths["image"]) / "model_index.json").is_file():
+        elif not (Path(paths[mod_key]) / "model_index.json").is_file():
             raise RuntimeError("FLUX.2 installé au format ComfyUI/GGUF ; ce formateur requiert un pipeline Diffusers complet. Le modèle image actuel ne peut pas être entraîné par ce backend.")
         if not Path(c["aesthetic_weights"]).is_file():
             raise RuntimeError("Poids du juge esthétique absents : lancer scripts/setup_auto_rl.sh")
@@ -314,10 +316,22 @@ def make_backend(c, paths):
     if c["module"] in {"video", "animation"}:
         from .temporal_backend import VideoBackend, AnimationBackend
         return (VideoBackend if c["module"] == "video" else AnimationBackend)(c, paths)
-    if c["module"] == "image" and c.get("trainer") == "surrogate_es":
+    if c["module"] in {"image", "drawing"} and c.get("trainer") == "surrogate_es":
         from .comfy_backend import ComfyImageBackend
         return ComfyImageBackend(c, paths)
-    return {"code": CodeBackend, "cyber": CodeBackend, "cowork": CodeBackend, "conversation": ConversationBackend, "learning": ConversationBackend, "image": ImageBackend, "audio": AudioBackend, "3d": TrellisBackend}[c["module"]](c, paths)
+    return {
+        "code": CodeBackend,
+        "cyber": CodeBackend,
+        "cowork": CodeBackend,
+        "business": CodeBackend,
+        "simulator": CodeBackend,
+        "conversation": ConversationBackend,
+        "learning": ConversationBackend,
+        "image": ImageBackend,
+        "drawing": ImageBackend,
+        "audio": AudioBackend,
+        "3d": TrellisBackend,
+    }[c["module"]](c, paths)
 
 
 def visual_tasks(c, root, check, paths, progress=None):

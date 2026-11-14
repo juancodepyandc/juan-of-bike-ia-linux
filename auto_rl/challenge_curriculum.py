@@ -26,6 +26,34 @@ def harder_inputs(family, values, rng):
     elif family=='network':extra=[{'networks':['::1/128','10.0.0.1/31','192.0.2.5/32'],'addresses':['::','::1','::2','10.0.0.0','10.0.0.1','10.0.0.2','192.0.2.5','192.0.2.6','bad']}]
     elif family=='permissions':extra=[list(range(512))]
     elif family=='csv':extra=['account,cents\n"multi\nline",5\n"multi\nline",-7\n"a,b",999999999\n"a,b",-999999999\n']
+    elif family=='business_waterfall':
+        extra=[
+            {'gross_cents': 0, 'direct_cost_cents': 5000, 'cac_cents': 2000, 'fixed_cost_cents': 10000, 'reserve_yield_bps': 450, 'dso_lag_cents': 0, 'tax_bps': 2500},
+            {'gross_cents': 10000000, 'direct_cost_cents': 1500000, 'cac_cents': 800000, 'fixed_cost_cents': 500000, 'reserve_yield_bps': 375, 'dso_lag_cents': 2500000, 'tax_bps': 3000},
+            {'gross_cents': 500000, 'direct_cost_cents': 100000, 'cac_cents': 50000, 'fixed_cost_cents': 50000, 'reserve_yield_bps': 400, 'dso_lag_cents': 50000, 'tax_bps': 2500},
+        ]
+    elif family=='cyber_alloc_guard':
+        extra=[
+            {'count': 0xFFFFFFFF, 'stride': 1, 'header': 0, 'max_bytes': 0xFFFFFFFF},
+            {'count': 0x10000, 'stride': 0x10000, 'header': 0, 'max_bytes': 0xFFFFFFFF},
+            {'count': 255, 'stride': 16, 'header': 1, 'max_bytes': 4096},
+            {'count': 255, 'stride': 16, 'header': 1, 'max_bytes': 4095},
+        ]
+    elif family=='os_vfs_canonical':
+        extra=[
+            {'path': '/a/b/c/../../../../root/./secret//file'},
+            {'path': '////'},
+            {'path': './.././../etc/./shadow'},
+        ]
+    elif family=='os_aging_scheduler':
+        extra=[
+            {'aging_factor': 10, 'processes': [
+                {'pid': 99 - i, 'base_priority': 1, 'wait_ticks': i} for i in range(32)
+            ]},
+            {'aging_factor': 0, 'processes': [
+                {'pid': i, 'base_priority': 50, 'wait_ticks': i * 10} for i in range(16, 0, -1)
+            ]},
+        ]
     else:extra=[['ab'*64,'ba'*64],['é'*64,'e\u0301'*64]]
     # Keep boundary cases and add independently generated ordinary cases.
     from .curriculum import inputs
@@ -53,7 +81,11 @@ MEDIA_TRAIN=[
  ('animal','A fox curled beside a fallen branch, four paws, layered fur, a visible tail and anatomically coherent ears.'),
  ('scene','A tiny market stall diorama with an awning, three crates, pottery and a readable ground plane.'),
  ('instrument','A detailed string instrument with tuning pegs, thin strings, sound holes and a carved bridge.'),
- ('shell','A spiral seashell with ridges, a continuous lip and a visible hollow opening.')]
+ ('shell','A spiral seashell with ridges, a continuous lip and a visible hollow opening.'),
+ ('arch_villa','A three-story contemporary architectural villa with cantilevered reinforced concrete slabs, load-bearing columns, spiral staircase and structural glass facade.'),
+ ('cad_turret','An articulated robotic turret assembly with NEMA17 motor bay, planetary gear ring, LiDAR optical dome and M3 bolted inspection hatches.'),
+ ('horology','An open skeleton tourbillon pocket watch movement with concentric balance wheel, escapement anchor, ruby bearings and guilloche bridges.'),
+ ('abyssal_bio','A deep-sea bioluminescent cephalopod with translucent mantle, eight distinct curled tentacles, internal photophores and fin membranes.')]
 MEDIA_AUDIT=[
  ('bicycle','A complete cargo bicycle with two circular wheels, spokes, pedals, chain, cables and an empty front basket.'),
  ('scorpion','An articulated mechanical scorpion with eight legs, two pincers and a segmented curled tail.'),
@@ -74,6 +106,111 @@ VISUAL_STYLES=[
  ('low_poly','intentional low-poly art with clean planar facets, preserved topology and no accidental holes'),
  ('clay','clay stop-motion miniature with soft sculpted surfaces, visible fingerprints and stable proportions'),
  ('comic','inked comic-book illustration rendered as a solid 3D object, bold contour lines and controlled halftone accents')]
+
+# Training covers 646 styles across 4 epistemic regimes:
+# - 6 Known Canonical styles (VISUAL_STYLES)
+# - 160 Rare / Under-Trained Long-Tail Optical, Cultural & Architectural styles (20 rare media × 8 optical micro-regimes)
+# - 480 Unknown / Hybrid Out-of-Distribution Physics-Composed styles (24 structural matrices × 20 exotic secondary physics)
+_RARE_OPTICAL_MEDIA = [
+    ("kintsugi_24k_porcelain", "glazed white porcelain with dipole subsurface scattering and 24-karat gold kintsugi veins"),
+    ("volcanic_black_opal", "volcanic black opal with thin-film Bragg diffraction fire and obsidian matrix"),
+    ("dichromatic_murano_glass", "dichromatic Murano glass with Cauchy wavelength dispersion and internal caustics"),
+    ("ukiyo_e_carved_keyaki", "carved Japanese keyaki woodblock ukiyo-e relief with mineral indigo pigments"),
+    ("damascene_wootz_gold", "acid-etched Wootz Damascus steel with wavy carbide bands and 24k gold koftgari inlay"),
+    ("brutalist_concrete_corten", "board-formed architectural brutalist concrete with weathered Corten steel trusses"),
+    ("cloisonne_guilloche_enamel", "grand-feu translucent cloisonne enamel over engine-turned silver guilloche"),
+    ("bioluminescent_abyssal_chitin", "translucent deep-sea chitin with subsurface turquoise bioluminescence"),
+    ("pietra_dura_lapis_inlay", "Florentine pietra dura inlaid marble with lapis lazuli, malachite and porphyry"),
+    ("mokume_gane_laminate", "Japanese mokume-gane forged mixed-metal wood-grain laminate of copper, shakudo and silver"),
+    ("urushi_maki_e_lacquer", "mirror-polished black Urushi lacquer with sprinkled maki-e gold and platinum powder"),
+    ("tiffany_favrile_stained_glass", "iridescent Favrile leaded stained glass with soldered copper-foil botanical seams"),
+    ("anodized_interference_titanium", "electro-anodized grade-5 titanium with thin-oxide interference rainbow spectrum"),
+    ("imperial_celadon_nephrite", "carved imperial celadon nephrite jade with waxy subsurface translucency and fine relief"),
+    ("zellige_carved_muqarnas", "hand-cut glazed Moroccan zellige tilework with carved cedar and stucco muqarnas"),
+    ("rayleigh_silica_aerogel", "ultralight nanoporous silica aerogel with opalescent Rayleigh blue scattering"),
+    ("limoges_champleve_enamel", "carved bronze champleve cells filled with vitreous cobalt and ruby kiln-fired enamel"),
+    ("raden_mother_of_pearl", "iridescent abalone nacre raden inlay set into dark carved ebony wood"),
+    ("verdigris_foundry_bronze", "lost-wax cast architectural bronze with oxidized turquoise verdigris patina in cavities"),
+    ("twill_carbon_kevlar_weave", "aerospace 2x2 twill carbon-aramid hybrid weave under high-gloss automotive clearcoat"),
+]
+
+_OPTICAL_SURFACE_REGIMES = [
+    ("anisotropic_ggx", "anisotropic micro-brushed GGX specular lobes with directional tangent highlights"),
+    ("dipole_sss_translucent", "deep dipole subsurface scattering with grazing-angle Fresnel rim glow"),
+    ("bragg_thin_film", "nanometric thin-film interference shifting hue across viewing angles"),
+    ("cauchy_prismatic", "high-Abbe Cauchy chromatic dispersion with crisp internal refraction"),
+    ("acid_micro_relief", "high-frequency Scharr-Sobel micro-etched relief and cavity ambient occlusion"),
+    ("faceted_planimetric", "chiseled planimetric facets with razor-sharp dihedral edges and zero smoothing blur"),
+    ("mirror_clearcoat_dual", "dual-layer dielectric mirror clearcoat over rough metallic substrate"),
+    ("archaeological_patina", "selective cavity oxidation with polished high-contact wear ridges"),
+]
+
+_HYBRID_PRIMARY_MATRICES = [
+    ("aerogel_matrix", "translucent Rayleigh-scattering silica aerogel structural ribs"),
+    ("widmanstatten_meteorite", "octahedral etched Gibeon iron-nickel meteorite lattice"),
+    ("piezo_bismuth_hopper", "stepped iridescent hopper-crystal bismuth terraces"),
+    ("basalt_columnar_hex", "hexagonal fractured volcanic basalt prisms"),
+    ("mycelium_biopolymer", "grown fibrous acoustic mycelium biopolymer shell"),
+    ("sintered_inconel_gyroid", "laser-sintered Inconel 718 minimal-surface TPMS gyroid lattice"),
+    ("yakisugi_charred_cedar", "kiln-charred alligator-skin Yakisugi cedar timber"),
+    ("borosilicate_lab_coil", "blown scientific borosilicate glass condenser tubing"),
+    ("nitinol_shape_memory_mesh", "woven superelastic Nitinol wire-mesh actuator skin"),
+    ("travertine_roman_tufa", "porous Roman travertine limestone with natural calcitic cavities"),
+    ("silicon_wafer_photolith", "nanometer photolithography etched monocrystalline silicon wafer"),
+    ("vulcanized_ebonite_brass", "turn-of-the-century vulcanized black ebonite and knurled instrument brass"),
+    ("bone_china_lithophane", "ultra-thin translucent porcelain lithophane relief"),
+    ("electroformed_dendritic_copper", "fractal electroformed dendritic copper growth"),
+    ("dichroic_boron_nitride", "hexagonal boron nitride ceramic with vacuum-deposited dichroic prism coating"),
+    ("fossil_ammonite_pyrite", "pyritized iridescent chambered ammonite fossil matrix"),
+    ("woven_basalt_fiber", "golden-brown volcanic basalt fiber composite weave"),
+    ("cast_slag_vitreous", "industrial vitreous blue-green smelted iron slag stone"),
+    ("carved_boxwood_netsuke", "micro-carved dense boxwood netsuke sculpture with natural satin oil finish"),
+    ("forged_beryllium_copper", "non-sparking brushed beryllium-copper alloy precision housing"),
+    ("crystalline_osmium_ruthenium", "ultra-dense crystalline platinum-group osmium-ruthenium alloy"),
+    ("folded_origami_tyvek", "rigid-origami Miura-ori folded fibrous Tyvek membrane"),
+    ("acoustic_metamaterial_labyrinth", "sub-wavelength Helmholtz labyrinthine acoustic metamaterial"),
+    ("glacial_firn_blue_ice", "compressed high-pressure glacial blue ice with trapped micro-bubbles"),
+]
+
+_HYBRID_SECONDARY_ACCENTS = [
+    ("amber_encapsulation", "encapsulating fossilized Baltic amber optical conduits"),
+    ("gold_24k_kintsugi", "joined by 24-karat brushed gold kintsugi structural seams"),
+    ("superconducting_niobium_coils", "threaded with cryogenic niobium-titanium inductive coils"),
+    ("emerald_beryl_prisms", "set with hexagonal chromium-doped emerald beryl crystal joints"),
+    ("bioluminescent_luciferin_veins", "pulsing with subsurface abyssal luciferin vascular channels"),
+    ("verdigris_copper_rivets", "fastened with hand-hammered verdigris patinated copper rivets"),
+    ("opalized_fluorite_nodes", "anchored by UV-fluorescent cubic purple fluorite nodes"),
+    ("damascus_wootz_flexures", "articulated via compliant Wootz Damascus steel flexure hinges"),
+    ("cloisonne_enamel_filigree", "bordered by silver wire cloisonne grand-feu enamel filigree"),
+    ("tourmaline_piezo_bridges", "bridged by polychrome watermelon tourmaline tension rods"),
+    ("anodized_niobium_scales", "armored with interference-anodized overlapping niobium scales"),
+    ("obsidian_conchoidal_blades", "edged with knapped conchoidal-fracture volcanic obsidian"),
+    ("nacre_abalone_lamellae", "lined with brick-and-mortar aragonite nacre abalone lamellae"),
+    ("corten_weathered_gussets", "reinforced by oxidized Corten steel structural gusset plates"),
+    ("sapphire_corundum_bearings", "pivoting on synthetic monocrystalline ruby-sapphire bearings"),
+    ("mokume_gane_collars", "clamped with twisted mokume-gane copper-silver locking collars"),
+    ("urushi_gold_maki_e_seals", "sealed with black Urushi lacquer and maki-e gold dust gaskets"),
+    ("radium_phosphor_dials", "inlaid with vintagehorological green zinc-sulfide phosphor markers"),
+    ("zellige_geometric_tesserae", "tessellated with interlocking glazed zellige star polygons"),
+    ("ferrofluid_magnetic_spikes", "crowned with frozen neodymium-stabilized ferrofluid harmonic peaks"),
+]
+
+
+def build_exhaustive_style_taxonomy():
+    styles = list(VISUAL_STYLES)
+    for m_key, m_desc in _RARE_OPTICAL_MEDIA:
+        for o_key, o_desc in _OPTICAL_SURFACE_REGIMES:
+            styles.append((f"rare_{m_key}_{o_key}", f"{m_desc}, rendered with {o_desc}"))
+    for p_key, p_desc in _HYBRID_PRIMARY_MATRICES:
+        for s_key, s_desc in _HYBRID_SECONDARY_ACCENTS:
+            styles.append((
+                f"ood_hybrid_{p_key}_{s_key}",
+                f"unknown out-of-distribution hybrid material combining {p_desc} {s_desc}",
+            ))
+    return styles
+
+
+TRAIN_ALL_REGIME_STYLES = build_exhaustive_style_taxonomy()
 
 
 def load_trellis_500k_curriculum(limit=48, seed=42):
@@ -148,9 +285,10 @@ def visual_briefs(c):
             else:
                 train_pool = train_pool + extra_500k
     for split,n,pool in [('train',c['train_tasks'],train_pool),('audit',c['eval_tasks'],MEDIA_AUDIT)]:
+        style_pool = TRAIN_ALL_REGIME_STYLES if (split == 'train' and c.get('all_regime_styles')) else VISUAL_STYLES
         for i in range(n):
             family,prompt=pool[i%len(pool)]
-            style,style_prompt=VISUAL_STYLES[i%len(VISUAL_STYLES)]
+            style,style_prompt=style_pool[i%len(style_pool)]
             origin = 'trellis_500k_pack' if str(family).startswith('trellis500k_') else 'reviewed_complex_brief'
             rows.append({'id':f'{split}_{family}_{i:03d}','split':split,'family':family,
                          'style':style,'audit_group':f'{family}:{style}',
@@ -180,10 +318,17 @@ def materialize_references(c,tasks,check,training_only=False,progress=None):
         sys.path.insert(0,str(ROOT/'application/python-services'))
         from flux_reference_synth import build_workflow,post_prompt,poll_history,output_path_from_history,fetch_to
         from PIL import Image
+        for task in tasks:
+            if task.get('image') and not Path(task['image']).exists():
+                candidate_ref = Path(c['state_dir'])/'radical_references'/digest({'prompt':task['prompt'],'version':c.get('curriculum_version','radical-v3')})/'reference.png'
+                if candidate_ref.exists():
+                    task['image'] = str(candidate_ref)
+                else:
+                    task.pop('image', None)
         wanted=[t for t in tasks if not (training_only and t.get('split')=='audit')]
         pending=[]
         for task in wanted:
-            if task.get('image'):continue
+            if task.get('image') and Path(task['image']).exists():continue
             folder=Path(c['state_dir'])/'radical_references'/digest({'prompt':task['prompt'],'version':c.get('curriculum_version','radical-v3')})
             if (folder/'reference.png').exists():continue
             pending.append(task)
@@ -201,7 +346,7 @@ def materialize_references(c,tasks,check,training_only=False,progress=None):
             progress(len(pending),len(wanted),'prepare')
         for task in tasks:
             if training_only and task.get('split')=='audit':continue
-            if task.get('image'):continue
+            if task.get('image') and Path(task['image']).exists():continue
             check()
             folder=Path(c['state_dir'])/'radical_references'/digest({'prompt':task['prompt'],'version':c.get('curriculum_version','radical-v3')})
             folder.mkdir(parents=True,exist_ok=True);path=folder/'reference.png'

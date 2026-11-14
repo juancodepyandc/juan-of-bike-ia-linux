@@ -47,14 +47,17 @@ export async function generateJsonFromModel<T>(
   },
 ): Promise<T> {
   try {
+    const effectiveCtx = Math.max(options?.num_ctx ?? 32768, 16384)
     const responsePromise = options?.resilient
       ? resilientOllamaGenerate(model, prompt, {
           timeoutMs: options.timeoutMs,
           firstByteTimeoutMs: options.firstByteTimeoutMs,
-          num_ctx: options.num_ctx,
+          num_ctx: effectiveCtx,
+          num_predict: 4096,
         })
       : ollamaGenerate(model, prompt, {
-          num_ctx: options?.num_ctx,
+          num_ctx: effectiveCtx,
+          num_predict: 4096,
           firstByteTimeoutMs: options?.firstByteTimeoutMs,
         })
 

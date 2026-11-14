@@ -33,26 +33,26 @@ _SUCCESSIF = r"(?:\s+puis\s+|\s+ensuite\s+|\s+apr[eè]s\s+quoi\s+|\s+then\s+|\s+
 # Un fragment appartient a une piste EFFET s'il nomme un phenomene physique.
 # La liste suit les categories du classifieur, pas des mots choisis au hasard.
 _EFFETS = (
-    (r"(flamme|feu|brasier|incendie|embras|braise|fire|flame|burning)", "smoke_fire"),
-    (r"(fum[ée]e|vapeur|brume|brouillard|smoke|steam|fog|mist)", "smoke_fire"),
-    (r"(explosion|explose|d[ée]tonation|blast|explode)", "smoke_fire"),
-    (r"(eau|liquide|pluie\s+battante|cascade|vague|water|liquid|"
-     r"fontaine|jet\s+d'eau|geyser|coule|couler|ruissel|s'[ée]coule|"
-     r"d[ée]verse|fountain|pour|flow|stream)", "fluid_flow"),
-    (r"(oc[ée]an|mer\b|houle|ocean|sea\b|swell)", "ocean_surface"),
-    (r"([ée]tincelle|pluie|neige|poussi[eè]re|d[ée]bris|spark|rain|snow|dust)", "particles"),
-    (r"(sable|terre|gravier|poudre|sand|gravel|powder)", "particles"),
-    (r"(verre\s+bris|se\s+brise|[ée]clate|fracasse|shatter|break\s+apart)", "fracture_debris"),
-    (r"(cape|manteau|drapeau|voile|tissu|cloak|cape|flag|cloth)", "cloth_drape"),
-    (r"(cheveux|criniere|crini[eè]re|fourrure|hair|fur|mane)", "hair_fur"),
-    (r"(rouille|corrosion|oxyd|gel\b|givre|rust|freez)", "chemistry"),
-    (r"(cristal|prisme|reflet|r[ée]fraction|crystal|prism|refract)", "optics"),
-    (r"(tornade|vortex|tourbillon|cyclone|typhon|whirlwind|tornado|whirlpool)", "vortex_tornado"),
-    (r"(essaim|nu[ée]e|vol[ée]e\s+d|banc\s+de|papillons|abeilles|oiseaux\s+en\s+vol|"
-     r"swarm|flock|school\s+of|boids)", "swarm_flock"),
-    (r"((flotte|flottant|d[ée]rive|tangue)\b.*(eau|mer|oc[ée]an|lac|rivi[eè]re|vague)|"
-     r"bou[ée]e|radeau|barque)", "buoyancy_float"),
-    (r"([ée]clair|foudre|arc\s+[ée]lectrique|lightning|plasma|[ée]nergie\s+[ée]lectrique)", "plasma"),
+    (r"\b(flammes?|feu|brasier|incendie|embrase\w*|braises?|fire|flames?|burning)\b", "smoke_fire"),
+    (r"\b(fum[ée]es?|vapeurs?|brumes?|brouillard|smoke|steam|fog|mist)\b", "smoke_fire"),
+    (r"\b(explosions?|explose\w*|d[ée]tonations?|blast|explodes?|exploding)\b", "smoke_fire"),
+    (r"\b(eau|liquides?|pluie\s+battante|cascades?|vagues?\s+d'eau|water|liquid|"
+     r"fontaines?|jets?\s+d'eau|geysers?|coule|coulent|couler|ruisselle\w*|s'[ée]coule\w*|"
+     r"d[ée]verse\w*|fountains?|pours?\s+(?:water|liquid|out)|flowing\s+water|stream\s+of\s+water)\b", "fluid_flow"),
+    (r"\b(oc[ée]ans?|mer|houle|ocean|sea|swell)\b", "ocean_surface"),
+    (r"\b([ée]tincelles?|pluie|neige|poussi[eè]res?|d[ée]bris|sparks?|rain|snow|dust)\b", "particles"),
+    (r"\b(sable|gravier|poudre|sand|gravel|powder)\b", "particles"),
+    (r"\b(verre\s+bris\w*|se\s+brise\w*|[ée]clate\w*|fracasse\w*|shatters?|breaks?\s+apart)\b", "fracture_debris"),
+    (r"\b(cape|manteau|drapeau|voile|tissu|cloak|flag|cloth)\b", "cloth_drape"),
+    (r"\b(cheveux|crini[eè]re|fourrure|hair|fur|mane)\b", "hair_fur"),
+    (r"\b(rouille|corrosion|oxyd\w*|gel|givre|rust|freez\w*)\b", "chemistry"),
+    (r"\b(cristal|prisme|reflets?|r[ée]fraction|crystal|prism|refract\w*)\b", "optics"),
+    (r"\b(tornades?|vortex|tourbillons?|cyclones?|typhons?|whirlwinds?|tornado\w*|whirlpools?)\b", "vortex_tornado"),
+    (r"\b(essaims?|nu[ée]es?|vol[ée]es?\s+d|bancs?\s+de|papillons|abeilles|oiseaux\s+en\s+vol|"
+     r"swarms?|flocks?|schools?\s+of|boids)\b", "swarm_flock"),
+    (r"\b((flotte|flottant|d[ée]rive|tangue)\b.*(eau|mer|oc[ée]an|lac|rivi[eè]re|vague)|"
+     r"bou[ée]es?|radeaux?|barques?)\b", "buoyancy_float"),
+    (r"\b([ée]clairs?|foudre|arcs?\s+[ée]lectriques?|lightning|plasma|[ée]nergie\s+[ée]lectrique)\b", "plasma"),
 )
 
 # Un fragment appartient a la piste CORPS s'il decrit un geste. On ne cherche

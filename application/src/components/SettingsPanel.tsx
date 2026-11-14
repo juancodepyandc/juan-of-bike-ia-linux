@@ -18,6 +18,7 @@ import { ollamaPullModelStream, type PullProgress } from '../hooks/useTauri.ts'
 import { useCalendarStore } from '../stores/calendarStore.ts'
 import { applyTheme, readTheme, type ThemeId } from '../utils/theme.ts'
 import { applyUiSkin, readUiSkin, UI_SKIN_LABELS, USER_PICKABLE_SKINS, type UiSkinId } from '../utils/uiSkin.ts'
+import ReinforcedModelBar from './ReinforcedModelBar.tsx'
 import { generationFxEnabled, setGenerationFxEnabled } from './generationFx/fxBus.ts'
 import { readHistory, removeHistoryEntry, clearHistory, type PromptHistoryEntry } from '../utils/promptHistory.ts'
 import { usePromptLibraryStore } from '../stores/promptLibraryStore.ts'
@@ -26,6 +27,14 @@ import { useModuleStreak } from '../hooks/useModuleStreak.ts'
 import { useCyberLeaderboardStore } from '../stores/cyberLeaderboardStore.ts'
 import { useAcademyLeaderboardStore } from '../stores/academyLeaderboardStore.ts'
 import { computeStreak } from '../utils/streak.ts'
+import {
+  useCreditBillingStore,
+  BEST_MODELS_ARCHITECTURE_CATALOG,
+  PAYMENT_METHODS_CATALOG,
+  SUBSCRIPTION_PLANS_CATALOG,
+  JB_COIN_PACKS_CATALOG,
+  type BillingMode,
+} from '../stores/creditBillingStore.ts'
 
 const SHORTCUTS = [
   { combo: 'Ctrl / ⌘ + K', action: 'Recherche globale' },
@@ -47,9 +56,439 @@ function FxToggleButton() {
   )
 }
 
+function CreditAndArchitectureSection() {
+  const billingMode = useCreditBillingStore((s) => s.billingMode)
+  const setBillingMode = useCreditBillingStore((s) => s.setBillingMode)
+  const subscriptionTier = useCreditBillingStore((s) => s.subscriptionTier)
+  const setSubscriptionTier = useCreditBillingStore((s) => s.setSubscriptionTier)
+  const billingCycle = useCreditBillingStore((s) => s.billingCycle)
+  const setBillingCycle = useCreditBillingStore((s) => s.setBillingCycle)
+  const selectedPaymentMethod = useCreditBillingStore((s) => s.selectedPaymentMethod)
+  const setSelectedPaymentMethod = useCreditBillingStore((s) => s.setSelectedPaymentMethod)
+  const promoCode = useCreditBillingStore((s) => s.promoCode)
+  const setPromoCode = useCreditBillingStore((s) => s.setPromoCode)
+  const transactions = useCreditBillingStore((s) => s.transactions)
+  const processCheckoutPurchase = useCreditBillingStore((s) => s.processCheckoutPurchase)
+  const jbCoinsBalance = useCreditBillingStore((s) => s.juanOfBikeCoins)
+  const [commercialPricingEnabled, setCommercialPricingEnabled] = useState(true)
+  const [checkoutBanner, setCheckoutBanner] = useState<string | null>(null)
+
+  const modes: Array<{ id: BillingMode; label: string; desc: string }> = [
+    {
+      id: 'infinite',
+      label: '∞ Crédits Infinis (Actif par défaut — Propriétaire)',
+      desc: 'Accès illimité à tous les meilleurs modèles renforcés et aux 2 VMs Cloud sans aucun débit.',
+    },
+    {
+      id: 'subscription',
+      label: '💎 Abonnement Cloud Dual-VM (Dès 3,49 €/mois · 1er mois 0,99 €)',
+      desc: 'Forfait mensuel ou annuel (-31 %) avec accès garanti aux VMs Cloud Vidéo + Pièces JB offertes.',
+    },
+    {
+      id: 'juan_of_bike_coins',
+      label: '🪙 Pièces "Juan of Bike" (JB Coins · Packs dès 1,99 €)',
+      desc: 'Système prépayé sans expiration avec jusqu’à +50 % de pièces bonus pour Vidéo VM & les 13 modules.',
+    },
+  ]
+
+  const activePaymentSpec =
+    PAYMENT_METHODS_CATALOG.find((p) => p.id === selectedPaymentMethod) || PAYMENT_METHODS_CATALOG[0]
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div className="sp-sec">
+        <label className="sp-label">Système de Crédits, Abonnement & Pièces "Juan of Bike" (JB)</label>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
+          {modes.map((m) => (
+            <button
+              key={m.id}
+              type="button"
+              className={`sp-btn ${billingMode === m.id ? 'is-primary' : ''}`}
+              style={{
+                width: '100%',
+                margin: 0,
+                padding: '8px 10px',
+                textAlign: 'left',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'flex-start',
+                gap: 2,
+              }}
+              onClick={() => setBillingMode(m.id)}
+            >
+              <span style={{ fontWeight: 700, fontSize: 12 }}>{m.label}</span>
+              <span style={{ fontSize: 10, opacity: 0.8 }}>{m.desc}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* Portefeuille JB Coins */}
+        <div
+          style={{
+            marginTop: 10,
+            padding: '10px 12px',
+            borderRadius: 10,
+            border: '1px solid rgba(250, 204, 21, 0.45)',
+            background: 'linear-gradient(135deg, rgba(250, 204, 21, 0.12), rgba(249, 115, 22, 0.08))',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 8,
+            flexWrap: 'wrap',
+          }}
+        >
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 800, color: '#fde047' }}>
+              🪙 Portefeuille Pièces Juan of Bike :{' '}
+              {billingMode === 'infinite'
+                ? `∞ Infini (Réserve : ${jbCoinsBalance.toLocaleString('fr-FR')} JB)`
+                : `${jbCoinsBalance.toLocaleString('fr-FR')} JB`}
+            </div>
+            <div style={{ fontSize: 10, opacity: 0.85 }}>
+              Vidéo Dual-VM Cloud : 25 JB (~0,08 €) · 3D Volumétrique/Cristal : 15 JB (~0,05 €) · Image 16K : 10 JB
+            </div>
+          </div>
+          <div style={{ fontSize: 10, padding: '3px 8px', borderRadius: 6, background: 'rgba(16, 185, 129, 0.2)', color: '#6ee7b7', fontWeight: 700 }}>
+            Moyen actif : {activePaymentSpec.shortBadgeFr}
+          </div>
+        </div>
+
+        {/* Sélecteur universel de moyens de paiement (CB, PayPal, Apple Pay, Google Pay, Klarna 3x, SEPA, Crypto) */}
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 6 }}>
+            💳 Moyen de Paiement Sécurisé (CB, PayPal 4×, Apple/Google Pay, Klarna 3×, SEPA, Crypto) :
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 6 }}>
+            {PAYMENT_METHODS_CATALOG.map((pm) => {
+              const active = selectedPaymentMethod === pm.id
+              return (
+                <button
+                  key={pm.id}
+                  type="button"
+                  className={`sp-btn ${active ? 'is-primary' : ''}`}
+                  style={{
+                    margin: 0,
+                    padding: '7px 9px',
+                    textAlign: 'left',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'flex-start',
+                    gap: 2,
+                    border: active ? '1px solid #38bdf8' : undefined,
+                  }}
+                  onClick={() => setSelectedPaymentMethod(pm.id)}
+                >
+                  <span style={{ fontWeight: 700, fontSize: 11 }}>{pm.shortBadgeFr}</span>
+                  <span style={{ fontSize: 9, opacity: 0.8 }}>{pm.processingFeeLabelFr}</span>
+                </button>
+              )
+            })}
+          </div>
+          <div style={{ fontSize: 10, opacity: 0.78, marginTop: 4 }}>
+            🔒 {activePaymentSpec.labelFr} — {activePaymentSpec.securityProtocolFr}
+            {activePaymentSpec.installmentAvailableFr ? ` · ${activePaymentSpec.installmentAvailableFr}` : ''}
+          </div>
+        </div>
+
+        {/* Code Promo Attractif */}
+        <div style={{ marginTop: 10, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 11, fontWeight: 600 }}>🎁 Code Promo Lancement :</span>
+          {(['BIENVENUE30', 'JUANVIP', 'LAUNCH50'] as const).map((code) => (
+            <button
+              key={code}
+              type="button"
+              className={`sp-btn ${promoCode === code ? 'is-primary' : ''}`}
+              style={{ width: 'auto', margin: 0, padding: '3px 8px', fontSize: 10 }}
+              onClick={() => setPromoCode(code)}
+            >
+              {code === 'BIENVENUE30'
+                ? 'BIENVENUE30 (-30 %)'
+                : code === 'JUANVIP'
+                  ? 'JUANVIP (-20 % + 500 JB)'
+                  : 'LAUNCH50 (-50 % 1er achat)'}
+            </button>
+          ))}
+        </div>
+
+        {/* Grille d'Abonnements Ultra-Attractifs (Mensuel vs Annuel -31%) */}
+        <div style={{ marginTop: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+            <span style={{ fontSize: 11, fontWeight: 700 }}>
+              💎 Formules d'Abonnement Attractives (Vidéo Dual-VM & 13 Modules Renforcés)
+            </span>
+            <div style={{ display: 'flex', gap: 4 }}>
+              <button
+                type="button"
+                className={`sp-btn ${billingCycle === 'monthly' ? 'is-primary' : ''}`}
+                style={{ width: 'auto', margin: 0, padding: '3px 8px', fontSize: 10 }}
+                onClick={() => setBillingCycle('monthly')}
+              >
+                Mensuel
+              </button>
+              <button
+                type="button"
+                className={`sp-btn ${billingCycle === 'annual' ? 'is-primary' : ''}`}
+                style={{ width: 'auto', margin: 0, padding: '3px 8px', fontSize: 10 }}
+                onClick={() => setBillingCycle('annual')}
+              >
+                Annuel (-31 % 🔥)
+              </button>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {SUBSCRIPTION_PLANS_CATALOG.map((plan) => {
+              const isSelected = subscriptionTier === plan.id
+              const shownPrice =
+                billingCycle === 'annual' ? plan.annualMonthlyEquivalentEur : plan.monthlyPriceEur
+              return (
+                <div
+                  key={plan.id}
+                  style={{
+                    padding: '10px 12px',
+                    borderRadius: 10,
+                    border: isSelected
+                      ? '1.5px solid #38bdf8'
+                      : '1px solid rgba(255,255,255,0.14)',
+                    background: isSelected
+                      ? 'rgba(56, 189, 248, 0.10)'
+                      : 'rgba(255,255,255,0.03)',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <div>
+                      <span style={{ fontWeight: 800, fontSize: 12 }}>{plan.titleFr}</span>
+                      {plan.badgeFr && (
+                        <span
+                          style={{
+                            marginLeft: 6,
+                            fontSize: 9,
+                            padding: '2px 6px',
+                            borderRadius: 999,
+                            background: 'rgba(250, 204, 21, 0.2)',
+                            color: '#fde047',
+                            fontWeight: 700,
+                          }}
+                        >
+                          {plan.badgeFr}
+                        </span>
+                      )}
+                      <div style={{ fontSize: 10, opacity: 0.82, marginTop: 2 }}>{plan.taglineFr}</div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: 14, fontWeight: 800, color: '#38bdf8' }}>
+                        {shownPrice.toFixed(2).replace('.', ',')} € <span style={{ fontSize: 10, fontWeight: 500 }}>/ mois</span>
+                      </div>
+                      <div style={{ fontSize: 9, opacity: 0.78 }}>
+                        Essai 1er mois : {plan.firstMonthTrialEur.toFixed(2).replace('.', ',')} € · +{plan.includedMonthlyJbCoins.toLocaleString('fr-FR')} JB/mois
+                      </div>
+                    </div>
+                  </div>
+                  <ul style={{ margin: '6px 0 8px 16px', padding: 0, fontSize: 10, opacity: 0.88 }}>
+                    {plan.highlightsFr.map((h) => (
+                      <li key={h} style={{ marginBottom: 2 }}>{h}</li>
+                    ))}
+                  </ul>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button
+                      type="button"
+                      className={`sp-btn ${isSelected ? 'is-primary' : ''}`}
+                      style={{ margin: 0, padding: '5px 10px', fontSize: 10, fontWeight: 700 }}
+                      onClick={() => {
+                        setSubscriptionTier(plan.id)
+                        const rec = processCheckoutPurchase({
+                          itemType: 'subscription',
+                          tierId: plan.id,
+                        })
+                        setCheckoutBanner(
+                          `✓ ${rec.itemLabelFr} validé via ${rec.paymentMethodLabelFr} (${rec.amountEur.toFixed(2).replace('.', ',')} €) · +${rec.coinsCredited.toLocaleString('fr-FR')} JB crédités !`,
+                        )
+                      }}
+                    >
+                      💳 Souscrire via {activePaymentSpec.shortBadgeFr} (+{plan.includedMonthlyJbCoins.toLocaleString('fr-FR')} JB)
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* Packs de Pièces Juan of Bike à la carte */}
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 6 }}>
+            🪙 Packs de Pièces "Juan of Bike" (JB) Sans Expiration — Recharge Instantanée :
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(175px, 1fr))', gap: 8 }}>
+            {JB_COIN_PACKS_CATALOG.map((pack) => (
+              <div
+                key={pack.id}
+                style={{
+                  padding: '9px 10px',
+                  borderRadius: 9,
+                  border: pack.popularBadgeFr
+                    ? '1px solid rgba(250, 204, 21, 0.45)'
+                    : '1px solid rgba(255,255,255,0.12)',
+                  background: pack.popularBadgeFr
+                    ? 'rgba(250, 204, 21, 0.07)'
+                    : 'rgba(255,255,255,0.03)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'space-between',
+                  gap: 6,
+                }}
+              >
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 4 }}>
+                    <span style={{ fontWeight: 800, fontSize: 11 }}>{pack.titleFr}</span>
+                    <span style={{ fontWeight: 800, fontSize: 12, color: '#fde047' }}>
+                      {pack.priceEur.toFixed(2).replace('.', ',')} €
+                    </span>
+                  </div>
+                  {pack.popularBadgeFr && (
+                    <div style={{ fontSize: 9, color: '#fde047', fontWeight: 700, marginTop: 2 }}>
+                      {pack.popularBadgeFr}
+                    </div>
+                  )}
+                  <div style={{ fontSize: 12, fontWeight: 800, color: '#f8fafc', marginTop: 3 }}>
+                    {pack.totalCoins.toLocaleString('fr-FR')} JB{' '}
+                    <span style={{ fontSize: 9, opacity: 0.75, fontWeight: 500 }}>
+                      ({pack.baseCoins} + {pack.bonusCoins} bonus)
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 9, opacity: 0.8, marginTop: 2 }}>{pack.equivalentRunsLabelFr}</div>
+                </div>
+                <button
+                  type="button"
+                  className="sp-btn is-primary"
+                  style={{ width: '100%', margin: 0, padding: '5px 8px', fontSize: 10, fontWeight: 700 }}
+                  onClick={() => {
+                    const rec = processCheckoutPurchase({
+                      itemType: 'coin_pack',
+                      packId: pack.id,
+                    })
+                    setCheckoutBanner(
+                      `✓ Reçu ${rec.id} : +${rec.coinsCredited.toLocaleString('fr-FR')} JB ajoutés via ${rec.paymentMethodLabelFr} (${rec.amountEur.toFixed(2).replace('.', ',')} €)`,
+                    )
+                  }}
+                >
+                  Payer avec {activePaymentSpec.shortBadgeFr}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {checkoutBanner && (
+          <div
+            style={{
+              marginTop: 8,
+              padding: '8px 10px',
+              borderRadius: 8,
+              background: 'rgba(16, 185, 129, 0.14)',
+              border: '1px solid rgba(16, 185, 129, 0.45)',
+              color: '#6ee7b7',
+              fontSize: 11,
+              fontWeight: 600,
+            }}
+          >
+            {checkoutBanner}
+          </div>
+        )}
+
+        {transactions.length > 0 && (
+          <div style={{ marginTop: 8, fontSize: 10, opacity: 0.85 }}>
+            <div style={{ fontWeight: 700, marginBottom: 4 }}>🧾 Dernières transactions vérifiées :</div>
+            {transactions.slice(0, 3).map((tx) => (
+              <div key={tx.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
+                <span>
+                  {tx.id} · {tx.itemLabelFr} ({tx.paymentMethodLabelFr})
+                </span>
+                <span style={{ color: '#fde047', fontWeight: 700 }}>
+                  +{tx.coinsCredited.toLocaleString('fr-FR')} JB ({tx.amountEur.toFixed(2).replace('.', ',')} €)
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div style={{ marginTop: 8 }}>
+          <button
+            type="button"
+            className={`sp-btn ${commercialPricingEnabled ? 'is-primary' : ''}`}
+            style={{ width: '100%', margin: 0, fontSize: 11 }}
+            onClick={() => setCommercialPricingEnabled(!commercialPricingEnabled)}
+          >
+            {commercialPricingEnabled
+              ? '✅ Extension commerciale activée : Tarification JB étendue aux 13 modules (Puissance & Rapidité)'
+              : '🔒 Activer la simulation commerciale sur les 13 modules (Puissance de calcul & Rapidité)'}
+          </button>
+        </div>
+      </div>
+
+      <div className="sp-sec">
+        <label className="sp-label">
+          Architecture des Meilleurs Modèles par Module (13 Modules — Renforcé par défaut)
+        </label>
+        <div className="sp-hint" style={{ marginBottom: 8 }}>
+          Chaque module utilise automatiquement son <strong>meilleur modèle renforcé</strong> par défaut (jamais le modèle de base). Le module <strong>Vidéo</strong> s'exécute exclusivement sur les 2 VMs Cloud.
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 340, overflowY: 'auto', paddingRight: 4 }}>
+          {BEST_MODELS_ARCHITECTURE_CATALOG.map((spec) => (
+            <div
+              key={spec.moduleId}
+              style={{
+                padding: '8px 10px',
+                borderRadius: 8,
+                border: spec.computeExecutionTarget === 'vm_cloud_exclusive'
+                  ? '1px solid rgba(249, 115, 22, 0.45)'
+                  : '1px solid rgba(255,255,255,0.1)',
+                background: spec.computeExecutionTarget === 'vm_cloud_exclusive'
+                  ? 'rgba(249, 115, 22, 0.08)'
+                  : 'rgba(255,255,255,0.03)',
+                fontSize: 11,
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontWeight: 700 }}>
+                  {spec.moduleLabelFr}{' '}
+                  <span
+                    style={{
+                      fontSize: 9,
+                      padding: '1px 5px',
+                      borderRadius: 4,
+                      background: 'rgba(16, 185, 129, 0.2)',
+                      color: '#34d399',
+                      marginLeft: 4,
+                    }}
+                  >
+                    RENFORCÉ PAR DÉFAUT
+                  </span>
+                </span>
+                <span style={{ fontFamily: 'monospace', fontWeight: 700, color: '#fde047' }}>
+                  {billingMode === 'infinite' ? `0 JB (${spec.jbCoinCostPerRun} JB réf.)` : `${spec.jbCoinCostPerRun} JB`}
+                </span>
+              </div>
+              <div style={{ fontSize: 10, opacity: 0.9, marginTop: 3, fontFamily: 'monospace' }}>
+                ★ {spec.bestModelStack}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, opacity: 0.72, marginTop: 3 }}>
+                <span>{spec.computeTargetLabelFr}</span>
+                <span>
+                  {spec.vramRequirementGb} Go VRAM · {spec.speedRatingLabelFr}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function SettingsPanel() {
   const [open, setOpen] = useState(false)
-  const [expanded, setExpanded] = useState<'models' | 'shortcuts' | 'data' | 'notif' | 'calendar'>('models')
+  const [expanded, setExpanded] = useState<'models' | 'credits' | 'shortcuts' | 'data' | 'notif' | 'calendar'>('models')
   const events = useCalendarStore((s) => s.events)
   const feedUrl = useCalendarStore((s) => s.feedUrl)
   const setFeedUrl = useCalendarStore((s) => s.setFeedUrl)
@@ -181,9 +620,11 @@ export default function SettingsPanel() {
     }
   }
 
+  const activeModule = useAppStore((s) => s.activeModule)
   const mainModel    = useAppStore((s) => s.mainModel)
   const visionModel  = useAppStore((s) => s.visionModel)
   const installedModels = useAppStore((s) => s.installedModels)
+  void installedModels
   const setMainModel    = useAppStore((s) => s.setMainModel)
   const setVisionModel  = useAppStore((s) => s.setVisionModel)
   const mainModelAutomatic = useAppStore((s) => s.mainModelAutomatic)
@@ -273,6 +714,7 @@ export default function SettingsPanel() {
         <nav className="sp-tabs">
           {([
             { id: 'models', label: 'Modèles' },
+            { id: 'credits', label: 'Crédits & JB' },
             { id: 'shortcuts', label: 'Raccourcis' },
             { id: 'notif', label: 'Notifications' },
             { id: 'calendar', label: 'Calendrier' },
@@ -287,27 +729,32 @@ export default function SettingsPanel() {
         </nav>
 
         <div className="sp-body">
+          {expanded === 'credits' && <CreditAndArchitectureSection />}
           {expanded === 'models' && (
             <>
               <div className="sp-sec">
-                <label className="sp-label">Modèle principal</label>
+                <label className="sp-label">Sélecteur de Modèle (Modèle Renforcé actif par défaut)</label>
+                <div style={{ marginTop: 6, marginBottom: 6 }}>
+                  <ReinforcedModelBar activeModule={activeModule} />
+                </div>
+                <div className="sp-hint">
+                  Le <strong>Modèle renforcé</strong> (meilleur modèle disponible) est sélectionné par défaut sur les 13 modules. Vous pouvez basculer vers le Modèle de base à tout moment.
+                </div>
+              </div>
+              <CreditAndArchitectureSection />
+              <div className="sp-sec">
+                <label className="sp-label">Exécution Cognitive Locale</label>
                 <select aria-label="Modèle principal" className="sp-select" value={mainModelAutomatic ? '__auto__' : mainModel} onChange={(e) => e.target.value === '__auto__' ? setMainModelAutomatic() : setMainModel(e.target.value)}>
-                  <option value="__auto__">Automatique ({mainModel})</option>
-                  <option value={mainModel}>{mainModel} (actuel)</option>
-                  {installedModels.filter((m) => m !== mainModel).map((m) => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
+                  <option value="__auto__">Automatique (Modèle renforcé / Modèle de base sur ce PC)</option>
+                  <option value={mainModel}>Modèle local actif sur ce PC</option>
                 </select>
-                <div className="sp-hint">Utilisé pour chat, Academy, Forge (phases Ollama), grading, hints.</div>
+                <div className="sp-hint">Piloté automatiquement par votre choix Modèle de base ↔ Modèle renforcé ci-dessus.</div>
               </div>
               <div className="sp-sec">
-                <label className="sp-label">Modèle vision</label>
+                <label className="sp-label">Exécution Vision & Multimodal Locale</label>
                 <select aria-label="Modèle vision" className="sp-select" value={visionModelAutomatic ? '__auto__' : visionModel} onChange={(e) => e.target.value === '__auto__' ? setVisionModelAutomatic() : setVisionModel(e.target.value)}>
-                  <option value="__auto__">Automatique ({visionModel})</option>
-                  <option value={visionModel}>{visionModel} (actuel)</option>
-                  {installedModels.filter((m) => /vl|vision/i.test(m) && m !== visionModel).map((m) => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
+                  <option value="__auto__">Automatique (Vision locale haute précision sur ce PC)</option>
+                  <option value={visionModel}>Modèle vision local actif sur ce PC</option>
                 </select>
                 <div className="sp-hint">Analyse de la caméra, détection faciale Forge, description d'images en pièce jointe.</div>
               </div>

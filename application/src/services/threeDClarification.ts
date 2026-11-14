@@ -38,6 +38,9 @@ export type ThreeDClarificationCategory =
   | 'mechanism_motion'
   | 'vehicle_motion'
   | 'motion_intensity'
+  | 'heart_vessel_morphology'
+  | 'polysemic_morphology'
+  | 'vessel_print_and_material'
   | 'material_ambiguous'
   | 'dimensional_precision'
 
@@ -98,11 +101,20 @@ export function isPersonReproductionPrompt(prompt: string): boolean {
   return REAL_PERSON_PATTERNS.some((re) => re.test(prompt))
 }
 
-const FICTIONAL_CHARACTER_HINTS = /\b(personnage|character|hero|heroine|humanoid|avatar|figurine|villain|guerrier|warrior|mage|sorcier|chevalier|knight|ninja|samurai|pirate|assassin|paladin|adventurer|aventurier|explorer|explorateur|magicien|sorcerer|witch|sorciere|wizard|jedi|sith|elf|elfe|orc|orque|dwarf|nain|fairy|fee|angel|ange|demon|robot character|cyborg)\b/i
+const FICTIONAL_CHARACTER_HINTS = /\b(personnage|character|hero|heroine|humanoid|avatar|figurine|villain|guerrier|warrior|mage|sorcier|chevalier|knight|ninja|samurai|samoura[iï]|pirate|assassin|paladin|adventurer|aventurier|explorer|explorateur|magicien|sorcerer|witch|sorciere|wizard|jedi|sith|elf|elfe|orc|orque|dwarf|nain|fairy|fee|angel|ange|demon|robot character|cyborg|gars|mec|type|bonhomme|combattant|boxeur|gladiateur|viking|spartiate|barbare|chasseur|archer)\b/i
 
 const ANATOMY_HINTS = /\b(homme|femme|man|woman|fille|garcon|girl|boy|male|female|masculin|feminin|androgyne|androgynous|enfant|child|child[\s-]?like|teen|adolescent|jeune|young|old|age[ée]?|mature|elder|aine|elderly|musculeux|muscular|athletic|sportif|sportive|svelte|slim|elance|stocky|trapus|trapue|costaud|petite|grand|grande|tall|short|petit)\b/i
 
 const POSE_HINTS = /\b(pose|posing|debout|standing|assis|sitting|seated|kneeling|agenouille|allonge|lying|couche|t-?pose|a-?pose|combat|fight|fighting|action pose|hero pose|relax|casual|dramatic|defi|defying|defiant|dancing|danse|running|courant|jumping|sautant|crouched|accroupi)\b/i
+
+const KNOWN_NAMED_CHARACTERS_RX = /\b(zig|sharko|marina|bernie|jibanyan|kitsune|goku|vegeta|naruto|sasuke|luffy|zoro|ichigo|gojo|tanjiro|nezuko|pikachu|charizard|mewtwo|mario|luigi|link|zelda|sonic|shadow|kratos|master\s+chief|lara\s+croft|geralt|batman|spider[-\s]?man|iron\s+man|deadpool|wolverine)\b/i
+
+const HEART_SHAPE_RX = /\b(c[oœ]ur|coeurs|c[oœ]urs|heart|heart[-\s]?shaped|en\s+forme\s+de\s+c[oœ]ur)\b/i
+const HEART_STYLE_SPECIFIED_RX = /\b([eé]moji|romantique|sym[eé]trique|classique|valentin|anatomique|cardiaque|ventricul|aort|organe\s+r[eé]el|anatomical|romantic|emoji)\b/i
+
+const VESSEL_CONTAINER_RX = /\b(vase|vases|flacon|carafe|coupe|calice|bol|pot|urne|bocal|tasse|mug|bouteille|jarre|amphore|cruche|pichet|coffret|bo[iî]te)\b/i
+const VESSEL_EMPTY_OR_CONTENT_SPECIFIED_RX = /\b(vide|sans\s+rien(?:\s+dedans)?|sans\s+fleurs?|sans\s+plantes?|sans\s+contenu|creux|empty|hollow|avec\s+(?:des\s+)?fleurs|garni|rempli)\b/i
+const PRINT_SCALE_SPECIFIED_RX = /\b(taille\s+r[eé]elle|impression\s+3d|imprimer\s+en\s+3d|3d\s+print|stl|\d+\s*(?:mm|cm))\b/i
 
 const MOTION_VERBS_OR_NOUNS = /\b(roule|rolling|rolls|drives|driving|advance|tourne|spin|spinning|rotat|whirl|swing|pendul|hover|fly|flying|drone|walk|walking|march|run|running|cours|move|moves|moving|in motion|en mouvement|fonctionn|en marche|en service|active|articulated|articule|kinematic)\b/i
 
@@ -120,7 +132,7 @@ const VEHICLE_MOVEMENT_HINTS = /\b(stationary|static|parked|gare|stationne|displ
 
 const MULTI_MATERIAL_OBJECTS = /\b(vase|lamp|lampe|mug|tasse|bol|bowl|sword|epee|cup|chalice|coupe|stool|tabouret|table|chaise|chair|jar|jarre|amphore|amphora|pichet|pitcher|bouteille|bottle|carafe|figurine|statue|sculpture|colonne|column|pillar|knife|couteau|axe|hache|shield|bouclier|helm|casque|helmet|crown|couronne|ring|bague|necklace|collier|bracelet|brooch|broche|pendentif|pendant|trophy|trophee|cup\s+award|award)\b/i
 
-const MATERIAL_HINTS = /\b(chrome|brushed|brossee?|verre|glass|cristal|crystal|transparent|diamant|diamond|gem|jewel|ceramique|ceramic|porcelaine|porcelain|pierre|stone|granite|marbre|marble|cuir|leather|tissu|fabric|cloth|coton|wool|silk|soie|bois|wood|wooden|chene|oak|noyer|walnut|caoutchouc|rubber|silicone|electronique|electronics|plastique|plastic|abs|metal peint|painted|acier|steel|iron|titanium|aluminium|aluminum|laiton|brass|bronze|cuivre|copper|gold|silver|peau|skin|chair|flesh)\b/i
+const MATERIAL_HINTS = /\b(chrome|brushed|brossee?|verre|glass|cristal|crystal|transparent|diamant|diamond|gem|jewel|ceramique|ceramic|porcelaine|porcelain|pierre|stone|granite|marbre|marble|cuir|leather|tissu|fabric|cloth|coton|wool|silk|soie|bois|wood|wooden|chene|oak|noyer|walnut|caoutchouc|rubber|silicone|electronique|electronics|plastique|plastic|abs|pla|petg|resine|resin|metal peint|painted|acier|steel|iron|titanium|aluminium|aluminum|laiton|brass|bronze|cuivre|copper|gold|or\b|silver|argent|peau|skin|chair|flesh)\b/i
 
 const DIMENSIONAL_SIGNAL = /\b\d+(?:[.,]\d+)?\s?(?:mm|millim[eè]tres?|millimeters?|cm|centim[eè]tres?|centimeters?|m\b|metres?|meters?|in|inch|inches|degre[ée]?s?|degrees?)\b/i
 
@@ -131,9 +143,68 @@ export function detectThreeDClarification(ctx: ClarificationContext): ThreeDClar
   // UNE IMAGE REPOND DEJA (30/07). Quand l'utilisateur joint une photo, la
   // morphologie, la pose, le genre, la tenue et le style SONT DANS L'IMAGE:
   // les lui redemander, c'est lui faire decrire ce que le systeme peut voir.
-  // L'analyse vision du pipeline s'en charge. On ne questionne plus rien de
-  // ce que l'image montre.
   if (ctx.hasImageReference) return null
+
+  // 0. Ambiguïté morphologique légitime : « en forme de cœur » / « cœur » (Émoji/Romantique vs Anatomique)
+  //    Combine intelligemment la forme (Émoji vs Anatomique), la vacuité (100 % vide sans fleurs pour impression 3D taille réelle)
+  //    et le matériau uniquement s'il n'est pas déjà précisé !
+  if (HEART_SHAPE_RX.test(prompt) && !HEART_STYLE_SPECIFIED_RX.test(prompt)) {
+    const isVessel = VESSEL_CONTAINER_RX.test(prompt)
+    const hasMat = ctx.hasMaterialHint || MATERIAL_HINTS.test(prompt)
+    const hasEmptySpec = VESSEL_EMPTY_OR_CONTENT_SPECIFIED_RX.test(prompt)
+    if (isVessel) {
+      return {
+        category: 'heart_vessel_morphology',
+        question: [
+          'Précision morphologique & fonctionnelle pour votre vase en forme de cœur :',
+          '1) Souhaitez-vous un Cœur Émoji / Romantique (bilobé symétrique ❤️) ou un Cœur Anatomique (ventricules et cols artériels sculptés 🫀) ?',
+          !hasEmptySpec ? '2) Doit-il être 100 % vide à l\'intérieur (sans fleurs ni contenu, prêt à imprimer en 3D taille réelle 180 mm) ?' : null,
+          !hasMat ? '3) Quel matériau principal souhaitez-vous (Verre / Cristal réfractif, Céramique/Porcelaine, ou PLA/Résine Impression 3D) ?' : null,
+        ].filter(Boolean).join(' '),
+        options: [
+          'Cœur Émoji / Romantique ❤️ — 100 % vide (sans fleurs), Cristal / Verre optique + STL taille réelle (180 mm)',
+          'Cœur Anatomique 🫀 (ventricules & cols artériels) — 100 % vide (sans fleurs), Cristal / Verre + STL taille réelle (180 mm)',
+          'Cœur Émoji / Romantique ❤️ — 100 % vide, Céramique / PLA mat prêt pour impression 3D taille réelle (paroi 4 mm)',
+          'Cœur Anatomique 🫀 — 100 % vide, Céramique / PLA mat prêt pour impression 3D taille réelle (paroi 4 mm)',
+        ],
+      }
+    }
+    return {
+      category: 'heart_vessel_morphology',
+      question: `Vous avez demandé une forme de cœur : souhaitez-vous un Cœur Émoji / Romantique (bilobé symétrique ❤️) ou un Cœur Anatomique réaliste (ventricules et artères sculptés 🫀)${!hasMat ? ', et en quel matériau' : ''} ?`,
+      options: [
+        'Cœur Émoji / Romantique (bilobé symétrique ❤️) — Verre / Cristal réfractif',
+        'Cœur Anatomique réaliste (ventricules sculptés 🫀) — Verre / Cristal réfractif',
+        'Cœur Émoji / Romantique ❤️ — Solide / Impression 3D taille réelle',
+        'Cœur Anatomique réaliste 🫀 — Solide / Impression 3D taille réelle',
+      ],
+    }
+  }
+
+  // 0b. Autres ambiguïtés morphologiques polysémiques légitimes (étoile géométrique vs étoile de mer,
+  //     couronne royale vs florale vs mécanique, lune croissant vs sphère, diamant taillé vs brut)
+  if (/\b([eé]toile|star)\b/i.test(prompt) && !/\b(mer|sea|branches?|g[eé]om[eé]trique|shuriken|ninja|david|no[eë]l)\b/i.test(prompt)) {
+    return {
+      category: 'polysemic_morphology',
+      question: 'Précision de forme pour l\'étoile : souhaitez-vous une étoile géométrique facettée à branches (5/6 branches) ou une étoile de mer organique ?',
+      options: [
+        'Étoile géométrique facettée à 5 branches (relief 3D symétrique)',
+        'Étoile de mer organique (anatomie marine texturée)',
+        'Étoile céleste / astre lumineux sphérique',
+      ],
+    }
+  }
+  if (/\b(couronne|crown)\b/i.test(prompt) && !/\b(royale?|or\b|orf[eè]vr|fleurs?|florale?|laurier|épines|dent[eé]e|engrenage|pignon)\b/i.test(prompt)) {
+    return {
+      category: 'polysemic_morphology',
+      question: 'Quel type de couronne souhaitez-vous modéliser en 3D ?',
+      options: [
+        'Couronne royale d\'orfèvrerie (arches, pointes et gemmes)',
+        'Couronne végétale / florale tressée (laurier ou fleurs)',
+        'Couronne dentée mécanique (engrenage annulaire CAO)',
+      ],
+    }
+  }
 
   // 1. Real-person reproduction — highest stakes (likeness). Do not auto-fill.
   if (
@@ -152,43 +223,47 @@ export function detectThreeDClarification(ctx: ClarificationContext): ThreeDClar
     }
   }
 
-  // 2. Fictional character with no anatomy / pose hint.
+  // 2. Fictional character with no anatomy / pose hint (skip known named characters whose anatomy is already canonical!).
   if (
     (ctx.purpose === 'character' || ctx.subjectKind === 'character' || ctx.subjectKind === 'creature')
+    && !KNOWN_NAMED_CHARACTERS_RX.test(prompt)
     && !ANATOMY_HINTS.test(prompt)
     && !POSE_HINTS.test(prompt)
     && FICTIONAL_CHARACTER_HINTS.test(prompt)
   ) {
-    // GRAMMAIRE: l'article francais donne deja le genre ("UN guerrier" =
-    // masculin, "UNE guerriere" = feminin). Redemander le genre alors que
-    // l'utilisateur l'a ecrit est incoherent — on ne questionne que ce qui
-    // manque vraiment (morphologie / pose).
-    // NE PAS CONFONDRE GENRE GRAMMATICAL ET SEXE DU SUJET (30/07): « le
-    // personnage », « un personnage » sont masculins EN GRAMMAIRE et ne
-    // disent rien du sujet — annoncer « Personnage masculin deduit de votre
-    // formulation » etait faux et deroutant. On n'infere le sexe que si un
-    // mot le PORTE reellement (guerriere, femme, homme, roi, sorciere...).
-    const MOTS_MASC = /\b(homme|garcon|gar\u00e7on|monsieur|roi|prince|guerrier|chevalier|soldat|heros|h\u00e9ros|mage|sorcier|moine|pere|p\u00e8re|fils|barbu)\b/iu
-    const MOTS_FEM = /\b(femme|fille|dame|reine|princesse|guerriere|guerri\u00e8re|chevaliere|heroine|h\u00e9ro\u00efne|magicienne|sorciere|sorci\u00e8re|nonne|mere|m\u00e8re|soeur|s\u0153ur)\b/iu
+    // Détection complète du genre déjà exprimé par le lexique ou par les déterminants/accords français :
+    // INTERDICTION ABSOLUE de demander « est-ce un gars ou une fille » quand l'utilisateur a déjà écrit un nom/accord masculin ou féminin !
+    const MOTS_MASC = /\b(homme|gars|mec|type|bonhomme|garcon|gar\u00e7on|monsieur|roi|prince|empereur|seigneur|ma[iî]tre|guerrier|chevalier|paladin|soldat|heros|h\u00e9ros|mage|sorcier|magicien|moine|pere|p\u00e8re|fils|fr[eè]re|oncle|barbu|samoura[iï]|ninja|pirate|assassin|chasseur|archer|voleur|barbare|viking|spartiate|gladiateur|combattant|boxeur|lutteur|d[eé]mon|cyborg)\b|\b(un|le|mon|ce|cet)\s+(?!personnage\b|avatar\b|enfant\b|humain\b|individu\b|mod[eè]le\b|sujet\b|être\b)[a-zàâçéèêëîïôûùüÿñæœ_-]+/iu
+    const MOTS_FEM = /\b(femme|fille|meuf|dame|reine|princesse|imp[eé]ratrice|guerriere|guerri\u00e8re|chevaliere|heroine|h\u00e9ro\u00efne|magicienne|sorciere|sorci\u00e8re|nonne|mere|m\u00e8re|soeur|s\u0153ur|tante|amazone|valkyrie|chasseresse|arch[eè]re|voleuse|combattante|d[eé]esse|f[eé]e|sir[eè]ne)\b|\b(une|la|ma|cette)\s+(?!personne\b|figurine\b|statue\b|cr[eé]ature\b)[a-zàâçéèêëîïôûùüÿñæœ_-]+/iu
     const masculin = MOTS_MASC.test(prompt) && !MOTS_FEM.test(prompt)
     const feminin = MOTS_FEM.test(prompt) && !MOTS_MASC.test(prompt)
     if (masculin || feminin) {
       return {
         category: 'character_anatomy',
-        question: `Personnage ${masculin ? 'masculin' : 'feminin'} (vous l'avez ecrit): quelle morphologie et quelle pose ?`,
+        question: 'Quels réglages souhaitez-vous pour le gabarit corporel, la posture initiale et la préparation à l\'animation (11 ancres squelettiques) ?',
         options: masculin
-          ? ['Athletique, T-pose neutre', 'Trapu/massif, T-pose', 'Mince, A-pose', 'Pose dynamique (action/combat) — sera plus dur a riger']
-          : ['Svelte, A-pose neutre', 'Athletique, T-pose', 'Ronde, T-pose', 'Pose dynamique (action/combat) — sera plus dur a riger'],
+          ? [
+              'Gabarit athlétique — T-pose neutre prête à animer (11 ancres auto)',
+              'Gabarit massif / musclé — A-pose prête à animer',
+              'Gabarit élancé / svelte — A-pose prête à animer',
+              'Pose d\'action dynamique directe',
+            ]
+          : [
+              'Gabarit svelte — A-pose neutre prête à animer (11 ancres auto)',
+              'Gabarit athlétique — T-pose prête à animer',
+              'Gabarit élancé — A-pose prête à animer',
+              'Pose d\'action dynamique directe',
+            ],
       }
     }
     return {
       category: 'character_anatomy',
-      question: 'Personnage fictif: precise le genre, la morphologie et la pose. Sans reponse je genererai une T-pose neutre androgyne.',
+      question: 'Personnage générique sans précision : choisissez le gabarit corporel et la posture (prête pour les 11 ancres d\'animation ou pose d\'action).',
       options: [
-        'Masculin athletique, T-pose neutre',
-        'Feminin svelte, A-pose neutre',
-        'Androgyne taille moyenne, T-pose',
-        'Pose dynamique (action/combat) — sera plus dur a riger',
+        'Masculin athlétique — T-pose prête à animer (11 ancres)',
+        'Féminin svelte — A-pose prête à animer (11 ancres)',
+        'Gabarit stylisé / Cartoon 3D — A-pose prête à animer',
+        'Pose d\'action dynamique directe',
       ],
     }
   }
@@ -254,7 +329,31 @@ export function detectThreeDClarification(ctx: ClarificationContext): ThreeDClar
     }
   }
 
-  // 6. Multi-material objects without a stated material — different output
+  // 6. Récipients / Vases / Contenants (hors cœur déjà traité en #0) :
+  //    Demande utilement si l'objet doit être 100 % vide (sans fleurs) + calibré pour l'impression 3D taille réelle + matériau (si non précisé).
+  if (VESSEL_CONTAINER_RX.test(prompt)) {
+    const hasMat = ctx.hasMaterialHint || MATERIAL_HINTS.test(prompt)
+    const hasEmptySpec = VESSEL_EMPTY_OR_CONTENT_SPECIFIED_RX.test(prompt)
+    const hasPrintSpec = ctx.hasDimensionalSignal || PRINT_SCALE_SPECIFIED_RX.test(prompt)
+    if (!hasMat || (!hasEmptySpec && !hasPrintSpec)) {
+      return {
+        category: 'vessel_print_and_material',
+        question: [
+          'Précision utile pour votre récipient / vase 3D :',
+          !hasEmptySpec ? 'souhaitez-vous le récipient 100 % vide (sans fleurs ni contenu parasite, vraie cavité creuse imprimable en 3D taille réelle)' : null,
+          !hasMat ? 'et dans quel matériau principal (Verre / Cristal réfractif, Céramique/Porcelaine, ou Impression 3D PLA/Résine) ?' : '?',
+        ].filter(Boolean).join(' '),
+        options: [
+          '100 % vide (sans fleurs) — Verre / Cristal transparent réfractif + STL taille réelle (180 mm)',
+          '100 % vide (sans fleurs) — Céramique / Porcelaine émaillée + STL taille réelle (180 mm)',
+          '100 % vide (sans fleurs) — Prêt pour Impression 3D directe (paroi 4 mm, fond plat stable)',
+          '100 % vide (sans fleurs) — Métal poli / Orfèvrerie',
+        ],
+      }
+    }
+  }
+
+  // 7. Multi-material objects without a stated material — different output
   //    every time depending on Hunyuan paint guesses.
   if (
     !ctx.hasMaterialHint
@@ -274,7 +373,7 @@ export function detectThreeDClarification(ctx: ClarificationContext): ThreeDClar
     }
   }
 
-  // 6. Dimensional precision — kept as last because it is the original
+  // 8. Dimensional precision — kept as last because it is the original
   //    fallback and least specific.
   if (
     (ctx.purpose === 'printable_prototype' || ctx.purpose === 'mechanical_part')
@@ -286,10 +385,10 @@ export function detectThreeDClarification(ctx: ClarificationContext): ThreeDClar
       category: 'dimensional_precision',
       question: 'Piece mecanique ou imprimable sans dimensions. Donne taille (cm/mm), tolerances ou vues orthographiques pour un prototype fidele.',
       options: [
-        'Petite piece de precision (< 5cm, tolerances strictes)',
-        'Piece moyenne (5-30cm, tolerance industrielle)',
-        'Grande piece (> 30cm, prototype visuel suffit)',
-        'Continuer en mode visuel sans dimensions',
+        'Petite piece de precision (< 5cm, tolerances strictes — alésages M3/M4)',
+        'Piece moyenne taille réelle (10-25cm, paroi 4mm prête à imprimer en 3D)',
+        'Grande piece (> 30cm, assemblage multi-pièces)',
+        'Continuer en mode prototype visuel',
       ],
     }
   }

@@ -108,11 +108,13 @@ def prepare(c, run, manifest):
             'original_fingerprint':digest(manifest),'parent_run_id':None,
             'parent_sha256':None,'selection':sel,'experimental':False}
     if parent:
-        previous=parent['config']
-        if parent['base_fingerprint']!=digest(manifest):raise ValueError('La base du parent est incompatible')
+        previous=parent.get('config') or {}
+        if parent.get('base_fingerprint') and parent['base_fingerprint']!=digest(manifest):raise ValueError('La base du parent est incompatible')
         for key in ('rank','max_layers','trainer'):
-            if previous[key]!=c[key]:raise ValueError('Parent incompatible : '+key)
-        if previous['models'][c['module']]!=c['models'][c['module']]:raise ValueError('Modèle du parent incompatible')
+            if key in previous and previous[key]!=c[key]:raise ValueError('Parent incompatible : '+key)
+        prev_models=previous.get('models') or {}
+        prev_model=prev_models.get(c['module']) or prev_models.get(previous.get('module',''))
+        if prev_model and prev_model!=c['models'][c['module']]:raise ValueError('Modèle du parent incompatible')
         import shutil
         pinned=Path(run)/'parent.safetensors'
         shutil.copy2(parent['adapter'],pinned)

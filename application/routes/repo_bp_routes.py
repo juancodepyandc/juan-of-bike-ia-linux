@@ -312,10 +312,51 @@ def code_repo_install():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+def _normalize_ollama_payload(raw_bytes: bytes | None) -> bytes | None:
+    """Upgrade uninstalled legacy model tags (e.g. qwen2.5:7b, qwen3:14b) to installed
+    flagships and prevent thinking-token starvation when num_predict is set too low."""
+    if not raw_bytes:
+        return raw_bytes
+    try:
+        payload = json.loads(raw_bytes.decode("utf-8"))
+        if not isinstance(payload, dict):
+            return raw_bytes
+        changed = False
+        req_model = str(payload.get("model") or "").strip()
+        if req_model and "embed" not in req_model.lower():
+            from agi_core.flagship_council import resolve_installed_flagship_model
+            msgs = payload.get("messages") or []
+            has_img = bool(payload.get("images")) or any(
+                isinstance(m, dict) and bool(m.get("images")) for m in msgs
+            )
+            resolved = resolve_installed_flagship_model(req_model, require_vision=has_img)
+            if resolved and resolved != req_model:
+                payload["model"] = resolved
+                changed = True
+        opts = payload.get("options")
+        if isinstance(opts, dict):
+            np_val = opts.get("num_predict")
+            # Warmup probes use num_predict <= 16; any real generation with 32 <= num_predict < 4096
+            # on thinking-capable models risks exhausting tokens inside <think>.
+            if isinstance(np_val, int) and 32 <= np_val < 4096:
+                opts["num_predict"] = 4096
+                changed = True
+            ctx_val = opts.get("num_ctx")
+            if isinstance(ctx_val, int) and 0 < ctx_val < 16384:
+                opts["num_ctx"] = 16384
+                changed = True
+        if changed:
+            return json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    except Exception:
+        pass
+    return raw_bytes
+
+
 @repo_bp.route("/proxy/ollama/<path:path>", methods=["GET", "POST", "PUT", "DELETE"])
 def ollama_proxy(path):
     try:
-        return _proxy(f"{OLLAMA_URL}/{path}")
+        override = _normalize_ollama_payload(request.get_data()) if request.method == "POST" and path in {"api/chat", "api/generate"} else None
+        return _proxy(f"{OLLAMA_URL}/{path}", timeout=1800, data_override=override)
     except Exception as e:
         return jsonify({"error": f"Ollama non joignable: {e}"}), 504
 
@@ -324,12 +365,14 @@ def ollama_proxy(path):
 def ollama_chat():
     """Route directe pour le chat stream — headers propres."""
     try:
+        raw_override = _normalize_ollama_payload(request.get_data())
+        body_json = json.loads(raw_override.decode("utf-8")) if raw_override else request.json
         resp = requests.post(
             f"{OLLAMA_URL}/api/chat",
-            json=request.json,
+            json=body_json,
             headers={"Content-Type": "application/json"},
             stream=True,
-            timeout=180,
+            timeout=1800,
         )
         return Response(
             resp.iter_content(chunk_size=4096),
@@ -337,5 +380,16 @@ def ollama_chat():
         )
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@repo_bp.route("/api/models/council-roster", methods=["GET"])
+def models_council_roster():
+    """Expose le Conseil Multi-Agents Flagship des 13 modules et la disponibilité Google Jules CLI."""
+    try:
+        from agi_core.flagship_council import get_all_modules_flagship_roster
+        return jsonify(get_all_modules_flagship_roster())
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
 
 

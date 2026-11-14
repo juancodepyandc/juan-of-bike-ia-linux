@@ -56,6 +56,1058 @@ import { polylineToBeziers, rdp } from '../services/drawingCurveSmoothing.ts'
 import { generateHarmony, hexToRgb, wcagContrast } from '../services/drawingColorTools.ts'
 import LyraCharacter from '../components/voice/LyraCharacter.tsx'
 
+export interface RawStrokePoint {
+  x: number
+  y: number
+  pressure?: number
+  timestamp?: number
+  width?: number
+}
+
+export interface StrokeKinematicsConfig {
+  baseWidth?: number
+  baseOpacity?: number
+  springStiffness?: number
+  dampingRatio?: number
+  measurementNoise?: number
+  processNoise?: number
+  cornerAngleThresholdDeg?: number
+  velocityTaperStrength?: number
+  pressureSensitivity?: number
+}
+
+export interface StabilizedStrokePoint {
+  x: number
+  y: number
+  vx: number
+  vy: number
+  speed: number
+  pressure: number
+  width: number
+  opacity: number
+  curvature: number
+  isCorner: boolean
+  timestamp: number
+}
+
+export interface StabilizedStrokeResult {
+  points: StabilizedStrokePoint[]
+  meanSpeed: number
+  maxCurvature: number
+  cornerCount: number
+  tremorSuppressionRatio: number
+  energyPreservationScore: number
+}
+
+function clampVal(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value))
+}
+
+/**
+ * Stabilisation cinématique du trait par filtre de Kalman 2D couplé à un ressort amorti.
+ * Préserve les angles vifs intentionnels (cusps C0) tout en éliminant le tremblement
+ * haute fréquence (jitter moteur), et projette la dynamique pression/vitesse vers
+ * l'épaisseur et l'opacité du trait.
+ */
+export function stabilizeStrokeKinematics(
+  rawPoints: ReadonlyArray<RawStrokePoint>,
+  config: StrokeKinematicsConfig = {},
+): StabilizedStrokeResult {
+  const baseWidth = Math.max(0.5, config.baseWidth ?? 5)
+  const baseOpacity = clampVal(config.baseOpacity ?? 1, 0.05, 1)
+  const springStiffness = clampVal(config.springStiffness ?? 180, 10, 1200)
+  const dampingRatio = clampVal(config.dampingRatio ?? 0.95, 0.2, 2.5)
+  const measurementNoise = Math.max(0.05, config.measurementNoise ?? 2.2)
+  const processNoise = Math.max(0.01, config.processNoise ?? 0.45)
+  const cornerAngleThresholdRad = (clampVal(config.cornerAngleThresholdDeg ?? 52, 15, 150) * Math.PI) / 180
+  const velocityTaperStrength = clampVal(config.velocityTaperStrength ?? 0.38, 0, 0.95)
+  const pressureSensitivity = clampVal(config.pressureSensitivity ?? 0.65, 0, 1)
+
+  if (rawPoints.length === 0) {
+    return {
+      points: [],
+      meanSpeed: 0,
+      maxCurvature: 0,
+      cornerCount: 0,
+      tremorSuppressionRatio: 0,
+      energyPreservationScore: 1,
+    }
+  }
+
+  if (rawPoints.length === 1) {
+    const p0 = rawPoints[0]
+    const pr = clampVal(p0.pressure && p0.pressure > 0 ? p0.pressure : 0.5, 0.05, 1)
+    const widthFactor = (1 - pressureSensitivity) + pressureSensitivity * (0.35 + 0.95 * Math.pow(pr, 0.85))
+    const opacityFactor = (1 - 0.5 * pressureSensitivity) + 0.5 * pressureSensitivity * Math.pow(pr, 0.7)
+    return {
+      points: [
+        {
+          x: p0.x,
+          y: p0.y,
+          vx: 0,
+          vy: 0,
+          speed: 0,
+          pressure: pr,
+          width: baseWidth * clampVal(widthFactor, 0.2, 2.4),
+          opacity: clampVal(baseOpacity * opacityFactor, 0.05, 1),
+          curvature: 0,
+          isCorner: true,
+          timestamp: p0.timestamp ?? 0,
+        },
+      ],
+      meanSpeed: 0,
+      maxCurvature: 0,
+      cornerCount: 1,
+      tremorSuppressionRatio: 0,
+      energyPreservationScore: 1,
+    }
+  }
+
+  // 1. Pré-analyse géométrique : détection des angles vifs vs tremblement haute fréquence
+  const n = rawPoints.length
+  const isCornerFlags = new Array<boolean>(n).fill(false)
+  const isTremorFlags = new Array<boolean>(n).fill(false)
+  isCornerFlags[0] = true
+  isCornerFlags[n - 1] = true
+
+  for (let i = 1; i < n - 1; i += 1) {
+    const prev = rawPoints[i - 1]
+    const curr = rawPoints[i]
+    const next = rawPoints[i + 1]
+    const u1x = curr.x - prev.x
+    const u1y = curr.y - prev.y
+    const u2x = next.x - curr.x
+    const u2y = next.y - curr.y
+    const len1 = Math.hypot(u1x, u1y)
+    const len2 = Math.hypot(u2x, u2y)
+    if (len1 < 1e-4 || len2 < 1e-4) continue
+
+    const cosTheta = clampVal((u1x * u2x + u1y * u2y) / (len1 * len2), -1, 1)
+    const turnAngle = Math.acos(cosTheta)
+    const chord = Math.hypot(next.x - prev.x, next.y - prev.y)
+    const arc = len1 + len2
+
+    // Signature de tremblement : inversion rapide du signe du produit vectoriel sur de courts segments
+    let alternatingSign = false
+    if (i >= 2) {
+      const prev2 = rawPoints[i - 2]
+      const u0x = prev.x - prev2.x
+      const u0y = prev.y - prev2.y
+      const cross0 = u0x * u1y - u0y * u1x
+      const cross1 = u1x * u2y - u1y * u2x
+      if (cross0 * cross1 < 0 && len1 < 8 && len2 < 8) {
+        alternatingSign = true
+      }
+    }
+
+    if (alternatingSign && chord < 10) {
+      isTremorFlags[i] = true
+      isCornerFlags[i] = false
+    } else if (turnAngle >= cornerAngleThresholdRad && (len1 >= 2.5 || len2 >= 2.5) && chord / Math.max(arc, 1e-5) < 0.94) {
+      isCornerFlags[i] = true
+    }
+  }
+
+  // 2. Filtrage d'état Kalman + Ressort Amorti
+  const omegaN = Math.sqrt(springStiffness)
+  let stateX = rawPoints[0].x
+  let stateY = rawPoints[0].y
+  let stateVx = 0
+  let stateVy = 0
+  let covPos = measurementNoise * 0.5
+  let covVel = processNoise
+  let smoothedPressure = clampVal(
+    rawPoints[0].pressure && rawPoints[0].pressure > 0 ? rawPoints[0].pressure : 0.5,
+    0.05,
+    1,
+  )
+
+  const filteredCoords: Array<{
+    x: number
+    y: number
+    vx: number
+    vy: number
+    speed: number
+    pressure: number
+    timestamp: number
+    isCorner: boolean
+  }> = []
+
+  for (let i = 0; i < n; i += 1) {
+    const pt = rawPoints[i]
+    const prevTs = i > 0 ? (rawPoints[i - 1].timestamp ?? (i - 1) * 16.67) : 0
+    const currTs = pt.timestamp ?? i * 16.67
+    const dtMs = i > 0 ? Math.max(1, currTs - prevTs) : 16.67
+    const dt = clampVal(dtMs / 1000, 0.001, 0.1)
+
+    const rawPr = pt.pressure && pt.pressure > 0 ? pt.pressure : 0.5
+    smoothedPressure = i === 0 ? clampVal(rawPr, 0.05, 1) : clampVal(0.35 * rawPr + 0.65 * smoothedPressure, 0.05, 1)
+
+    if (i === 0) {
+      filteredCoords.push({
+        x: stateX,
+        y: stateY,
+        vx: 0,
+        vy: 0,
+        speed: 0,
+        pressure: smoothedPressure,
+        timestamp: currTs,
+        isCorner: true,
+      })
+      continue
+    }
+
+    // Prédiction cinématique amortie (modèle ressort-amortisseur)
+    const decay = Math.exp(-dampingRatio * omegaN * dt)
+    const predVx = stateVx * decay
+    const predVy = stateVy * decay
+    const predX = stateX + predVx * dt
+    const predY = stateY + predVy * dt
+
+    const isCorner = isCornerFlags[i]
+    const isTremor = isTremorFlags[i]
+
+    // Adaptation de la covariance de mesure selon le régime local (angle vif vs tremblement)
+    const rEff = isCorner
+      ? measurementNoise * 0.015
+      : isTremor
+        ? measurementNoise * 3.6
+        : measurementNoise
+    const qEff = isCorner ? processNoise * 4.5 : processNoise
+
+    covPos = covPos + covVel * dt * dt + qEff
+    const kalmanGainPos = covPos / (covPos + rEff)
+    const innovationX = pt.x - predX
+    const innovationY = pt.y - predY
+
+    stateX = predX + kalmanGainPos * innovationX
+    stateY = predY + kalmanGainPos * innovationY
+
+    // Force de rappel du ressort amorti vers la cible filtrée
+    const springAccelX = springStiffness * (pt.x - stateX) - 2 * dampingRatio * omegaN * predVx
+    const springAccelY = springStiffness * (pt.y - stateY) - 2 * dampingRatio * omegaN * predVy
+    const kalmanVx = (stateX - filteredCoords[i - 1].x) / dt
+    const kalmanVy = (stateY - filteredCoords[i - 1].y) / dt
+
+    if (isCorner) {
+      // Sur un angle vif ou l'extrémité finale, ancrage précis sans arrondissement
+      stateX = i === n - 1 ? pt.x : 0.88 * pt.x + 0.12 * stateX
+      stateY = i === n - 1 ? pt.y : 0.88 * pt.y + 0.12 * stateY
+      stateVx = kalmanVx * 0.25
+      stateVy = kalmanVy * 0.25
+    } else {
+      stateVx = 0.72 * kalmanVx + 0.28 * (predVx + springAccelX * dt)
+      stateVy = 0.72 * kalmanVy + 0.28 * (predVy + springAccelY * dt)
+    }
+
+    covPos = (1 - kalmanGainPos) * covPos
+    covVel = Math.max(0.01, covVel * decay + qEff * 0.2)
+
+    const speed = Math.hypot(stateVx, stateVy)
+    filteredCoords.push({
+      x: stateX,
+      y: stateY,
+      vx: stateVx,
+      vy: stateVy,
+      speed,
+      pressure: smoothedPressure,
+      timestamp: currTs,
+      isCorner,
+    })
+  }
+
+  // 3. Calcul de courbure de Menger et synthèse épaisseur / opacité
+  const refSpeed = 650 // px/s vitesse de référence pour l'effilement
+  let speedSum = 0
+  let maxCurvature = 0
+  let cornerCount = 0
+
+  const stabilizedPoints: StabilizedStrokePoint[] = filteredCoords.map((pt, i) => {
+    let curvature = 0
+    if (i > 0 && i < n - 1) {
+      const prev = filteredCoords[i - 1]
+      const next = filteredCoords[i + 1]
+      const a = Math.hypot(pt.x - prev.x, pt.y - prev.y)
+      const b = Math.hypot(next.x - pt.x, next.y - pt.y)
+      const c = Math.hypot(next.x - prev.x, next.y - prev.y)
+      const twiceArea = Math.abs((pt.x - prev.x) * (next.y - prev.y) - (pt.y - prev.y) * (next.x - prev.x))
+      const denom = a * b * c
+      curvature = denom > 1e-4 ? (2 * twiceArea) / denom : 0
+    }
+    if (curvature > maxCurvature) maxCurvature = curvature
+    if (pt.isCorner) cornerCount += 1
+    speedSum += pt.speed
+
+    const speedResponse = 1 / (1 + pt.speed / refSpeed)
+    const pressureWidthFactor = (1 - pressureSensitivity) + pressureSensitivity * (0.35 + 0.95 * Math.pow(pt.pressure, 0.85))
+    const velocityWidthFactor = 1 - velocityTaperStrength * (1 - speedResponse)
+    const width = baseWidth * clampVal(pressureWidthFactor * velocityWidthFactor, 0.18, 2.5)
+
+    const pressureOpacityFactor = (1 - 0.45 * pressureSensitivity) + 0.45 * pressureSensitivity * Math.pow(pt.pressure, 0.75)
+    const velocityOpacityFactor = 0.85 + 0.15 * speedResponse
+    const opacity = clampVal(baseOpacity * pressureOpacityFactor * velocityOpacityFactor, 0.05, 1)
+
+    return {
+      x: pt.x,
+      y: pt.y,
+      vx: pt.vx,
+      vy: pt.vy,
+      speed: pt.speed,
+      pressure: pt.pressure,
+      width,
+      opacity,
+      curvature,
+      isCorner: pt.isCorner,
+      timestamp: pt.timestamp,
+    }
+  })
+
+  // 4. Évaluation de la suppression du tremblement (énergie de différence seconde)
+  let rawRoughnessEnergy = 0
+  let stabRoughnessEnergy = 0
+  let rawArcLength = 0
+  let stabArcLength = 0
+
+  for (let i = 1; i < n; i += 1) {
+    rawArcLength += Math.hypot(rawPoints[i].x - rawPoints[i - 1].x, rawPoints[i].y - rawPoints[i - 1].y)
+    stabArcLength += Math.hypot(
+      stabilizedPoints[i].x - stabilizedPoints[i - 1].x,
+      stabilizedPoints[i].y - stabilizedPoints[i - 1].y,
+    )
+    if (i < n - 1 && !isCornerFlags[i]) {
+      const rawD2x = rawPoints[i + 1].x - 2 * rawPoints[i].x + rawPoints[i - 1].x
+      const rawD2y = rawPoints[i + 1].y - 2 * rawPoints[i].y + rawPoints[i - 1].y
+      const stabD2x = stabilizedPoints[i + 1].x - 2 * stabilizedPoints[i].x + stabilizedPoints[i - 1].x
+      const stabD2y = stabilizedPoints[i + 1].y - 2 * stabilizedPoints[i].y + stabilizedPoints[i - 1].y
+      rawRoughnessEnergy += rawD2x * rawD2x + rawD2y * rawD2y
+      stabRoughnessEnergy += stabD2x * stabD2x + stabD2y * stabD2y
+    }
+  }
+
+  const tremorSuppressionRatio =
+    rawRoughnessEnergy > 1e-5
+      ? clampVal(1 - stabRoughnessEnergy / rawRoughnessEnergy, 0, 1)
+      : 0
+  const energyPreservationScore =
+    rawArcLength > 1e-4
+      ? clampVal(1 - Math.abs(stabArcLength - rawArcLength) / (rawArcLength + 1e-4), 0, 1)
+      : 1
+
+  return {
+    points: stabilizedPoints,
+    meanSpeed: speedSum / n,
+    maxCurvature,
+    cornerCount,
+    tremorSuppressionRatio,
+    energyPreservationScore,
+  }
+}
+
+export type CharacterForgeViewType = 'face' | 'profil' | 'dos'
+
+export interface SketchGeometryAnalysis {
+  visualCenterOfMass: {
+    x: number
+    y: number
+    normalizedX: number
+    normalizedY: number
+    totalVisualMass: number
+    principalAxisAngleDeg: number
+    eccentricity: number
+  }
+  bilateralSymmetry: {
+    axisX: number
+    normalizedAxisX: number
+    axisAngleDeg: number
+    symmetryScore: number
+    inferredPose: 'face' | 'profil' | 'dos' | 'three_quarter'
+  }
+  composition: {
+    ruleOfThirdsScore: number
+    goldenRatioScore: number
+    nearestPowerPoint: { x: number; y: number; distancePx: number }
+    balanceScore: number
+    boundingBox: {
+      minX: number
+      minY: number
+      maxX: number
+      maxY: number
+      width: number
+      height: number
+      fillRatio: number
+    }
+  }
+  perspective: {
+    horizonY: number
+    normalizedHorizonY: number
+    horizonTiltDeg: number
+    vanishingPoints: Array<{
+      x: number
+      y: number
+      inlierCount: number
+      confidence: number
+    }>
+    coherenceScore: number
+  }
+  anatomicalProportions: {
+    headToBodyRatio: number
+    canonClassification:
+      | 'chibi_stylized'
+      | 'realistic_standard'
+      | 'heroic_ideal'
+      | 'elongated_fashion'
+      | 'non_figurative'
+    landmarks: {
+      crownY: number
+      chinY: number
+      shoulderY: number
+      pelvisY: number
+      kneeY: number
+      groundY: number
+    }
+  }
+  characterForgeMultiView: {
+    detectedViews: Array<{
+      viewType: CharacterForgeViewType
+      bbox: { minX: number; minY: number; maxX: number; maxY: number }
+      symmetryScore: number
+      aspectRatio: number
+    }>
+    crownAlignmentScore: number
+    groundAlignmentScore: number
+    statureConsistencyScore: number
+    landmarkHorizonCoherence: number
+    multiViewReadinessScore: number
+  }
+  visionPromptGuidance: string
+}
+
+export type SketchStrokeInput =
+  | ReadonlyArray<ReadonlyArray<RawStrokePoint>>
+  | {
+      strokes: ReadonlyArray<ReadonlyArray<RawStrokePoint>>
+      canvasWidth?: number
+      canvasHeight?: number
+    }
+
+/**
+ * Analyse anatomique, perspective et compositionnelle d'un croquis par premiers principes :
+ * - Centre de masse visuel pondéré par longueur d'arc, pression et épaisseur + moments d'inertie 2D
+ * - Détection d'axe de symétrie bilatérale par correspondance de réflexion gaussienne
+ * - Alignement Règle des Tiers & Nombre d'Or (φ = 1.618)
+ * - Estimation robuste (consensus MSAC) des points de fuite et de la ligne d'horizon
+ * - Cohérence multi-vues Character Forge (Face / Profil / Dos) : alignement des lignes de crâne,
+ *   épaules, bassin, genoux et sol.
+ */
+export function analyzeSketchGeometryAndProportions(
+  input: SketchStrokeInput,
+  canvasWidthArg = 1024,
+  canvasHeightArg = 640,
+): SketchGeometryAnalysis {
+  const isConfigObject = !Array.isArray(input) && 'strokes' in input
+  const strokes: ReadonlyArray<ReadonlyArray<RawStrokePoint>> = isConfigObject
+    ? input.strokes
+    : (input as ReadonlyArray<ReadonlyArray<RawStrokePoint>>)
+  const canvasWidth = Math.max(
+    1,
+    isConfigObject ? (input.canvasWidth ?? canvasWidthArg) : canvasWidthArg,
+  )
+  const canvasHeight = Math.max(
+    1,
+    isConfigObject ? (input.canvasHeight ?? canvasHeightArg) : canvasHeightArg,
+  )
+
+  interface WeightedSample {
+    x: number
+    y: number
+    weight: number
+    strokeIdx: number
+  }
+
+  interface LineSegment {
+    x1: number
+    y1: number
+    x2: number
+    y2: number
+    length: number
+    angleRad: number
+  }
+
+  const samples: WeightedSample[] = []
+  const segments: LineSegment[] = []
+  let minX = Number.POSITIVE_INFINITY
+  let minY = Number.POSITIVE_INFINITY
+  let maxX = Number.NEGATIVE_INFINITY
+  let maxY = Number.NEGATIVE_INFINITY
+
+  strokes.forEach((stroke, strokeIdx) => {
+    if (!stroke || stroke.length === 0) return
+    if (stroke.length === 1) {
+      const p = stroke[0]
+      const w = (p.width ?? 4) * (p.pressure && p.pressure > 0 ? p.pressure : 0.5)
+      samples.push({ x: p.x, y: p.y, weight: Math.max(0.5, w), strokeIdx })
+      if (p.x < minX) minX = p.x
+      if (p.y < minY) minY = p.y
+      if (p.x > maxX) maxX = p.x
+      if (p.y > maxY) maxY = p.y
+      return
+    }
+
+    let strokeArc = 0
+    for (let i = 0; i < stroke.length; i += 1) {
+      const p = stroke[i]
+      if (p.x < minX) minX = p.x
+      if (p.y < minY) minY = p.y
+      if (p.x > maxX) maxX = p.x
+      if (p.y > maxY) maxY = p.y
+
+      if (i > 0) {
+        const prev = stroke[i - 1]
+        const segLen = Math.hypot(p.x - prev.x, p.y - prev.y)
+        strokeArc += segLen
+        const pr = ((p.pressure ?? 0.5) + (prev.pressure ?? 0.5)) * 0.5
+        const wd = ((p.width ?? 4) + (prev.width ?? 4)) * 0.5
+        const weight = Math.max(0.25, segLen * Math.max(0.1, pr) * Math.max(1, wd * 0.25))
+        samples.push({
+          x: (prev.x + p.x) * 0.5,
+          y: (prev.y + p.y) * 0.5,
+          weight,
+          strokeIdx,
+        })
+      }
+    }
+
+    // Extraction de segments directeurs rectilignes pour l'analyse de perspective
+    const first = stroke[0]
+    const last = stroke[stroke.length - 1]
+    const chord = Math.hypot(last.x - first.x, last.y - first.y)
+    if (chord >= 18 && strokeArc > 0 && chord / strokeArc >= 0.88) {
+      segments.push({
+        x1: first.x,
+        y1: first.y,
+        x2: last.x,
+        y2: last.y,
+        length: chord,
+        angleRad: Math.atan2(last.y - first.y, last.x - first.x),
+      })
+    } else if (stroke.length >= 4) {
+      const step = Math.max(2, Math.floor(stroke.length / 4))
+      for (let i = 0; i + step < stroke.length; i += step) {
+        const a = stroke[i]
+        const b = stroke[i + step]
+        let subArc = 0
+        for (let k = i + 1; k <= i + step; k += 1) {
+          subArc += Math.hypot(stroke[k].x - stroke[k - 1].x, stroke[k].y - stroke[k - 1].y)
+        }
+        const subChord = Math.hypot(b.x - a.x, b.y - a.y)
+        if (subChord >= 16 && subArc > 0 && subChord / subArc >= 0.91) {
+          segments.push({
+            x1: a.x,
+            y1: a.y,
+            x2: b.x,
+            y2: b.y,
+            length: subChord,
+            angleRad: Math.atan2(b.y - a.y, b.x - a.x),
+          })
+        }
+      }
+    }
+  })
+
+  if (samples.length === 0) {
+    const cx = canvasWidth * 0.5
+    const cy = canvasHeight * 0.5
+    return {
+      visualCenterOfMass: {
+        x: cx,
+        y: cy,
+        normalizedX: 0.5,
+        normalizedY: 0.5,
+        totalVisualMass: 0,
+        principalAxisAngleDeg: 0,
+        eccentricity: 0,
+      },
+      bilateralSymmetry: {
+        axisX: cx,
+        normalizedAxisX: 0.5,
+        axisAngleDeg: 0,
+        symmetryScore: 0,
+        inferredPose: 'face',
+      },
+      composition: {
+        ruleOfThirdsScore: 0,
+        goldenRatioScore: 0,
+        nearestPowerPoint: { x: canvasWidth / 3, y: canvasHeight / 3, distancePx: Math.hypot(cx - canvasWidth / 3, cy - canvasHeight / 3) },
+        balanceScore: 1,
+        boundingBox: { minX: 0, minY: 0, maxX: 0, maxY: 0, width: 0, height: 0, fillRatio: 0 },
+      },
+      perspective: {
+        horizonY: cy,
+        normalizedHorizonY: 0.5,
+        horizonTiltDeg: 0,
+        vanishingPoints: [],
+        coherenceScore: 1,
+      },
+      anatomicalProportions: {
+        headToBodyRatio: 0,
+        canonClassification: 'non_figurative',
+        landmarks: { crownY: 0, chinY: 0, shoulderY: 0, pelvisY: 0, kneeY: 0, groundY: 0 },
+      },
+      characterForgeMultiView: {
+        detectedViews: [],
+        crownAlignmentScore: 1,
+        groundAlignmentScore: 1,
+        statureConsistencyScore: 1,
+        landmarkHorizonCoherence: 1,
+        multiViewReadinessScore: 0,
+      },
+      visionPromptGuidance: 'Centered balanced composition on blank canvas.',
+    }
+  }
+
+  // 1. Centre de masse visuel & moments d'inertie du second ordre
+  let totalMass = 0
+  let sumX = 0
+  let sumY = 0
+  for (const s of samples) {
+    totalMass += s.weight
+    sumX += s.x * s.weight
+    sumY += s.y * s.weight
+  }
+  const comX = sumX / Math.max(totalMass, 1e-6)
+  const comY = sumY / Math.max(totalMass, 1e-6)
+
+  let covXX = 0
+  let covYY = 0
+  let covXY = 0
+  for (const s of samples) {
+    const dx = s.x - comX
+    const dy = s.y - comY
+    covXX += s.weight * dx * dx
+    covYY += s.weight * dy * dy
+    covXY += s.weight * dx * dy
+  }
+  covXX /= Math.max(totalMass, 1e-6)
+  covYY /= Math.max(totalMass, 1e-6)
+  covXY /= Math.max(totalMass, 1e-6)
+
+  const trace = covXX + covYY
+  const det = covXX * covYY - covXY * covXY
+  const disc = Math.sqrt(Math.max(0, trace * trace * 0.25 - det))
+  const lambda1 = Math.max(0, trace * 0.5 + disc)
+  const lambda2 = Math.max(0, trace * 0.5 - disc)
+  const eccentricity = lambda1 > 1e-5 ? Math.sqrt(clampVal(1 - lambda2 / lambda1, 0, 1)) : 0
+  const principalAxisAngleDeg = (Math.atan2(2 * covXY, covXX - covYY) * 0.5 * 180) / Math.PI
+
+  const bboxWidth = Math.max(1, maxX - minX)
+  const bboxHeight = Math.max(1, maxY - minY)
+  const fillRatio = clampVal((bboxWidth * bboxHeight) / (canvasWidth * canvasHeight), 0, 1)
+
+  // 2. Détection de l'axe de symétrie bilatérale (sous-échantillonnage déterministe)
+  const maxEvalSamples = 96
+  const stepSample = Math.max(1, Math.floor(samples.length / maxEvalSamples))
+  const evalSamples = samples.filter((_, idx) => idx % stepSample === 0)
+  const sigmaSym = Math.max(8, 0.085 * Math.max(bboxWidth, bboxHeight))
+  const invTwoSigmaSq = 1 / (2 * sigmaSym * sigmaSym)
+
+  const evaluateSymmetryAxis = (axisX: number, tiltRad: number, subset: WeightedSample[]): number => {
+    if (subset.length < 2) return 0
+    const nx = Math.cos(tiltRad)
+    const ny = Math.sin(tiltRad)
+    let weightedCorrespondence = 0
+    let wSum = 0
+    for (let i = 0; i < subset.length; i += 1) {
+      const p = subset[i]
+      const dx = p.x - axisX
+      const dy = p.y - comY
+      const proj = dx * nx + dy * ny
+      const rx = p.x - 2 * proj * nx
+      const ry = p.y - 2 * proj * ny
+      let bestSim = 0
+      for (let j = 0; j < subset.length; j += 1) {
+        const q = subset[j]
+        const distSq = (rx - q.x) * (rx - q.x) + (ry - q.y) * (ry - q.y)
+        const sim = Math.exp(-distSq * invTwoSigmaSq)
+        if (sim > bestSim) bestSim = sim
+      }
+      weightedCorrespondence += p.weight * bestSim
+      wSum += p.weight
+    }
+    return wSum > 0 ? clampVal(weightedCorrespondence / wSum, 0, 1) : 0
+  }
+
+  let bestAxisX = comX
+  let bestTiltDeg = 0
+  let bestSymScore = -1
+  const candidateOffsets = [-0.06 * bboxWidth, -0.03 * bboxWidth, 0, 0.03 * bboxWidth, 0.06 * bboxWidth]
+  const candidateTiltsDeg = [-8, -4, 0, 4, 8]
+
+  for (const offset of candidateOffsets) {
+    for (const tiltDeg of candidateTiltsDeg) {
+      const score = evaluateSymmetryAxis(comX + offset, (tiltDeg * Math.PI) / 180, evalSamples)
+      if (score > bestSymScore) {
+        bestSymScore = score
+        bestAxisX = comX + offset
+        bestTiltDeg = tiltDeg
+      }
+    }
+  }
+  const symmetryScore = clampVal(bestSymScore, 0, 1)
+
+  // Classification de la pose selon symétrie bilatérale et rapport largeur/hauteur
+  const aspectRatio = bboxWidth / bboxHeight
+  const inferredPose: 'face' | 'profil' | 'dos' | 'three_quarter' =
+    symmetryScore >= 0.74
+      ? 'face'
+      : symmetryScore >= 0.56
+        ? 'three_quarter'
+        : aspectRatio < 0.48
+          ? 'profil'
+          : 'three_quarter'
+
+  // 3. Règle des Tiers & Nombre d'Or
+  const powerPoints = [
+    { x: canvasWidth / 3, y: canvasHeight / 3 },
+    { x: (canvasWidth * 2) / 3, y: canvasHeight / 3 },
+    { x: canvasWidth / 3, y: (canvasHeight * 2) / 3 },
+    { x: (canvasWidth * 2) / 3, y: (canvasHeight * 2) / 3 },
+  ]
+  let nearestPP = powerPoints[0]
+  let minPPDist = Number.POSITIVE_INFINITY
+  for (const pp of powerPoints) {
+    const d = Math.hypot(comX - pp.x, comY - pp.y)
+    if (d < minPPDist) {
+      minPPDist = d
+      nearestPP = pp
+    }
+  }
+  const diag = Math.hypot(canvasWidth, canvasHeight)
+  const thirdLineDistX = Math.min(Math.abs(comX - canvasWidth / 3), Math.abs(comX - (canvasWidth * 2) / 3))
+  const thirdLineDistY = Math.min(Math.abs(comY - canvasHeight / 3), Math.abs(comY - (canvasHeight * 2) / 3))
+  const ruleOfThirdsScore = clampVal(
+    0.6 * Math.exp(-minPPDist / (0.18 * diag)) +
+      0.4 * Math.exp(-Math.min(thirdLineDistX, thirdLineDistY) / (0.12 * Math.min(canvasWidth, canvasHeight))),
+    0,
+    1,
+  )
+
+  const phiInv = 0.61803398875
+  const goldenDistX = Math.min(Math.abs(comX - canvasWidth * (1 - phiInv)), Math.abs(comX - canvasWidth * phiInv))
+  const goldenDistY = Math.min(Math.abs(comY - canvasHeight * (1 - phiInv)), Math.abs(comY - canvasHeight * phiInv))
+  const goldenRatioScore = clampVal(
+    Math.exp(-Math.hypot(goldenDistX, goldenDistY) / (0.18 * diag)),
+    0,
+    1,
+  )
+
+  const centerOffsetNorm = Math.hypot((comX - canvasWidth * 0.5) / (canvasWidth * 0.5), (comY - canvasHeight * 0.5) / (canvasHeight * 0.5))
+  const balanceScore = clampVal(1 - 0.45 * centerOffsetNorm, 0, 1)
+
+  // 4. Ligne d'horizon et cohérence des points de fuite (consensus MSAC)
+  const perspectiveRays = segments.filter((seg) => {
+    const absDeg = Math.abs((seg.angleRad * 180) / Math.PI)
+    const foldedDeg = absDeg > 90 ? 180 - absDeg : absDeg
+    return foldedDeg >= 8 && foldedDeg <= 80
+  })
+
+  const vanishingPoints: Array<{ x: number; y: number; inlierCount: number; confidence: number }> = []
+  let horizonY = comY
+  let horizonTiltDeg = 0
+  let perspectiveCoherence = 0.85
+
+  if (perspectiveRays.length >= 2) {
+    const candidateVPs: Array<{ x: number; y: number; inliers: number; score: number }> = []
+    for (let i = 0; i < perspectiveRays.length; i += 1) {
+      for (let j = i + 1; j < perspectiveRays.length; j += 1) {
+        const r1 = perspectiveRays[i]
+        const r2 = perspectiveRays[j]
+        const a1 = r1.y2 - r1.y1
+        const b1 = r1.x1 - r1.x2
+        const c1 = a1 * r1.x1 + b1 * r1.y1
+        const a2 = r2.y2 - r2.y1
+        const b2 = r2.x1 - r2.x2
+        const c2 = a2 * r2.x1 + b2 * r2.y1
+        const detLine = a1 * b2 - a2 * b1
+        if (Math.abs(detLine) < 1e-3) continue
+
+        const vx = (b2 * c1 - b1 * c2) / detLine
+        const vy = (a1 * c2 - a2 * c1) / detLine
+        if (Math.abs(vx) > canvasWidth * 4 || Math.abs(vy) > canvasHeight * 3) continue
+
+        let inliers = 0
+        let msacScore = 0
+        for (const ray of perspectiveRays) {
+          const midX = (ray.x1 + ray.x2) * 0.5
+          const midY = (ray.y1 + ray.y2) * 0.5
+          const toVpAngle = Math.atan2(vy - midY, vx - midX)
+          const diff = Math.abs(Math.sin(ray.angleRad - toVpAngle))
+          if (diff < 0.14) {
+            inliers += 1
+            msacScore += 1 - (diff / 0.14) ** 2
+          }
+        }
+        candidateVPs.push({ x: vx, y: vy, inliers, score: msacScore })
+      }
+    }
+
+    candidateVPs.sort((a, b) => b.score - a.score)
+    const selectedVPs = candidateVPs.slice(0, 2)
+    for (const vp of selectedVPs) {
+      vanishingPoints.push({
+        x: vp.x,
+        y: vp.y,
+        inlierCount: vp.inliers,
+        confidence: clampVal(vp.score / Math.max(2, perspectiveRays.length), 0, 1),
+      })
+    }
+
+    if (vanishingPoints.length > 0) {
+      horizonY =
+        vanishingPoints.reduce((acc, vp) => acc + vp.y * vp.confidence, 0) /
+        Math.max(1e-5, vanishingPoints.reduce((acc, vp) => acc + vp.confidence, 0))
+      if (vanishingPoints.length >= 2) {
+        const dxVp = vanishingPoints[1].x - vanishingPoints[0].x
+        const dyVp = vanishingPoints[1].y - vanishingPoints[0].y
+        if (Math.abs(dxVp) > 20) {
+          horizonTiltDeg = clampVal((Math.atan2(dyVp, dxVp) * 180) / Math.PI, -45, 45)
+        }
+      }
+      perspectiveCoherence = clampVal(vanishingPoints[0].confidence, 0.35, 1)
+    }
+  }
+
+  // 5. Proportions anatomiques verticales & points de repère
+  const crownY = minY
+  const groundY = maxY
+  const stature = Math.max(1, groundY - crownY)
+
+  // Profil de densité verticale (16 bandes) pour estimer la hauteur de la tête et des épaules
+  const numBins = 16
+  const verticalBins = new Array<number>(numBins).fill(0)
+  for (const s of samples) {
+    const bin = clampVal(Math.floor(((s.y - crownY) / stature) * numBins), 0, numBins - 1)
+    verticalBins[bin] += s.weight
+  }
+  // Recherche du col (constriction entre tête [bins 1..3] et épaules [bins 2..5])
+  let neckBin = 2
+  if (verticalBins[1] + verticalBins[2] > 0) {
+    neckBin = verticalBins[2] <= verticalBins[1] ? 2 : 3
+  }
+  const chinY = crownY + ((neckBin + 0.25) / numBins) * stature
+  const headHeight = Math.max(1, chinY - crownY)
+  const headToBodyRatio = stature >= 40 ? Number((stature / headHeight).toFixed(2)) : 0
+  const shoulderY = crownY + 0.185 * stature
+  const pelvisY = crownY + 0.52 * stature
+  const kneeY = crownY + 0.76 * stature
+
+  let canonClassification: SketchGeometryAnalysis['anatomicalProportions']['canonClassification'] = 'non_figurative'
+  if (stature >= 45 && aspectRatio <= 2.2) {
+    if (headToBodyRatio > 0 && headToBodyRatio < 4.5) canonClassification = 'chibi_stylized'
+    else if (headToBodyRatio >= 4.5 && headToBodyRatio < 7.3) canonClassification = 'realistic_standard'
+    else if (headToBodyRatio >= 7.3 && headToBodyRatio <= 8.6) canonClassification = 'heroic_ideal'
+    else if (headToBodyRatio > 8.6) canonClassification = 'elongated_fashion'
+  }
+
+  // 6. Cohérence Multi-Vues Character Forge (Face / Profil / Dos)
+  // Partitionnement horizontal des traits par espace vide (gap X) pour détecter les vues multiples
+  const strokeBoxes = strokes
+    .map((st, idx) => {
+      if (!st || st.length === 0) return null
+      let sMinX = Number.POSITIVE_INFINITY
+      let sMinY = Number.POSITIVE_INFINITY
+      let sMaxX = Number.NEGATIVE_INFINITY
+      let sMaxY = Number.NEGATIVE_INFINITY
+      for (const p of st) {
+        if (p.x < sMinX) sMinX = p.x
+        if (p.y < sMinY) sMinY = p.y
+        if (p.x > sMaxX) sMaxX = p.x
+        if (p.y > sMaxY) sMaxY = p.y
+      }
+      return { idx, minX: sMinX, minY: sMinY, maxX: sMaxX, maxY: sMaxY }
+    })
+    .filter((b): b is NonNullable<typeof b> => b !== null)
+    .sort((a, b) => a.minX - b.minX)
+
+  const viewClusters: Array<{
+    strokeIndices: number[]
+    minX: number
+    minY: number
+    maxX: number
+    maxY: number
+  }> = []
+
+  const gapThreshold = Math.max(18, bboxWidth * 0.045)
+  for (const box of strokeBoxes) {
+    const lastCluster = viewClusters[viewClusters.length - 1]
+    if (!lastCluster || box.minX - lastCluster.maxX > gapThreshold) {
+      viewClusters.push({
+        strokeIndices: [box.idx],
+        minX: box.minX,
+        minY: box.minY,
+        maxX: box.maxX,
+        maxY: box.maxY,
+      })
+    } else {
+      lastCluster.strokeIndices.push(box.idx)
+      lastCluster.minX = Math.min(lastCluster.minX, box.minX)
+      lastCluster.minY = Math.min(lastCluster.minY, box.minY)
+      lastCluster.maxX = Math.max(lastCluster.maxX, box.maxX)
+      lastCluster.maxY = Math.max(lastCluster.maxY, box.maxY)
+    }
+  }
+
+  const significantClusters = viewClusters.filter(
+    (c) => c.maxY - c.minY >= stature * 0.35 && c.maxX - c.minX >= 8,
+  )
+
+  const viewOrder: CharacterForgeViewType[] = ['face', 'profil', 'dos']
+  const detectedViews: SketchGeometryAnalysis['characterForgeMultiView']['detectedViews'] = (
+    significantClusters.length > 0 ? significantClusters : [{ strokeIndices: [], minX, minY, maxX, maxY }]
+  )
+    .slice(0, 3)
+    .map((cluster, idx) => {
+      const cWidth = Math.max(1, cluster.maxX - cluster.minX)
+      const cHeight = Math.max(1, cluster.maxY - cluster.minY)
+      const cAspect = cWidth / cHeight
+      const clusterSet = new Set(cluster.strokeIndices)
+      const clusterSamples =
+        clusterSet.size > 0 ? evalSamples.filter((s) => clusterSet.has(s.strokeIdx)) : evalSamples
+      const clusterCenterX = (cluster.minX + cluster.maxX) * 0.5
+      const cSym = evaluateSymmetryAxis(clusterCenterX, 0, clusterSamples)
+
+      let viewType: CharacterForgeViewType = viewOrder[idx] ?? 'face'
+      if (significantClusters.length === 1) {
+        viewType = cSym >= 0.68 ? 'face' : cAspect < 0.52 ? 'profil' : 'face'
+      } else if (cAspect < 0.46 && cSym < 0.68) {
+        viewType = 'profil'
+      } else if (idx === 2 && cSym >= 0.6) {
+        viewType = 'dos'
+      }
+
+      return {
+        viewType,
+        bbox: {
+          minX: cluster.minX,
+          minY: cluster.minY,
+          maxX: cluster.maxX,
+          maxY: cluster.maxY,
+        },
+        symmetryScore: cSym,
+        aspectRatio: Number(cAspect.toFixed(3)),
+      }
+    })
+
+  let crownAlignmentScore = 1
+  let groundAlignmentScore = 1
+  let statureConsistencyScore = 1
+  if (detectedViews.length >= 2) {
+    const crowns = detectedViews.map((v) => v.bbox.minY)
+    const grounds = detectedViews.map((v) => v.bbox.maxY)
+    const heights = detectedViews.map((v) => Math.max(1, v.bbox.maxY - v.bbox.minY))
+    const meanHeight = heights.reduce((a, b) => a + b, 0) / heights.length
+    const maxCrownDiff = Math.max(...crowns) - Math.min(...crowns)
+    const maxGroundDiff = Math.max(...grounds) - Math.min(...grounds)
+    const maxHeightDiff = Math.max(...heights) - Math.min(...heights)
+
+    crownAlignmentScore = clampVal(1 - maxCrownDiff / Math.max(12, meanHeight * 0.25), 0, 1)
+    groundAlignmentScore = clampVal(1 - maxGroundDiff / Math.max(12, meanHeight * 0.25), 0, 1)
+    statureConsistencyScore = clampVal(1 - maxHeightDiff / Math.max(12, meanHeight * 0.3), 0, 1)
+  }
+
+  const landmarkHorizonCoherence = clampVal(
+    0.35 * crownAlignmentScore + 0.35 * groundAlignmentScore + 0.3 * statureConsistencyScore,
+    0,
+    1,
+  )
+  const multiViewReadinessScore = clampVal(
+    0.5 * landmarkHorizonCoherence +
+      0.25 * perspectiveCoherence +
+      0.25 * Math.max(symmetryScore, detectedViews[0]?.symmetryScore ?? 0),
+    0,
+    1,
+  )
+
+  const poseLabel =
+    detectedViews.length >= 2
+      ? `multi-view character sheet (${detectedViews.map((v) => v.viewType).join('/')})`
+      : `${inferredPose} view`
+  const visionPromptGuidance = [
+    `Geometric analysis: ${poseLabel}`,
+    `bilateral symmetry ${(symmetryScore * 100).toFixed(0)}%`,
+    `visual center (${(comX / canvasWidth).toFixed(2)}, ${(comY / canvasHeight).toFixed(2)})`,
+    `horizon at ${(horizonY / canvasHeight).toFixed(2)}H`,
+    canonClassification !== 'non_figurative' ? `proportions ${canonClassification} (~${headToBodyRatio}:1)` : '',
+  ]
+    .filter(Boolean)
+    .join(', ')
+
+  return {
+    visualCenterOfMass: {
+      x: comX,
+      y: comY,
+      normalizedX: clampVal(comX / canvasWidth, 0, 1),
+      normalizedY: clampVal(comY / canvasHeight, 0, 1),
+      totalVisualMass: totalMass,
+      principalAxisAngleDeg,
+      eccentricity,
+    },
+    bilateralSymmetry: {
+      axisX: bestAxisX,
+      normalizedAxisX: clampVal(bestAxisX / canvasWidth, 0, 1),
+      axisAngleDeg: bestTiltDeg,
+      symmetryScore,
+      inferredPose,
+    },
+    composition: {
+      ruleOfThirdsScore,
+      goldenRatioScore,
+      nearestPowerPoint: {
+        x: nearestPP.x,
+        y: nearestPP.y,
+        distancePx: minPPDist,
+      },
+      balanceScore,
+      boundingBox: {
+        minX,
+        minY,
+        maxX,
+        maxY,
+        width: bboxWidth,
+        height: bboxHeight,
+        fillRatio,
+      },
+    },
+    perspective: {
+      horizonY,
+      normalizedHorizonY: clampVal(horizonY / canvasHeight, 0, 1),
+      horizonTiltDeg,
+      vanishingPoints,
+      coherenceScore: perspectiveCoherence,
+    },
+    anatomicalProportions: {
+      headToBodyRatio,
+      canonClassification,
+      landmarks: {
+        crownY,
+        chinY,
+        shoulderY,
+        pelvisY,
+        kneeY,
+        groundY,
+      },
+    },
+    characterForgeMultiView: {
+      detectedViews,
+      crownAlignmentScore,
+      groundAlignmentScore,
+      statureConsistencyScore,
+      landmarkHorizonCoherence,
+      multiViewReadinessScore,
+    },
+    visionPromptGuidance,
+  }
+}
+
 function canvasBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('Timeout: capture du croquis trop longue.')), 10000)
@@ -90,7 +1142,12 @@ function getSketchEditDenoise(contract: GenerationContract) {
  * Analyse le croquis avec le modele vision pour deviner ce qui est dessine.
  * Retourne une description EN propre prete pour la diffusion.
  */
-async function analyzeSketchWithVision(sketchBlob: Blob, userPrompt: string, visionModel: string): Promise<string> {
+async function analyzeSketchWithVision(
+  sketchBlob: Blob,
+  userPrompt: string,
+  visionModel: string,
+  geometricGuidance?: string,
+): Promise<string> {
   try {
     const arrayBuffer = await sketchBlob.arrayBuffer()
     const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
@@ -104,6 +1161,7 @@ async function analyzeSketchWithVision(sketchBlob: Blob, userPrompt: string, vis
           'Then generate a polished English description for an image diffusion model.',
           '',
           `The user wants: "${userPrompt}"`,
+          geometricGuidance ? `Geometric & proportion telemetry: ${geometricGuidance}` : '',
           '',
           'Rules:',
           '- Identify the subjects and their positions from the sketch shapes',
@@ -112,7 +1170,7 @@ async function analyzeSketchWithVision(sketchBlob: Blob, userPrompt: string, vis
           '- Do NOT mention "sketch", "drawing", "rough" or "hand-drawn" in output',
           '- Integrate the user intent with what you see in the sketch',
           '- Output ONLY the visual description, nothing else',
-        ].join('\n'),
+        ].filter(Boolean).join('\n'),
         images: [base64],
       },
     ], 0.3)
@@ -141,10 +1199,12 @@ export default function DrawingView() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const activeTrackerIdRef = useRef<string | null>(null)
   const historyRef = useRef<ImageData[]>([])
+  const strokeHistoryRef = useRef<Array<Array<RawStrokePoint[]>>>([[]])
+  const completedStrokesRef = useRef<RawStrokePoint[][]>([])
   const historyIndexRef = useRef(-1)
   const dragStartRef = useRef<{ x: number; y: number } | null>(null)
   const snapshotRef = useRef<ImageData | null>(null)
-  const strokePointsRef = useRef<Array<{ x: number; y: number }>>([])
+  const strokePointsRef = useRef<RawStrokePoint[]>([])
   const { trackGeneration, completeGeneration, failGeneration } = useGenerationTrackerStore()
   const recovery = useGenerationRecovery('drawing')
   const [isDrawing, setIsDrawing] = useState(false)
@@ -182,6 +1242,8 @@ export default function DrawingView() {
     contextRef.current = context
     // Initialise history with a blank baseline
     historyRef.current = [context.getImageData(0, 0, canvas.width, canvas.height)]
+    strokeHistoryRef.current = [[]]
+    completedStrokesRef.current = []
     historyIndexRef.current = 0
     setHistoryVersion((value) => value + 1)
   }, [])
@@ -215,10 +1277,16 @@ export default function DrawingView() {
     if (!canvas || !context) return
     const snap = context.getImageData(0, 0, canvas.width, canvas.height)
     const stack = historyRef.current
+    const strokeStack = strokeHistoryRef.current
     const nextIndex = historyIndexRef.current + 1
     stack.splice(nextIndex)
+    strokeStack.splice(nextIndex)
     stack.push(snap)
-    if (stack.length > 30) stack.shift()
+    strokeStack.push(completedStrokesRef.current.map((s) => s.slice()))
+    if (stack.length > 30) {
+      stack.shift()
+      strokeStack.shift()
+    }
     historyIndexRef.current = stack.length - 1
     setHistoryVersion((value) => value + 1)
   }, [])
@@ -229,6 +1297,7 @@ export default function DrawingView() {
     if (historyIndexRef.current <= 0) return
     historyIndexRef.current -= 1
     context.putImageData(historyRef.current[historyIndexRef.current], 0, 0)
+    completedStrokesRef.current = (strokeHistoryRef.current[historyIndexRef.current] ?? []).map((s) => s.slice())
     setHistoryVersion((value) => value + 1)
   }, [])
 
@@ -238,6 +1307,7 @@ export default function DrawingView() {
     if (historyIndexRef.current >= historyRef.current.length - 1) return
     historyIndexRef.current += 1
     context.putImageData(historyRef.current[historyIndexRef.current], 0, 0)
+    completedStrokesRef.current = (strokeHistoryRef.current[historyIndexRef.current] ?? []).map((s) => s.slice())
     setHistoryVersion((value) => value + 1)
   }, [])
 
@@ -261,6 +1331,10 @@ export default function DrawingView() {
 
   const canUndo = useMemo(() => historyIndexRef.current > 0, [historyVersion])
   const canRedo = useMemo(() => historyIndexRef.current < historyRef.current.length - 1, [historyVersion])
+  const sketchGeometry = useMemo(
+    () => analyzeSketchGeometryAndProportions(completedStrokesRef.current, 1024, 640),
+    [historyVersion],
+  )
 
   useEffect(() => {
     return () => {
@@ -274,7 +1348,7 @@ export default function DrawingView() {
   const activeOllamaModel = contextFiles.length > 0 ? visionModel : AUXILIARY_ANALYSIS_MODEL
   const canGenerate = Boolean(prompt.trim()) && !isGenerating && !diagnostics.blockingReason
 
-  const getPoint = (event: React.PointerEvent<HTMLCanvasElement>) => {
+  const getPoint = (event: React.PointerEvent<HTMLCanvasElement>): RawStrokePoint | null => {
     const canvas = canvasRef.current
     if (!canvas) return null
 
@@ -285,6 +1359,9 @@ export default function DrawingView() {
     return {
       x: (event.clientX - rect.left) * scaleX,
       y: (event.clientY - rect.top) * scaleY,
+      pressure: event.pressure > 0 ? event.pressure : 0.5,
+      timestamp: event.timeStamp || performance.now(),
+      width: brushSize,
     }
   }
 
@@ -315,9 +1392,9 @@ export default function DrawingView() {
       context.lineWidth = brushSize
       context.beginPath()
       context.moveTo(point.x, point.y)
+      strokePointsRef.current = [point]
       if (smoothMode && tool === 'brush') {
         snapshotRef.current = context.getImageData(0, 0, canvas.width, canvas.height)
-        strokePointsRef.current = [{ x: point.x, y: point.y }]
       }
     } else {
       // snapshot for shape preview
@@ -334,7 +1411,7 @@ export default function DrawingView() {
     if (tool === 'brush' || tool === 'eraser') {
       context.lineTo(point.x, point.y)
       context.stroke()
-      if (smoothMode && tool === 'brush') strokePointsRef.current.push({ x: point.x, y: point.y })
+      strokePointsRef.current.push(point)
     } else if (snapshotRef.current && dragStartRef.current) {
       context.putImageData(snapshotRef.current, 0, 0)
       context.globalCompositeOperation = 'source-over'
@@ -365,25 +1442,54 @@ export default function DrawingView() {
       canvasRef.current?.releasePointerCapture(event.pointerId)
     }
     if (isDrawing) {
-      // Smooth-mode brush : remplace le tracé brut par une version RDP + Bezier.
+      // Smooth-mode brush : stabilisation cinématique Kalman/ressort + préservation des angles vifs + RDP + Bezier.
       if (smoothMode && tool === 'brush' && snapshotRef.current && strokePointsRef.current.length >= 3) {
         const ctx = contextRef.current
         if (ctx) {
           ctx.putImageData(snapshotRef.current, 0, 0)
-          const simplified = rdp(strokePointsRef.current, smoothEpsilon)
-          const curves = polylineToBeziers(simplified)
-          ctx.globalCompositeOperation = 'source-over'
-          ctx.globalAlpha = brushOpacity
-          ctx.strokeStyle = brushColor
-          ctx.lineWidth = brushSize
-          ctx.beginPath()
-          if (curves.length > 0) {
-            ctx.moveTo(curves[0].start.x, curves[0].start.y)
-            for (const c of curves) {
-              ctx.bezierCurveTo(c.control1.x, c.control1.y, c.control2.x, c.control2.y, c.end.x, c.end.y)
+          const stabilized = stabilizeStrokeKinematics(strokePointsRef.current, {
+            baseWidth: brushSize,
+            baseOpacity: brushOpacity,
+          })
+          // Découpe en sous-chemins aux angles vifs (isCorner) pour éviter que Catmull-Rom n'arrondisse les pointes
+          const subPaths: StabilizedStrokePoint[][] = []
+          let currentSub: StabilizedStrokePoint[] = []
+          for (let i = 0; i < stabilized.points.length; i += 1) {
+            const pt = stabilized.points[i]
+            currentSub.push(pt)
+            if (pt.isCorner && i > 0 && i < stabilized.points.length - 1) {
+              subPaths.push(currentSub)
+              currentSub = [pt]
             }
-            ctx.stroke()
           }
+          if (currentSub.length > 0) subPaths.push(currentSub)
+
+          ctx.globalCompositeOperation = 'source-over'
+          ctx.strokeStyle = brushColor
+          for (const sub of subPaths) {
+            const simplified = rdp(sub, smoothEpsilon)
+            const curves = polylineToBeziers(simplified)
+            if (curves.length > 0) {
+              const meanWidth = sub.reduce((acc, p) => acc + p.width, 0) / sub.length
+              const meanOpacity = sub.reduce((acc, p) => acc + p.opacity, 0) / sub.length
+              ctx.globalAlpha = meanOpacity
+              ctx.lineWidth = meanWidth
+              ctx.beginPath()
+              ctx.moveTo(curves[0].start.x, curves[0].start.y)
+              for (const c of curves) {
+                ctx.bezierCurveTo(c.control1.x, c.control1.y, c.control2.x, c.control2.y, c.end.x, c.end.y)
+              }
+              ctx.stroke()
+            }
+          }
+          completedStrokesRef.current.push(stabilized.points)
+        }
+      } else if (tool === 'brush' && strokePointsRef.current.length > 0) {
+        completedStrokesRef.current.push(strokePointsRef.current.slice())
+      } else if (tool === 'line' && dragStartRef.current && event) {
+        const endPt = getPoint(event)
+        if (endPt) {
+          completedStrokesRef.current.push([dragStartRef.current, endPt])
         }
       }
       pushHistory()
@@ -407,6 +1513,7 @@ export default function DrawingView() {
     context.globalAlpha = 1
     context.fillStyle = '#091116'
     context.fillRect(0, 0, canvas.width, canvas.height)
+    completedStrokesRef.current = []
     setGeneratedUrl(null)
     setSketchUrl(null)
     pushHistory()
@@ -483,7 +1590,12 @@ export default function DrawingView() {
 
           setProgress('Analyse du croquis par le modele vision...')
           setPhase('Analyse du croquis par IA vision...', 55)
-          const sketchDescription = await analyzeSketchWithVision(sketchBlob, prompt, visionModel)
+          const sketchDescription = await analyzeSketchWithVision(
+            sketchBlob,
+            prompt,
+            visionModel,
+            sketchGeometry.visionPromptGuidance,
+          )
 
           setProgress('Generation du rendu interprete...')
           setPhase('Construction du rendu a partir du brief...', 60)

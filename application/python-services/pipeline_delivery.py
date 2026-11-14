@@ -29,6 +29,8 @@ def valid_mesh(path):
 def preserve_failed_mesh(result, output_dir, run_id):
     if result.get('ok'):return result
     output_dir=Path(output_dir)
+    if run_id and (output_dir.name in {'conversations','3d','output'} or (output_dir/run_id).is_dir()):
+        output_dir=output_dir/run_id
     root=output_dir.parent if output_dir.name in {'work','models'} and output_dir.parent.name==run_id else output_dir
     candidates=[Path(result[k]) for k in ('final_mesh','rejected_mesh','raw_mesh') if isinstance(result.get(k),str)]
     candidates+=sorted(output_dir.glob(run_id+'_*.glb'),key=lambda p:p.stat().st_mtime,reverse=True)

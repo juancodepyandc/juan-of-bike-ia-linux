@@ -291,7 +291,7 @@ def make_judge(config, paths):
     if module in {"video", "animation"}:
         from .temporal_judges import VideoJudge, AnimationJudge
         return VideoJudge(ClipJudge(paths["clip"])) if module == "video" else AnimationJudge()
-    if module in {"code", "cyber", "cowork"}:
+    if module in {"code", "cyber", "cowork", "business", "simulator"}:
         sandbox = Sandbox(config["python_image"], config["sandbox_timeout"])
         sandbox.check()
         return CodeJudge(sandbox)

@@ -270,14 +270,18 @@ def execute_preference_cycle(c, cycle_number=1):
                     if tracked_spec:
                         chosen, beaten, dominance_info = dominance_select(samples, tracked_spec)
                         if chosen is None:
-                            status.flush(preference_skipped=dominance_info.get("raison"))
-                            continue
-                        winner = chosen
-                        # Un négatif que le gagnant domine encode une amélioration
-                        # sur TOUTES les métriques suivies. À défaut, on garde le
-                        # pire échantillon, invalide compris: un rendu raté reste
-                        # une supervision, il ne faut pas le jeter.
-                        loser = beaten or ranked[0]
+                            if c["module"] in TEXT_MODULES and ranked and ranked[0]["judge"].get("score", 1.0) < 1.0 and (c.get("oracle_teaching") or len(ranked) >= 1):
+                                loser, winner = ranked[0], ranked[-1]
+                            else:
+                                status.flush(preference_skipped=dominance_info.get("raison"))
+                                continue
+                        else:
+                            winner = chosen
+                            # Un négatif que le gagnant domine encode une amélioration
+                            # sur TOUTES les métriques suivies. À défaut, on garde le
+                            # pire échantillon, invalide compris: un rendu raté reste
+                            # une supervision, il ne faut pas le jeter.
+                            loser = beaten or ranked[0]
                     else:
                         if len(ranked) < 2 or not ranked[-1]["judge"].get("valid"):
                             continue
@@ -332,6 +336,59 @@ def execute_preference_cycle(c, cycle_number=1):
                                                "ecart_score": dominance_info.get("ecart_score"),
                                                "raison": dominance_info.get("raison")}
                     records.append(record)
+                if c["module"] == "3d":
+                    by_tid: dict[str, tuple[dict, Path | None]] = {
+                        r["task_id"]: (r, None) for r in records if r.get("task_id")
+                    }
+                    runs_root = Path(c["state_dir"]) / "runs"
+                    if runs_root.is_dir():
+                        for prev_pref in sorted(runs_root.glob("3d-*/preferences/preferences.json"), reverse=True):
+                            if prev_pref.parent == pref_dir:
+                                continue
+                            for prev_rec in read_json(prev_pref, []):
+                                tid = prev_rec.get("task_id")
+                                tname = prev_rec.get("tensors")
+                                if not tid or not tname:
+                                    continue
+                                src_tensor = prev_pref.parent / tname
+                                if not src_tensor.is_file():
+                                    continue
+                                prev_gap = float(prev_rec.get("chosen_score", 0.0)) - float(prev_rec.get("rejected_score", 0.0))
+                                if prev_gap <= 1e-5:
+                                    continue
+                                prev_strict = bool((prev_rec.get("selection") or {}).get("strict"))
+                                prev_key = (prev_strict, round(prev_gap, 6))
+                                if tid in by_tid:
+                                    cur_rec, _ = by_tid[tid]
+                                    cur_gap = float(cur_rec.get("chosen_score", 0.0)) - float(cur_rec.get("rejected_score", 0.0))
+                                    cur_strict = bool((cur_rec.get("selection") or {}).get("strict"))
+                                    if prev_key <= (cur_strict, round(cur_gap, 6)):
+                                        continue
+                                by_tid[tid] = (dict(prev_rec, split="train"), src_tensor)
+                    merged_records = []
+                    for tid, (rec_item, src_tensor) in by_tid.items():
+                        if src_tensor is not None:
+                            dst_tensor = pref_dir / rec_item["tensors"]
+                            if src_tensor.resolve() != dst_tensor.resolve():
+                                shutil.copy2(src_tensor, dst_tensor)
+                        merged_records.append(rec_item)
+                    records = merged_records
+                elif c["module"] in TEXT_MODULES and len(records) < c.get("minimum_preference_pairs", 4):
+                    existing_tids = {r.get("task_id") for r in records if r.get("task_id")}
+                    runs_root = Path(c["state_dir"]) / "runs"
+                    if runs_root.is_dir():
+                        for prev_pref in sorted(runs_root.glob(f"{c['module']}-*/preferences/preferences.json"), reverse=True):
+                            if prev_pref.parent == pref_dir:
+                                continue
+                            for prev_rec in read_json(prev_pref, []):
+                                tid = prev_rec.get("task_id")
+                                if not tid or tid in existing_tids:
+                                    continue
+                                if float(prev_rec.get("chosen_score", 0.0)) - float(prev_rec.get("rejected_score", 0.0)) <= 1e-5:
+                                    continue
+                                if prev_rec.get("chosen") and prev_rec.get("rejected"):
+                                    records.append(dict(prev_rec, split="train"))
+                                    existing_tids.add(tid)
                 if len(records) < c.get('minimum_preference_pairs',2):
                     raise RuntimeError("Pas assez de préférences fiables sur les essais générés. Les objets et scores restent disponibles dans self_play ; augmenter les sujets/essais.")
                 # A validation set made from the last successful family can be

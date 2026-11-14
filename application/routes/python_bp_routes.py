@@ -1144,8 +1144,9 @@ def _resolve_tunnel_url_path():
     import pathlib
     workspace = pathlib.Path(WORKSPACE).resolve()
     repo_root = workspace.parent if workspace.name == "application" else workspace
+    tunnel_dir = repo_root / "interface" / "tunnel"
     for filename in ("tunnel.txt", "tunnel_url.txt"):
-        for directory in dict.fromkeys((repo_root, workspace)):
+        for directory in dict.fromkeys((tunnel_dir, repo_root, workspace)):
             candidate = directory / filename
             if candidate.is_file():
                 return candidate

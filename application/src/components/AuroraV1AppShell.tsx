@@ -29,6 +29,7 @@ import { Settings } from 'lucide-react'
 import { useAppStore } from '../stores/appStore.ts'
 import type { ModuleId } from '../types/app.ts'
 import AuroraAmbientField from './AuroraAmbientField.tsx'
+import ReinforcedModelBar from './ReinforcedModelBar.tsx'
 
 // v82s-studio iter13 : petit personnage vivant (v10 SVG) en bas de sidebar.
 // Lazy → réutilise le chunk `avatars` déjà splitté.
@@ -165,14 +166,12 @@ function AmbientBackdrop({ tint }: { tint: string }) {
 }
 
 function TopBar({ activeModule, tint }: { activeModule: ModuleId; tint: string }) {
-  const mainModel = useAppStore((s) => s.mainModel)
   const services = useAppStore((s) => s.services)
   const runtimeServices = useAppStore((s) => s.runtimeServices)
   const ollamaOk = services?.ollama || runtimeServices?.ollama?.running || false
   const entry = SIDE_MODULES.find((m) => m.id === activeModule)
   const moduleLabel = entry?.label ?? activeModule
   const moduleId = String(activeModule).toUpperCase()
-  const modelShort = mainModel.split('/').pop() || mainModel
   return (
     <div className="aurora-v1-topbar" style={{
       height: 56, padding: '0 22px',
@@ -221,15 +220,16 @@ function TopBar({ activeModule, tint }: { activeModule: ModuleId; tint: string }
 
       <div style={{ flex: 1 }} />
 
-      {/* Status cluster — real values */}
+      {/* Status cluster — Sélecteur Modèle de base / Modèle renforcé sans jargon technique */}
       <div style={{
-        display: 'flex', alignItems: 'center', gap: 16,
+        display: 'flex', alignItems: 'center', gap: 14,
         fontFamily: 'var(--font-mono, ui-monospace, monospace)', fontSize: 11,
         color: 'var(--fg-dim, #aaa)',
       }}>
+        <ReinforcedModelBar activeModule={activeModule} />
         <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
           <PulseDot color={ollamaOk ? 'oklch(0.74 0.13 145)' : 'var(--fg-mute, #777)'} size={6} />
-          ollama:{modelShort}
+          Exécution locale PC
         </span>
         <span style={{ color: tint }}>● {moduleLabel.toLowerCase()}</span>
       </div>
