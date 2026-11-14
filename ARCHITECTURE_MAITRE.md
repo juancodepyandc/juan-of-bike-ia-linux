@@ -1,6 +1,6 @@
 # Aurora — document maître d’architecture, d’exploitation et d’amélioration
 
-**Référence documentaire unique. Mise à jour ciblée : 12 novembre 2026. Inventaire initial : 24 septembre 2026. Langue : français.**
+**Référence documentaire unique. Mise à jour ciblée : 14 novembre 2026. Inventaire initial : 24 septembre 2026. Langue : français.**
 
 Ce fichier réunit AuroraIA, Aurora Remote CLI et le dépôt de découverte `aurora-live`. Le mode « standard » désigne ici l’application native Tauri et son interface web habituelle ; il ne faut pas le confondre avec le niveau de permissions CLI `STANDARD`.
 
@@ -926,6 +926,35 @@ Le pipeline affiche la durée observée de chaque sous-étape, « s/pas mesuré 
 - `tsc --noEmit` et `vite build` réussissent.
 
 **Non établi.** Aucune génération FLUX.2 réelle n'a été faite ici (ni GPU, ni ComfyUI, ni poids). L'effet sur l'image produite doit être vérifié sur le PC avec la demande du vase. La présence d'aperçus latents dépend de l'option `--preview-method` du serveur ComfyUI. Le relais WebSocket `/ws` par le tunnel n'a pas été essayé. La qualité perçue de la nouvelle scène n'est pas mesurée.
+
+### 1.39 Réunion du poste local et de GitHub sur `main` — 14 novembre 2026
+
+**Constat mesuré.** Le dossier `/home/juan/AuroraIA`, d'où l'application est lancée, était resté sur le commit `4baddbd` : 76 commits de retard sur `origin/main`, avec 368 fichiers modifiés et non commités (travail du 19 octobre au 8 novembre). L'hologramme, les écrans de génération synchronisés (§ 1.37) et la correction de dérive du module Image (§ 1.38) étaient publiés sur GitHub mais absents du poste : c'est la cause de « l'hologramme n'est pas présent » et de « tout n'est pas sur le main ».
+
+**Réalisé.** Instantané du travail local (`934972d`, étiquette locale `sauvegarde/local-avant-fusion`), puis fusion de `origin/main` (`9b206b4`) et du README et de la licence ajoutés le jour même (`36666fd`). Quarante-trois fichiers en conflit résolus. L'état d'exécution `auto_rl/state/`, les preuves locales de l'activation MCP et les vues d'organisation faites de liens symboliques (`interface/*`, `mcp/<domaine>/*`) sont ignorés, pas versionnés. La réorganisation locale de la racine est conservée : `audit/`, `tools/`, `kaggle_sync/`, `_design/` vivent sous `scripts/`, les lanceurs Windows sous `scripts/ops/` (leurs chemins `%~dp0` sont corrigés), l'extension Chrome sous `interface/extension/extension_chrome/`. Cinq scripts d'audit écrasés par ce déplacement sont restaurés.
+
+**Arbitrages.**
+- Chiffres jamais mesurés : la version locale du registre des modèles renforcés, du rapport avant/après et des barres de modèle affichait des valeurs écrites en dur (« 70,66 → 98,40 », métriques de rig, « Champion Matrice 7-Spécialistes »). La version de GitHub, qui n'affiche que le mesuré ou « non mesuré », est retenue. Sur ce poste, `get_reinforced_overview()` rend les 12 modules en `candidate_not_promoted` : aucun adaptateur n'a franchi la porte de promotion, le modèle de base sert partout.
+- `auto_rl/kaggle_multi_module_testbench.py` produisait des tenseurs aléatoires présentés comme poids entraînés (`torch.randn((32, 256)) * 0.02`) ; il reste retiré et `cloud_worker` échoue avec la raison réelle.
+- La porte d'audit `judge_independent_holdout_evidence` n'a plus qu'une définition (`agi_core/judge_ratchet.py`) ; `agi_core/anti_hallucination_guard.py` la réexporte et le test vérifie l'identité des deux chemins d'import.
+- Intention du module Image : les deux contrats sont conservés (verrou de sujet et création neuve de GitHub, référence explicite et direction de style du poste). Les deux côtés décident encore par listes d'expressions ; le remplacement par une lecture structurée de la demande reste à faire.
+
+**Défauts déjà présents dans le travail local, révélés par les suites puis corrigés.** Sur le poste, 15 tests échouaient avant la fusion ; la branche GitHub n'en avait aucun.
+- `bridge_server._ext_default_model` comptait le swap (64 Go) comme capacité et retenait des poids de 51 Go sur une machine de 30 Go de RAM et 16 Go de VRAM. Un modèle doit maintenant tenir dans RAM + VRAM mesurées.
+- `cli_doctor` : cache matériel initialisé à 0 alors que l'horloge monotone peut être plus basse que la fenêtre ; `ts` vaut désormais `None` avant la première mesure.
+- `mesh_taubin.taubin_smooth` annonçait un succès après avoir ramené toute la surface à sa position d'origine. La réparation des plis est bornée à 5 % des sommets (`MAX_CLAMPED_VERTEX_FRACTION`), le résultat dit ce qui a été épinglé, et un test couvre la réparation locale.
+- `livraison_organisee` : le matériau du fichier « géométrie seule » était teinté et lu comme une couleur ; il est strictement neutre.
+- `auto_rl/strategy.py` : le délai du chien de garde avait été porté à 7 200 s pour tous les modules ; seul le 3D garde la valeur longue.
+- `pbr_cartography.py` utilisait `re` sans l'importer.
+- Deux tests énonçaient un contrat faux ou incomplet et sont réécrits : un module n'est servi « renforcé » qu'après promotion officielle ; un sous-agent qui n'a exécuté aucun outil concret est refusé par l'audit de rigueur.
+
+**Vérifié le 14 novembre sur le poste (Linux, Python 3.12, Node 24).** `pytest tests_agi tests_auto_rl` : 873 réussis, 2 ignorés ; `tsc --noEmit` : aucune erreur ; `npm run test:image-fidelity` : 8/8 ; `npm run test:fx` : 53/53 ; `doc_master.py` et `--check-code` : concordants après régénération du catalogue (2 470 sources).
+
+**Non établi et défauts connus.**
+- Les deux tests ignorés de `tests_agi/test_unbounded_styles_and_3d_agi_orchestrator.py` : l'un compare des seuils à la sortie d'un LLM local vivant (verdict variable), l'autre révèle que `pbr_cartography` laisse à 0 la métallicité des veines dorées. Les modules `universal_style_engine.py` et `pbr_cartography.py` décident par mots du prompt et par seuils de couleur ; ils sont à reprendre.
+- `application/python-services/representative_judge_oracle.py` compte 41 498 lignes, dont des juges propres à un sujet (cœur imprimable, vase bicolore) ; il n'est importé par aucun chemin de production.
+- Aucune génération réelle n'a été rejouée après la fusion ; le build web et le binaire natif doivent être reconstruits et l'application relancée pour que l'interface fusionnée soit celle que l'utilisateur voit.
+- La CI GitHub (Ubuntu, Windows, macOS) n'a pas encore tourné sur l'arbre fusionné.
 
 <a id="ensemble"></a>
 ## 2. Vue d’ensemble
@@ -8401,13 +8430,104 @@ See `.claude/agents/cowork-lead.md` and `.claude/agents/cowork-connector-keeper.
 
 <!-- AURORA_EXPORT {"repo": "AuroraIA", "path": "README.md"} -->
 ``````````markdown
-# AuroraIA
+# AuroraIA (juan of bike IA)
 
-La documentation de l’application, du CLI, du tunnel, des moteurs, des agents et des améliorations est centralisée dans [ARCHITECTURE_MAITRE.md](ARCHITECTURE_MAITRE.md).
+Studio d'IA **local** : une seule interface pour discuter, coder, générer des images et de la 3D, et utiliser la voix, sur ta propre machine, sans dépendre du cloud. L'application existe en version native (Tauri), en version web (via tunnel) et en terminal (CLI). La documentation est rédigée en français.
 
-Toute IA intervenant sur le projet commence par [AGENTS.md](AGENTS.md). Les limites, les preuves et les priorités sont explicites dans le maître.
+> **État du projet : jeune, en beta, maintenu par une seule personne.** Développé et testé surtout sous Linux (scripts Windows fournis). Les moteurs d'image et de 3D demandent une carte NVIDIA ; le développement se fait sur une RTX 5070 Ti de 16 Go, les besoins minimaux n'ont pas été mesurés.
 
-Ce README est un export de compatibilité ; sa source se trouve dans le maître. La consolidation n’installe aucun modèle et ne démarre aucun service.
+## Les trois dépôts
+
+Le projet est découpé en trois dépôts. C'est un seul et même projet.
+
+| Dépôt | Rôle |
+|---|---|
+| **juan-of-bike-ia-linux** (celui-ci) | Application, serveur (« bridge »), missions, serveurs MCP |
+| [aurora-remote-cli](https://github.com/juancodepyandc/aurora-remote-cli) | Client terminal `jobia` (local ou distant), paquet `jobia-cli` |
+| [aurora-live](https://github.com/juancodepyandc/aurora-live) | Publie l'état et l'adresse du tunnel (pas de moteur) |
+
+## Ce que contient ce dépôt
+
+- `application/` : interface React + Vite + Three.js, enveloppe native Tauri, serveur bridge et services Python (reconnaissance vocale `faster-whisper`, synthèse `Kokoro`, génération d'image et de 3D).
+- `agi_core/` : système de missions avec journal durable, checkpoints et reprise après arrêt.
+- `mcp/` : serveurs MCP par domaine (`3d`, `business`, `cloud`, `code`, `core`, `cowork`, `cyber`, `image`, `learning`, `video`, `voice`).
+- `interface/extension/extension_chrome/` : extension de navigateur de connexion.
+- `auto_rl/`, `scripts/kaggle_sync/`, `notebooks/` : boucle d'entraînement et d'évaluation.
+- `tests_agi/`, `tests_auto_rl/` : tests Python (CI sur Ubuntu, Windows et macOS, Python 3.10 et 3.13).
+
+Les poids de modèles ne sont pas dans le dépôt. Chaque modèle (LLM via Ollama, FLUX.2, TRELLIS.2, etc.) a **sa propre licence**, à vérifier avant tout usage.
+
+## Démarrage rapide
+
+Prérequis : Python 3, Node.js, [Ollama](https://ollama.com), et pour l'image/3D un ComfyUI et une carte NVIDIA.
+
+```bash
+# dépendances des services Python
+pip install -r application/python-services/requirements.txt
+
+# lancer l'ensemble (Linux)
+./start-aurora.sh            # Windows : scripts\ops\start-aurora.bat
+
+# ou, depuis la racine, en développement
+npm run dev                  # application native (Tauri)
+npm run dev:web              # interface web seule (Vite)
+npm run build                # build web
+npm run tauri:build          # build natif
+```
+
+Ports utilisés par défaut : bridge `3001`, daemon de missions `3002`, Ollama `11434`, ComfyUI `8188`.
+
+## CLI (`jobia`)
+
+Le CLI est dans le dépôt [aurora-remote-cli](https://github.com/juancodepyandc/aurora-remote-cli) (Python ≥ 3.10).
+
+```bash
+git clone https://github.com/juancodepyandc/aurora-remote-cli
+cd aurora-remote-cli && ./install.sh
+jobia                                          # interface plein écran
+jobia connect --server https://ADRESSE_DU_SERVEUR
+jobia doctor --remote --json
+jobia mission "Inspecte ce projet et prépare un plan"
+jobia missions list | status ID | watch ID | stop ID | resume ID
+```
+
+## Tests
+
+```bash
+python -m pytest tests_agi tests_auto_rl -q    # tests Python
+npm --prefix application run test:fx           # tests d'interface
+npm --prefix application run typecheck         # types TypeScript
+```
+
+## Documentation
+
+- [`ARCHITECTURE_MAITRE.md`](ARCHITECTURE_MAITRE.md) : document maître (architecture, routes, missions, CLI, tunnel, priorités d'amélioration).
+- [`AGENTS.md`](AGENTS.md) : règles de travail du dépôt.
+- Vérifier que le document maître est à jour : `python3 scripts/documentation/doc_master.py --check-code`.
+
+## Sécurité
+
+Le bridge peut exposer des fichiers, des commandes et des moteurs. L'audit complet des routes (authentification, origine, exposition du tunnel) est **en cours** et décrit dans la section « Constats et priorités » du document maître. **N'ouvre pas le tunnel à des tiers** tant que ce chantier n'est pas terminé. Pour signaler un problème, ouvre une issue sans y mettre de secret.
+
+## Branches
+
+- `main` : branche de référence.
+- `claude/*` : branches de travail, déjà intégrées à `main`.
+- `bolt*`, `perf/aurora-cowork-bubble-memo-*` : essais d'optimisation du rendu du chat (mémoïsation de `ChatBubble` et `ReactMarkdown`), en partie intégrés à `main`, à nettoyer.
+- `feature/enforce-think-blocks-*` : test d'obligation de blocs `<think>` pour la génération de code, non fusionné.
+
+## Contribuer
+
+Les issues et les pull requests sont les bienvenues, en français ou en anglais. Lis d'abord `ARCHITECTURE_MAITRE.md` et `AGENTS.md`, et mets à jour le document maître quand une architecture ou un contrat change.
+
+## Licence
+
+Code original : [MIT](LICENSE).
+
+Composants tiers, qui gardent leur propre licence :
+
+- `application/engineering_viewer_assets/` : three.js, MIT.
+- `application/python-services/_hy3dpaint/` : Tencent Hunyuan 3D 2.1 Community License (non OSI ; le texte précise qu'elle ne s'applique pas dans l'UE, au Royaume-Uni et en Corée du Sud).
 ``````````
 <!-- /AURORA_EXPORT -->
 

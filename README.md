@@ -19,8 +19,8 @@ Le projet est découpé en trois dépôts. C'est un seul et même projet.
 - `application/` : interface React + Vite + Three.js, enveloppe native Tauri, serveur bridge et services Python (reconnaissance vocale `faster-whisper`, synthèse `Kokoro`, génération d'image et de 3D).
 - `agi_core/` : système de missions avec journal durable, checkpoints et reprise après arrêt.
 - `mcp/` : serveurs MCP par domaine (`3d`, `business`, `cloud`, `code`, `core`, `cowork`, `cyber`, `image`, `learning`, `video`, `voice`).
-- `extension_chrome/` : extension de navigateur de connexion.
-- `auto_rl/`, `kaggle_sync/`, `notebooks/` : boucle d'entraînement et d'évaluation.
+- `interface/extension/extension_chrome/` : extension de navigateur de connexion.
+- `auto_rl/`, `scripts/kaggle_sync/`, `notebooks/` : boucle d'entraînement et d'évaluation.
 - `tests_agi/`, `tests_auto_rl/` : tests Python (CI sur Ubuntu, Windows et macOS, Python 3.10 et 3.13).
 
 Les poids de modèles ne sont pas dans le dépôt. Chaque modèle (LLM via Ollama, FLUX.2, TRELLIS.2, etc.) a **sa propre licence**, à vérifier avant tout usage.
@@ -34,7 +34,7 @@ Prérequis : Python 3, Node.js, [Ollama](https://ollama.com), et pour l'image/3D
 pip install -r application/python-services/requirements.txt
 
 # lancer l'ensemble (Linux)
-./start-aurora.sh            # Windows : start-aurora.bat
+./start-aurora.sh            # Windows : scripts\ops\start-aurora.bat
 
 # ou, depuis la racine, en développement
 npm run dev                  # application native (Tauri)
