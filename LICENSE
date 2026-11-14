@@ -19,9 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-Third-party components keep their own licenses (see "Licence" in README.md):
-- application/engineering_viewer_assets/  : three.js, MIT (see LICENSE in that folder)
-- application/python-services/_hy3dpaint/ : Tencent Hunyuan 3D 2.1 Community License (see LICENSE in that folder)
