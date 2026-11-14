@@ -12,6 +12,13 @@ for _p in (str(_REPO), str(_REPO / "application" / "python-services")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+import pytest
+
+# The engines under test need OpenCV and SciPy, which the lightweight contract CI does not install.
+# Skipping the module there is honest; a collection error would stop every other test from running.
+for _dependency in ("cv2", "scipy"):
+    pytest.importorskip(_dependency)
+
 import numpy as np
 from PIL import Image
 import trimesh
