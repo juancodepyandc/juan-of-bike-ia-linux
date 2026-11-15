@@ -200,10 +200,22 @@ def depart_nature(relief, taille: float) -> dict[str, Any] | None:
             "lieu": "replat sec près du centre"}
 
 
-CONSTRUCTEURS = {"interieur": construire_interieur, "ville": construire_ville, "nature": construire_nature}
+def construire_ville_ou_monde(programme: dict, graine: int, fabrique) -> dict[str, Any]:
+    """Une ville est livrée comme un MONDE à visiter (campagne autour, maisons où l'on entre) ;
+    AURORA_MONDE_VILLE_SEULE=1 rend la ville seule."""
+    import os
+    if os.environ.get("AURORA_MONDE_VILLE_SEULE") == "1":
+        return construire_ville(programme, graine, fabrique)
+    from monde.univers import construire_monde
+    return construire_monde(programme, graine, fabrique)
+
+
+CONSTRUCTEURS = {"interieur": construire_interieur, "ville": construire_ville_ou_monde, "nature": construire_nature}
 # Éclairage d'environnement par type de scène (cartes HDRI du poste) : sans lui, les rendus f3d sortaient
 # sombres (luminance moyenne 52 contre 74 avec « city », 0 % de blanc pur dans les deux cas, 15/11/2026).
 HDRI = {"interieur": "interior", "ville": "city", "nature": "courtyard"}
+# Résolution des textures par type : un monde (ville + campagne + maisons) pesait 40 Mo d'images à 512 px.
+RESOLUTION = {"interieur": 512, "ville": 256, "nature": 384}
 VUES = {"interieur": ("plan", "aerienne_sud_est", "aerienne_nord_ouest"),
         "ville": ("plan", "aerienne_sud_est", "aerienne_nord_ouest", "rasante"),
         "nature": ("plan", "aerienne_sud_est", "rasante")}
@@ -239,11 +251,13 @@ def composer(programme: dict, racine_run: str | Path, *, graine: int | None = No
     scene: Scene = construit["scene"]
     scene.extras = {"programme": programme, "graine": graine, "depart": construit.get("depart")}
     modele = racine_run / "modele"
-    export = export_gltf.exporter(scene, modele / "scene_monde.glb")
+    resolution = RESOLUTION.get(type_scene, 512)
+    export = export_gltf.exporter(scene, modele / "scene_monde.glb", resolution=resolution)
     glb_maquette = None
     if construit.get("maquette") is not None:
         construit["maquette"].extras = scene.extras
-        glb_maquette = str(export_gltf.exporter(construit["maquette"], modele / "scene_maquette.glb")["chemin"])
+        glb_maquette = str(export_gltf.exporter(construit["maquette"], modele / "scene_maquette.glb",
+                                                resolution=resolution)["chemin"])
     rendus = None
     if rendre:
         cible = glb_maquette or export["chemin"]

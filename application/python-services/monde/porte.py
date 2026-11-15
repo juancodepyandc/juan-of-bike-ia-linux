@@ -47,6 +47,9 @@ DURS: dict[str, str] = {
     "vegetation_dans_eau": "végétation posée dans l'eau",
     "objets_sur_chaussee": "arbres ou mobilier sur la chaussée",
 }
+# Plafond de triangles par type de scène : un monde (ville, campagne, maisons meublées) pèse légitimement
+# plus qu'une pièce ; un seul plafond aurait fini par refuser tous les mondes quand le cliquet se serre.
+FACTEUR_TRIANGLES = {"interieur": 0.5, "ville": 1.6, "nature": 1.0}
 MESURES_REQUISES = {
     "interieur": ("chevauchements", "hors_piece", "portes_bloquees", "inaccessibles", "pieces_isolees",
                   "meubles_demandes", "meubles_places"),
@@ -137,8 +140,10 @@ def juger(type_scene: str, mesures: dict[str, Any], export: dict[str, Any] | Non
             raisons.append(f"parts de zones écartées de {float(mesures['ecart_zones']):.0%} > {s['ecart_zones_max']:.0%}")
     if not export or not export.get("octets"):
         raisons.append("fichier glTF absent ou vide")
-    elif int(export.get("triangles", 0)) > s["triangles_max"]:
-        raisons.append(f"{export['triangles']} triangles > {s['triangles_max']}")
+    else:
+        plafond = int(s["triangles_max"] * FACTEUR_TRIANGLES.get(type_scene, 1.0))
+        if int(export.get("triangles", 0)) > plafond:
+            raisons.append(f"{export['triangles']} triangles > {plafond}")
     if not rendus or not rendus.get("rendus"):
         raisons.append("aucun rendu f3d : la scène n'a pas été vérifiée")
     else:

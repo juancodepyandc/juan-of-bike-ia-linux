@@ -179,3 +179,31 @@ test('a real generated house: start inside on the floor, walls hold on a long wa
   }
   assert.ok(ouverture > 0.5, 'au moins une porte s’est ouverte pendant la visite')
 })
+
+// ── Un vrai monde (village dans sa campagne, maisons visitables) : on entre par la porte d'une maison ──────
+const MONDE = '/home/juan/AuroraIA/application/output/3d/essais/monde/integration/monde_village/modele/scene_monde.glb'
+
+test('a real generated world: start outside facing a visitable house, walk in through its front door', async (t) => {
+  const fs = await import('node:fs')
+  if (!fs.existsSync(MONDE)) {
+    t.skip('monde de démonstration absent (python -m monde.composer --programme …village… --sortie …/monde_village)')
+    return
+  }
+  const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js')
+  const gltf = await new Promise((ok, ko) => new GLTFLoader().parse(sansTextures(fs.readFileSync(MONDE)), '', ok, ko))
+  const racine = gltf.scene
+  racine.updateMatrixWorld(true)
+  const depart = lireDepart(racine)
+  assert.ok(depart && /maison visitable/.test(depart.lieu || ''), `départ : ${JSON.stringify(depart)}`)
+  const m = new Marcheur(racine)
+  m.placer(depart)
+  assert.ok(m.auSol, 'départ posé sur le sol de la parcelle')
+  const x0 = m.pieds.x
+  const z0 = m.pieds.z
+  const [dx, dz] = depart.direction
+  marcher(m, { avant: true }, 6)                                       // 9 m tout droit : la porte est à 4 m
+  const parcouru = (m.pieds.x - x0) * dx + (m.pieds.z - z0) * dz
+  assert.ok(parcouru > 5.0, `resté dehors, arrêté à ${parcouru.toFixed(2)} m (porte à 4 m)`)
+  assert.ok(Math.max(...m.ouvertures()) > 0.5, 'la porte d’entrée s’est ouverte')
+  assert.ok(Math.abs(m.pieds.y - depart.y) < 0.4, `hauteur dans la maison : ${m.pieds.y}`)
+})

@@ -15,11 +15,11 @@
    "working_tree_drafts_included": false
   }
  },
- "source_files": 2550,
- "source_lines": 926840,
+ "source_files": 2552,
+ "source_lines": 927277,
  "static_route_declarations": 719,
  "by_repository": {
-  "AuroraIA": 2229,
+  "AuroraIA": 2231,
   "aurora-remote-cli": 317,
   "aurora-live": 4
  },
@@ -4153,8 +4153,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/python-services/monde/composer.py",
-   "sha256": "57d46cc0b39c911ed5e6539e5fd0e14a3d28c5f33fa54bd8015dc3b8d9ea694c",
-   "lines": 307,
+   "sha256": "25745fc31696bc8788c42e0f03564cf918ac56b9b0c1937885cd06e14f94694c",
+   "lines": 321,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -4225,8 +4225,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/python-services/monde/porte.py",
-   "sha256": "8b80306a4eb58a2f21141c59817b071738a0b3326505c81faf14804beba49015",
-   "lines": 158,
+   "sha256": "778beae52c7eb6a026ee775a9db3b22e8744f48fa8e28563c1265d10245e3904",
+   "lines": 163,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -4248,9 +4248,17 @@
   },
   {
    "repo": "AuroraIA",
+   "path": "application/python-services/monde/univers.py",
+   "sha256": "442020fe841ba0dd68e99fde9fbb79b9a2536b6166cd0ca11975c5a61b033d4f",
+   "lines": 285,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
    "path": "application/python-services/monde/ville.py",
-   "sha256": "7fa75bbfa6f8ebb88fde6b28ea1226d6e1eded1a8a8bb7464afc6d501aab6ca6",
-   "lines": 1857,
+   "sha256": "5a1a11fa7dcae92b2ad779fc9daae5027e63893ea7e262554e3570b2d5bdcd80",
+   "lines": 1861,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -11020,8 +11028,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/scripts/test-scene-walk.mjs",
-   "sha256": "9e67b6dfd048caceb6915a342f2871be5783fb6ebca61ba240ea050d2aa129e1",
-   "lines": 181
+   "sha256": "5dbe3aceea79dea7aff51a0f6b1c4cd19ba13ace9b351ea84638e47afa0a774c",
+   "lines": 209
   },
   {
    "repo": "AuroraIA",
@@ -21222,6 +21230,14 @@
    "path": "tests_agi/test_monde_programme.py",
    "sha256": "908ae103af2173738303648b8708b17f457b7729b460b6a56b19adf567084714",
    "lines": 288,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "tests_agi/test_monde_univers.py",
+   "sha256": "2e718c6fbaac00dfce3b7d6bf1b17bf002414db3857ebe120142eeef5a7045c6",
+   "lines": 101,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },

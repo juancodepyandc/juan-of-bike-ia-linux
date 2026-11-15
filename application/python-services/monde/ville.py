@@ -179,6 +179,9 @@ class Batiment:
     commerce: bool
     forme: str
     base: float = HAUT_TROTTOIR
+    # maison VISITABLE (monde.univers) : un logement planifié et meublé, aux vrais murs percés, remplace
+    # l'enveloppe ; seule la couverture reste dessinée ici
+    visitable: bool = False
 
     @property
     def emprise(self) -> Polygon:
@@ -1623,8 +1626,9 @@ def maillage_batiment(b: Batiment, graine: int = 0) -> list[Partie]:
     roles = {"terrasse": "toit_terrasse", "toiture": b.toiture, "uni": uni}
     par_mat: dict[str, list[trimesh.Trimesh]] = defaultdict(list)
     for v in b.volumes:
-        for mat, ms in _murs_volume(v, b, b.facade).items():
-            par_mat[mat].extend(ms)
+        if not b.visitable:
+            for mat, ms in _murs_volume(v, b, b.facade).items():
+                par_mat[mat].extend(ms)
         for role, ms in _toit_volume(v, b, rng).items():
             par_mat[roles[role]].extend(ms)
     return [Partie(g.fusionner(ms), mat, mat) for mat, ms in par_mat.items() if ms]
