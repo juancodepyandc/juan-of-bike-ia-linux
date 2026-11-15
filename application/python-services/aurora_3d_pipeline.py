@@ -3506,6 +3506,33 @@ def _conception_assemblage(demande: str, run_id: str, output_dir: Path, audit: l
 
 
 _CORPS_PAR_GENRE = {"character", "creature", "humanoid", "quadruped"}
+_PERSONNAGES_PLACES: dict[str, list[dict]] = {}
+
+
+def _livrer_personnages(run_root: Path, places: list[dict], audit: list) -> list[dict]:
+    """Copie chaque personnage placé dans modele/personnages/ : le dossier travail/ peut être purgé,
+    et l'animation par personnage a besoin d'eux après la livraison (15/11/2026)."""
+    if not places:
+        return []
+    import shutil as _sh
+    dossier = Path(run_root) / "modele" / "personnages"
+    dossier.mkdir(parents=True, exist_ok=True)
+    livres = []
+    for p in places:
+        src = Path(str(p.get("glb") or ""))
+        if not src.is_file():
+            continue
+        cible = dossier / f"personnage_{int(p.get('index', len(livres))) + 1}.glb"
+        _sh.copy2(src, cible)
+        ref = Path(str(p.get("reference") or ""))
+        ref_cible = None
+        if ref.is_file():
+            ref_cible = dossier / f"personnage_{int(p.get('index', len(livres))) + 1}_reference{ref.suffix}"
+            _sh.copy2(ref, ref_cible)
+        livres.append({"index": int(p.get("index", len(livres))), "glb": str(cible),
+                       "reference": str(ref_cible) if ref_cible else None})
+    audit.append({"stage": "personnages_livres", "ok": bool(livres), "nombre": len(livres)})
+    return livres
 
 
 def reference_selon_animation(lecture: dict | None, prompt: str, animation: str,
@@ -5574,6 +5601,8 @@ def _run_pipeline_core(prompt: str, run_id: str, *,
                             _peak_vram = max(_peak_vram, float(_ctr.get("peak_vram_gb") or 0.0))
                         if _mc_ok:
                             _mres = _mcg(_multi_chars, str(mesh_path))
+                            # chaque personnage, à sa place dans la scène, pour l'animer seul ensuite
+                            _PERSONNAGES_PLACES[run_id] = [p for p in (_mres.get("personnages") or []) if p.get("glb")]
                             if _mres.get("ok") and mesh_path.is_file():
                                 _tr = {**_mres, "peak_vram_gb": _peak_vram}
                                 audit.append({"stage": "multi_character_trellis", "ok": True, **_tr})
@@ -6940,6 +6969,7 @@ def _run_pipeline_core(prompt: str, run_id: str, *,
                         "audit_trail": audit}
             if livraison.get("ok"):
                 _liv = livraison.get("livraison") or {}
+                _personnages_livres = _livrer_personnages(_run_root, _PERSONNAGES_PLACES.get(run_id) or [], audit)
                 if _liv.get("modele_couleurs"):
                     final_mesh_path = _liv["modele_couleurs"]
                 if _liv.get("mouvement_couleurs"):
@@ -7017,6 +7047,8 @@ def _run_pipeline_core(prompt: str, run_id: str, *,
         "rescued_mesh": rescue["final_mesh"],
         "final_mesh": str(final_mesh_path if not rigged_mesh else rigged_mesh),
         "livraison": (livraison.get("livraison") if isinstance(livraison, dict) else None),
+        # plusieurs personnages reconstruits séparément : chacun livré à sa place (modele/personnages/)
+        "personnages": locals().get("_personnages_livres") or None,
         "textured": _a_de_la_couleur(str(final_mesh_path if not rigged_mesh else rigged_mesh)),
         "initial_score": rescue["initial_score"],
         "final_score": rescue["final_score"],

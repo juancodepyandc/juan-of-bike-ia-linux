@@ -15,11 +15,11 @@
    "working_tree_drafts_included": false
   }
  },
- "source_files": 2498,
- "source_lines": 902651,
+ "source_files": 2500,
+ "source_lines": 903340,
  "static_route_declarations": 719,
  "by_repository": {
-  "AuroraIA": 2177,
+  "AuroraIA": 2179,
   "aurora-remote-cli": 317,
   "aurora-live": 4
  },
@@ -2178,6 +2178,14 @@
   },
   {
    "repo": "AuroraIA",
+   "path": "application/python-services/animation_multi_sujets.py",
+   "sha256": "73794776ca2c1ef42ad089bd9520319849cc5a31fc61db9eca3222c4bf5a9f89",
+   "lines": 427,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
    "path": "application/python-services/anki_export.py",
    "sha256": "86e05124df2bc0e29b73951055f87b3c9cbc1ed00667d59efa943bed4cee1f7b",
    "lines": 139,
@@ -2267,8 +2275,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/python-services/aurora_3d_pipeline.py",
-   "sha256": "e9ce5ad4d1c9dddd99152887a996e5934e349acb35d76c845515b4498f6f883b",
-   "lines": 7345,
+   "sha256": "594e09a586df1b5f333f176f17871f048866af8ad9c51d5424a9e2642790b6e8",
+   "lines": 7377,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -7431,8 +7439,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/python-services/trellis_multi_character.py",
-   "sha256": "0ddc784aa23876c572cdfce8781795d2b18bb95bc2214bb9120c7de7e2cbc255",
-   "lines": 428,
+   "sha256": "ad9893176c17e4babcbb0a3a19b5dc12edf6bf4c0e91f7d8458ab36768101c37",
+   "lines": 463,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -15278,8 +15286,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/views/ModelView.tsx",
-   "sha256": "42a934986cb845465e42fa2482130898c4ea79246c08f40cc5075ef6ab908dce",
-   "lines": 8380
+   "sha256": "404015cb7cb48cbccbea73acc242a680fd4e37201962911859e41b9a5412c045",
+   "lines": 8409
   },
   {
    "repo": "AuroraIA",
@@ -20350,6 +20358,14 @@
    "path": "tests_agi/test_3d_neural_readiness.py",
    "sha256": "93c6b60f8a8c3c067c9635a9b8c2f8e51bdf60a9adf282d313d98e0dc53d5b45",
    "lines": 324,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "tests_agi/test_animation_multi_sujets.py",
+   "sha256": "1f39ed7e8e5ac74396f64744d675520beda180d4e731defee5bfd09cead09f06",
+   "lines": 166,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },

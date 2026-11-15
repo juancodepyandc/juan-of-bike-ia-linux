@@ -189,6 +189,23 @@ def detect_and_crop_characters(ref_png_path: str | Path, out_dir: str | Path, ru
     return results
 
 
+def exporter_personnage_place(source: str | Path, cible: str | Path, scale: float, translation: list[float]) -> None:
+    """Copie le GLB d'un personnage (textures PBR intactes) sous un nœud racine qui le met à sa
+    place dans la scène fusionnée : v' = scale · v + translation, comme dans `merge_character_glbs`."""
+    import glb_io
+    doc, blob = glb_io.load(str(source))
+    scenes = doc.get("scenes") or [{"nodes": list(range(len(doc.get("nodes") or [])))}]
+    scene_index = int(doc.get("scene", 0) or 0)
+    racines = list(scenes[scene_index].get("nodes") or [])
+    doc.setdefault("nodes", []).append({"name": Path(str(cible)).stem, "children": racines,
+                                        "translation": [float(t) for t in translation],
+                                        "scale": [float(scale)] * 3})
+    scenes[scene_index]["nodes"] = [len(doc["nodes"]) - 1]
+    doc["scenes"] = scenes
+    doc["scene"] = scene_index
+    glb_io.save(str(cible), doc, blob)
+
+
 def merge_character_glbs(char_infos: list[dict[str, Any]], out_glb_path: str | Path) -> dict[str, Any]:
     """Assemble les GLB individuels des personnages cote a cote dans un unique
     GLB texturé (atlas PBR 4096x4096 unifie)."""
@@ -212,6 +229,9 @@ def merge_character_glbs(char_infos: list[dict[str, Any]], out_glb_path: str | P
     meshes_f: list[np.ndarray] = []
     meshes_uv: list[np.ndarray] = []
     v_offset = 0
+    # Placement de chaque personnage dans la scène fusionnée (échelle puis translation) : il sert
+    # à livrer chaque personnage À SA PLACE, pour l'animer seul puis le recomposer (15/11/2026).
+    placements: list[dict[str, Any]] = []
 
     for i, info in enumerate(char_infos):
         gpath = info["glb_path"]
@@ -314,9 +334,11 @@ def merge_character_glbs(char_infos: list[dict[str, Any]], out_glb_path: str | P
         vmax = v.max(axis=0)
         cx = 0.5 * (vmin[0] + vmax[0])
         cz = 0.5 * (vmin[2] + vmax[2])
-        v[:, 0] += float(info.get("x_center_rel", 0.0)) - cx
-        v[:, 1] += float(info.get("y_min_rel", 0.0)) - vmin[1]
-        v[:, 2] -= cz
+        translation = [float(info.get("x_center_rel", 0.0)) - cx, float(info.get("y_min_rel", 0.0)) - vmin[1], -cz]
+        v[:, 0] += translation[0]
+        v[:, 1] += translation[1]
+        v[:, 2] += translation[2]
+        placements.append({"index": i, "source": gpath, "scale": scale, "translation": translation})
 
         meshes_v.append(v)
         meshes_f.append(f)
@@ -360,8 +382,10 @@ def merge_character_glbs(char_infos: list[dict[str, Any]], out_glb_path: str | P
             shift = 0.5 * (max_x_left + min_gap - min_x_right)
             for k in range(i + 1):
                 meshes_v[k][:, 0] -= shift
+                placements[k]["translation"][0] -= shift
             for k in range(i + 1, len(meshes_v)):
                 meshes_v[k][:, 0] += shift
+                placements[k]["translation"][0] += shift
 
     all_v = np.concatenate(meshes_v, axis=0)
     all_f_list: list[np.ndarray] = []
@@ -419,10 +443,21 @@ def merge_character_glbs(char_infos: list[dict[str, Any]], out_glb_path: str | P
                 if str(_tp).endswith(".glb"):
                     Path(str(_tp)[:-4] + ".ply").unlink(missing_ok=True)
 
+    personnages = []
+    for place in placements:
+        cible = Path(str(out_glb_path)).with_name(f"{Path(str(out_glb_path)).stem}_personnage_{place['index'] + 1}.glb")
+        try:
+            exporter_personnage_place(place["source"], cible, place["scale"], place["translation"])
+            personnages.append({"index": place["index"], "glb": str(cible),
+                                "reference": str(char_infos[place["index"]].get("ref_path") or ""),
+                                "scale": place["scale"], "translation": place["translation"]})
+        except Exception as exc:  # noqa: BLE001 — la scène fusionnée reste livrée, le manque est dit
+            personnages.append({"index": place["index"], "glb": None, "erreur": repr(exc)[:200]})
     return {
         "ok": True,
         "faces": int(len(all_f)),
         "verts": int(len(all_v)),
         "characters": n,
         "quality": "1024_cascade_multi_entity",
+        "personnages": personnages,
     }

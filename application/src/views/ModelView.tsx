@@ -338,9 +338,34 @@ async function bakeRequestedMotion(options: {
   setProgress: (label: string) => void
   /** the job's own runner: it carries the job's abort signal and cleanup root */
   run: (scriptPath: string, args: string[], options?: { resumeKey?: string }) => Promise<string>
+  /** several characters rebuilt separately, each in place: each gets its own movement */
+  characters?: { glb: string; reference?: string | null }[]
 }): Promise<{ path: string | null; summary: string }> {
   const output = `${options.motionDir}/mouvement_couleurs.glb`
   try { await fsMkdir(options.motionDir) } catch { /* déjà là */ }
+  if (options.characters && options.characters.length >= 2) {
+    // Plusieurs sujets : la scène fusionnée n'est pas UN corps. Chacun est reconnu, animé avec son
+    // propre mouvement, puis recomposé à sa place (animation_multi_sujets.py).
+    try {
+      options.setPhase(`Animation — ${options.characters.length} sujets, chacun son mouvement...`, 90)
+      const args = ['--demande', options.requirements, '--dossier', options.motionDir, '--modele', options.model]
+      for (const character of options.characters) args.push('--personnage', character.glb)
+      for (const character of options.characters) args.push('--reference', character.reference || '')
+      const multiOutput = await options.run(`${options.workspacePath}/python-services/animation_multi_sujets.py`, args, { resumeKey: 'model_ia' })
+      const multi = parsePythonResult<{ ok?: boolean; path?: string; anime?: number; error?: string }>(String(multiOutput || ''))
+      if (multi?.path) {
+        return {
+          path: multi.path,
+          summary: multi.ok
+            ? `${options.characters.length} sujets animés, chacun avec son propre mouvement.`
+            : `Animation partielle (${multi.anime ?? 0}/${options.characters.length}) : ${String(multi.error || '').slice(0, 140)}`,
+        }
+      }
+      return { path: null, summary: `Animation multi-sujets non produite (${String(multi?.error || 'sans résultat').slice(0, 120)}).` }
+    } catch (multiExc) {
+      return { path: null, summary: `Animation multi-sujets en échec (${getErrorMessage(multiExc).slice(0, 120)}).` }
+    }
+  }
   if (options.characterRoute) {
     try {
       options.setPhase('Animation — plan sur le squelette réel...', 90)
@@ -5422,7 +5447,8 @@ export default function ModelView() {
             if (userAnswer) { taskContext.enrichedPrompt = `${taskContext.enrichedPrompt}\n\nPrecision utilisateur: ${userAnswer}`; taskContext.generationPrompt = `${taskContext.generationPrompt}\n\nUser clarification: ${userAnswer}`; userRequirementsPrompt = `${userRequirementsPrompt}\n\nPrecision utilisateur: ${userAnswer}`; historyPrompt = `${historyPrompt}\n\nPrecision: ${userAnswer}` }
           }
           const referenceSupportPlan = await prepareThreeDReferenceSupport({
-            prompt: currentPrompt,
+            // Animation ON : le sujet visé, cherché et répété dans chaque vue est le sujet au repos.
+            prompt: restState ? restState.sujet : currentPrompt,
             intent,
             model: visionModel,
             researchContext: taskContext.researchContext,
@@ -6113,6 +6139,7 @@ export default function ModelView() {
           let auroraAttempted = false
           let auroraFailReason = ''
           let producedButRejected = ''
+          let deliveredCharacters: { glb: string; reference?: string | null }[] = []
           if (!result) {
             // Voie principale: pipeline Aurora complet (TRELLIS.2-4B natif MIT, branche
             // qualite native, materiaux par zones). DreamGaussian ne sert plus que de
@@ -6210,10 +6237,12 @@ export default function ModelView() {
               setProgress('Liberation des modeles Ollama avant la reconstruction 3D...')
               try { await freeGpuBeforeFlux([]) } catch { /* jamais bloquant */ }
               const auroraOutput = await runPythonScript(`${workspacePath}/python-services/aurora_3d_pipeline.py`, auroraArgs, { resumeKey: 'model_ia' })
-              const parsedAurora = parseLastJsonLine(auroraOutput) as unknown as { ok?: boolean; error?: string; textured?: boolean; is_scene?: boolean; final_mesh?: string; scene_glb?: string; composants?: Record<string, { desc?: string; glb?: string; refus?: string | null }> | null; refuses?: { role: string; motif: string }[] | null; orphelins?: { objet: string; appui_manquant: string }[] | null; composition?: { objet: string; liaison?: string; sur?: string; ok: boolean }[] | null; livraison?: Record<string, string> | null; source_web?: { site?: string; url?: string; title?: string } } | null
+              const parsedAurora = parseLastJsonLine(auroraOutput) as unknown as { ok?: boolean; error?: string; textured?: boolean; is_scene?: boolean; final_mesh?: string; scene_glb?: string; composants?: Record<string, { desc?: string; glb?: string; refus?: string | null }> | null; refuses?: { role: string; motif: string }[] | null; orphelins?: { objet: string; appui_manquant: string }[] | null; composition?: { objet: string; liaison?: string; sur?: string; ok: boolean }[] | null; livraison?: Record<string, string> | null; personnages?: { index?: number; glb?: string; reference?: string | null }[] | null; source_web?: { site?: string; url?: string; title?: string } } | null
               if (parsedAurora?.source_web) {
                 setDiscoveredSourceWeb(parsedAurora.source_web)
               }
+              deliveredCharacters = (parsedAurora?.personnages || [])
+                .filter((p): p is { glb: string; reference?: string | null } => typeof p?.glb === 'string' && p.glb.length > 0)
               const deliveredReference = parsedAurora?.livraison?.reference_face
               if (deliveredReference && await fsExists(deliveredReference)) {
                 referenceImagePath = deliveredReference
@@ -6358,7 +6387,7 @@ export default function ModelView() {
               subject: editPlan.continuation ? rigSubject : intent.subjectKind === 'character' ? 'humanoid' : intent.subjectKind === 'creature' ? 'quadruped' : 'none',
               sourceDescription: sourceContext?.description || composeThreeDRequirements(currentPrompt, effectiveHistory),
               characterRoute: editPlan.continuation || isCharacterLike(intent),
-              setPhase, setProgress, run: runPythonScript,
+              setPhase, setProgress, run: runPythonScript, characters: deliveredCharacters,
             })
             if (motion.path) {
               lastMeshPathRef.current = motion.path
@@ -6930,7 +6959,7 @@ export default function ModelView() {
               subject: editPlan.continuation ? rigSubject : intent.subjectKind === 'character' ? 'humanoid' : intent.subjectKind === 'creature' ? 'quadruped' : 'none',
               sourceDescription: sourceContext?.description || composeThreeDRequirements(currentPrompt, effectiveHistory),
               characterRoute: editPlan.continuation || isCharacter,
-              setPhase, setProgress, run: runPythonScript,
+              setPhase, setProgress, run: runPythonScript, characters: deliveredCharacters,
             })
             autoMotionSummary = motion.summary
             if (motion.path) {
