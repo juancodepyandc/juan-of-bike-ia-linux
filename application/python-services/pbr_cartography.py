@@ -30,6 +30,7 @@ branchement ad-hoc lié à un personnage ou à un test particulier :
 from __future__ import annotations
 
 import json
+import os
 import re
 import struct
 from pathlib import Path
@@ -617,6 +618,50 @@ def _prune_disconnected_micro_crumbs(mesh: trimesh.Trimesh) -> int:
     return removed
 
 
+# Loi F0 des conducteurs, en luminance LINÉAIRE de la couleur de base. Un métal n'a pas de
+# diffusion : sa couleur de base EST sa réflectance en incidence normale, et aucun métal courant
+# ne réfléchit moins d'environ 50 % (titane ≈ 0,50, fer ≈ 0,56, chrome ≈ 0,55 ; or, cuivre,
+# aluminium, argent bien au-dessus). Une couleur de base sombre ne peut donc pas être métallique.
+# La rampe démarre plus bas que 0,50 parce que l'albédo d'un générateur garde un peu d'ombrage.
+F0_DIELECTRIQUE_MAX = 0.25
+F0_METAL_MIN = 0.45
+# Calibration globale de la métallicité TRELLIS.2 (déjà appliquée par la voie heuristique) : le
+# générateur prédit ~0,9 sur la peau et le tissu d'une référence de rendu 3D.
+ECHELLE_METAL_GENERATEUR = 0.52
+PLAFOND_METAL = 135.0
+
+
+def _srgb_vers_lineaire(rgb_u8: np.ndarray) -> np.ndarray:
+    c = rgb_u8.astype(np.float32) / 255.0
+    return np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+
+
+def calibrer_orm_fidele(mesh: trimesh.Trimesh) -> dict[str, Any]:
+    """Applique la loi F0 à la métallicité sans toucher ni à l'albédo, ni à la géométrie, ni à la
+    rugosité. Rend ce qui a été mesuré, pour l'audit."""
+    mat = getattr(getattr(mesh, "visual", None), "material", None)
+    bct = getattr(mat, "baseColorTexture", None) if mat is not None else None
+    mrt = getattr(mat, "metallicRoughnessTexture", None) if mat is not None else None
+    if bct is None or mrt is None:
+        return {"cartographie": "fidele", "orm": "absent"}
+    orm = np.asarray(mrt.convert("RGB"), dtype=np.uint8).copy()
+    h, w = orm.shape[:2]
+    albedo = np.asarray(bct.convert("RGB").resize((w, h), Image.BILINEAR), dtype=np.uint8)
+    lin = _srgb_vers_lineaire(albedo)
+    luminance = 0.2126 * lin[..., 0] + 0.7152 * lin[..., 1] + 0.0722 * lin[..., 2]
+    permis = np.clip((luminance - F0_DIELECTRIQUE_MAX) / (F0_METAL_MIN - F0_DIELECTRIQUE_MAX), 0.0, 1.0)
+    metal_avant = orm[..., 2].astype(np.float32)
+    metal_apres = np.minimum(metal_avant * ECHELLE_METAL_GENERATEUR, PLAFOND_METAL) * permis
+    orm[..., 2] = np.round(metal_apres).astype(np.uint8)
+    mat.metallicRoughnessTexture = Image.fromarray(orm, mode="RGB")
+    return {
+        "cartographie": "fidele",
+        "metal_p50_avant": round(float(np.percentile(metal_avant, 50)) / 255.0, 3),
+        "metal_p50_apres": round(float(np.percentile(metal_apres, 50)) / 255.0, 3),
+        "part_texels_trop_sombres_pour_un_metal": round(float((permis <= 0.0).mean()), 3),
+    }
+
+
 def enhance_mesh_and_pbr_cartography(
     mesh: trimesh.Trimesh,
     ref_image: Image.Image | None = None,
@@ -690,6 +735,17 @@ def enhance_mesh_and_pbr_cartography(
             meta["transmissionFactor"] = min(float(meta["transmissionFactor"]), 0.18)
 
     if mesh is None or not hasattr(mesh, "visual") or mesh.visual is None:
+        return meta
+
+    # Mode par défaut : FIDÈLE. La voie « heuristique » ci-dessous repeint l'albédo (projection
+    # de la référence, propagation de couleurs par composante, veines d'« or » par seuil de teinte)
+    # et la carte ORM par seuils de couleur, avec des branches par sujet (samouraï, kintsugi,
+    # hibou). Mesuré le 15/11/2026 sur un personnage (gilet noir, pantalon blanc) : la sortie brute
+    # de TRELLIS.2 comptait 31,7 % de texels sombres, la version retouchée 2,1 % ; les tons peau
+    # passaient de 21,9 % à 80,9 % — pantalon couleur peau, gilet jaune. La couleur produite par le
+    # générateur fait foi ; seule une loi physique touche encore la métallicité.
+    if os.environ.get("AURORA_PBR_CARTOGRAPHIE", "fidele") != "heuristique":
+        meta.update(calibrer_orm_fidele(mesh))
         return meta
 
     _prune_disconnected_micro_crumbs(mesh)

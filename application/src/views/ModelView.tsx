@@ -4,6 +4,7 @@ import { resolveThreeDRelation, type ThreeDRelation } from '../utils/threeDRelat
 import { retainThreeDRequirements, composeThreeDRequirements } from '../utils/threeDConversationContext.ts'
 import { binaryBase64 } from '../utils/binaryBase64.ts'
 import { parsePythonResult } from '../utils/pythonResult.ts'
+import { readThreeDRequest, restStateFromReading, restStateVerificationPrompt } from '../services/threeDRequestReading'
 import { materialChannels } from '../utils/materialChannels.ts'
 import { recoverModelDelivery } from '../utils/recoverModelDelivery.ts'
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -46,7 +47,7 @@ import { detectUploadedImageView, prepareThreeDViewPlan, resolvePreparedReferenc
 import { analyzeReferenceImage, mergePaletteWithOverrides, parseColorOverridesFromPrompt, type VisualReferenceAnalysis, type ReferencePaletteEntry, type ColorOverride } from '../services/visualReferenceAnalyzer.ts'
 import ReferenceInspectorPanel from '../components/ReferenceInspectorPanel.tsx'
 import EngineeringExportPanel from '../components/EngineeringExportPanel.tsx'
-import { analyzeThreeDIntent, buildFluxVisualDescription, buildMeshCorrectionStrategy, detectMotionVerbHint, inferPbrProfile, previewThreeDIntent, verify3DMeshFidelity, type PbrProfile, type ThreeDIntent, type ThreeDMotionPreset, type ThreeDPipeline, type ThreeDPipelineRouting, type MeshFidelityVerification, type MeshCorrectionStrategy } from '../services/threeDIntent.ts'
+import { analyzeThreeDIntent, buildFluxVisualDescription, restStateRulesEn, type ThreeDRestState, buildMeshCorrectionStrategy, detectMotionVerbHint, inferPbrProfile, previewThreeDIntent, verify3DMeshFidelity, type PbrProfile, type ThreeDIntent, type ThreeDMotionPreset, type ThreeDPipeline, type ThreeDPipelineRouting, type MeshFidelityVerification, type MeshCorrectionStrategy } from '../services/threeDIntent.ts'
 import { analyzePromptOntologySync } from '../services/cognitivePromptDirector.ts'
 import { runProceduralModeling, runAutoRig, runMeshValidation, runMeshCleanup, renderMeshScreenshot, type BlenderScriptResult, type MeshValidationReport } from '../services/blenderBridge.ts'
 import { runAutoRigFromPrompt } from '../services/motionPipeline.ts'
@@ -296,7 +297,7 @@ function buildThreeDRunOutputPaths(workspacePath: string, session: ConversationS
     references: `${root}/references`,
     prompts: `${root}/prompts`,
     models: `${root}/models`,
-    motion: `${root}/motion`,
+    motion: `${root}/mouvement`,
     audits: `${root}/audits`,
     work: `${root}/work`,
     rescue: `${root}/rescue`,
@@ -315,6 +316,76 @@ function buildColorLoadOutputDir(workspacePath: string, meshPath: string) {
 
 function parseLastJsonLine(output: string) {
   return parsePythonResult<ModelGenerationResult>(output)
+}
+
+/**
+ * Étape d'animation demandée (bouton Animation ON). Factorisée le 15/11/2026 : elle ne tournait
+ * que pour un maillage accepté, si bien qu'un maillage refusé par la porte qualité arrivait sans
+ * aucun dossier mouvement/ alors que l'animation était activée. Les sorties vont dans
+ * `mouvement/`, comme la livraison du pipeline et la bibliothèque 3D.
+ */
+async function bakeRequestedMotion(options: {
+  workspacePath: string
+  meshPath: string
+  motionDir: string
+  prompt: string
+  requirements: string
+  model: string
+  subject: string
+  sourceDescription: string
+  characterRoute: boolean
+  setPhase: (label: string, progress: number) => void
+  setProgress: (label: string) => void
+  /** the job's own runner: it carries the job's abort signal and cleanup root */
+  run: (scriptPath: string, args: string[], options?: { resumeKey?: string }) => Promise<string>
+}): Promise<{ path: string | null; summary: string }> {
+  const output = `${options.motionDir}/mouvement_couleurs.glb`
+  try { await fsMkdir(options.motionDir) } catch { /* déjà là */ }
+  if (options.characterRoute) {
+    try {
+      options.setPhase('Animation — plan sur le squelette réel...', 90)
+      const motionOutput = await options.run(`${options.workspacePath}/python-services/semantic_animation.py`, [
+        '--input', options.meshPath, '--output', output,
+        '--prompt', options.requirements, '--model', options.model,
+        '--subject', options.subject,
+        '--source-description', options.sourceDescription,
+      ], { resumeKey: 'model_ia' })
+      const motion = parseLastJsonLine(motionOutput)
+      if (motion?.ok && motion.path) {
+        return { path: String(motion.path), summary: 'Animation sur articulations réelles ; déformation mesurée, contacts et collisions non certifiés.' }
+      }
+      return { path: null, summary: `Animation demandée en repli statique (${String(motion?.error || 'modèle statique conservé').slice(0, 80)}).` }
+    } catch (semMotionExc) {
+      return { path: null, summary: `Animation en repli statique (${getErrorMessage(semMotionExc).slice(0, 80)}).` }
+    }
+  }
+  try {
+    const { getBridgeUrl } = await import('../utils/runtime')
+    options.setProgress('Classification motion-intent...')
+    options.setPhase('Animation — classification motion-intent...', 90)
+    const motResp = await fetch(`${getBridgeUrl()}/api/3d/auto-motion-bake`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: options.prompt, input_glb: options.meshPath, output_glb: output, min_confidence: 0.75 }),
+      signal: AbortSignal.timeout(700_000),
+    })
+    const motData = await motResp.json() as {
+      ok: boolean
+      decision?: { baked: boolean; category: string; confidence: number; reason: string; size_before: number; size_after: number }
+      glb_path?: string
+      error?: string
+    }
+    if (motData.ok && motData.decision) {
+      const dec = motData.decision
+      if (dec.baked && motData.glb_path && motData.glb_path !== options.meshPath) {
+        return { path: motData.glb_path, summary: `Motion auto: ${dec.category} bake (conf=${dec.confidence.toFixed(2)}, ${(dec.size_after / 1024).toFixed(1)}KB).` }
+      }
+      return { path: null, summary: `Motion auto: ${dec.category} (${dec.reason}).` }
+    }
+    return { path: null, summary: motData.error ? `Motion auto indisponible: ${motData.error.slice(0, 80)}.` : 'Motion auto sans décision.' }
+  } catch (motExc) {
+    return { path: null, summary: `Motion auto skip: ${getErrorMessage(motExc).slice(0, 80)}.` }
+  }
 }
 
 function buildConversationContext(history: Array<{ role: 'user' | 'assistant'; content: string }>) {
@@ -699,7 +770,10 @@ function buildReferencePrompt(
   referenceSupport: ThreeDReferenceSupport | null = null,
   viewPlan: ThreeDViewPlan | null = null,
   sourcePrompt = prompt,
+  restState: ThreeDRestState | null = null,
 ) {
+  // Animation ON : la pose appartient à l'animation, jamais à la sculpture de référence.
+  if (restState) motionPreset = null
   const forceBlackBackdrop = shouldForceBlackBackdrop(sourcePrompt, intent)
   const ledCablePrompt = isLedCablePrompt(sourcePrompt, intent)
   const hideHostDevice = ledCablePrompt && !promptExplicitlyRequestsHostDevice(sourcePrompt)
@@ -734,6 +808,7 @@ function buildReferencePrompt(
 
     '',
     '3D reference image contract:',
+    ...(restState ? restStateRulesEn(restState).map((rule) => `- ${rule}`) : []),
     '- THIS IMAGE MUST SHOW EXACTLY ONE ENTITY FROM ONE SINGLE ANGLE',
     '- CRITICAL: Show the subject at a THREE-QUARTER ANGLE (slightly rotated) so that 3 faces are visible (front + one side + top)',
     '- NEVER generate a flat front-on view — depth cues are required for proper 3D reconstruction',
@@ -5116,6 +5191,18 @@ export default function ModelView() {
           setDetectedIntent(intent)
           setLastAnalyzedPrompt(currentPrompt)
           const activeMotionPreset = resolveSelectedMotionPreset(intent, selectedMotionPresetId)
+          // ANIMATION ON (15/11/2026) : toutes les voies de référence (distillation, plan de vues,
+          // description FLUX, vérification) partent du sujet AU REPOS ; la pose appartient au
+          // squelette. `workingPrompt` garde le mouvement pour l'animation et le contrôle final.
+          let restState: ThreeDRestState | null = null
+          if (requestedMotion && !editPlan.continuation && !primaryPreparedImage) {
+            setPhase('Compréhension — sujet au repos, mouvement réservé au squelette...', 6)
+            const reading = await readThreeDRequest(await getWorkspacePath(), currentPrompt)
+            restState = restStateFromReading(reading, currentPrompt, isCharacterLike(intent))
+            setProgress(restState.mouvement
+              ? `Référence au repos : « ${short(restState.sujet, 60)} » — mouvement « ${short(restState.mouvement, 60)} » réservé au squelette`
+              : `Référence au repos : « ${short(restState.sujet, 60)} »`)
+          }
           workingPrompt = [
             workingPrompt,
             '',
@@ -5316,7 +5403,12 @@ export default function ModelView() {
             if (!sourceRenderPath) throw new Error('Impossible de lire une référence du modèle existant ; modification non lancée pour préserver son identité. ' + (rendered.error || ''))
           }
           let referenceImagePath = `${runPaths.references}/${runId}_reference.png`
-          const taskContext = await prepareTaskIntelligence({ module: '3d', prompt: workingPrompt, model: visionModel, files: preparedContext, setPhase, phaseBase: 5, phaseSpan: 10 })
+          const referenceWorkingPrompt = restState
+            ? [`Requested subject: ${restState.sujet}`, ...restStateRulesEn(restState), '',
+              `Intent 3D detecte: ${intent.summary}`, 'Contraintes 3D prioritaires:',
+              ...intent.meshConstraints.slice(0, 4).map((item) => `- ${item}`)].join('\n')
+            : workingPrompt
+          const taskContext = await prepareTaskIntelligence({ module: '3d', prompt: referenceWorkingPrompt, model: visionModel, files: preparedContext, setPhase, phaseBase: 5, phaseSpan: 10 })
           if (!editPlan.continuation && !clarificationDejaResolue && !aUneImage && taskContext.clarificationQuestion) {
             setPhase('Analyse — clarification utilisateur', 12)
             const viaFx2 = fxAsk<string | null>('3d', {
@@ -5444,7 +5536,7 @@ export default function ModelView() {
             setProgress(`Photo utilisateur = reference (${preparedImages.map((f) => f.name).join(', ')})`)
           }
           const referenceViewPlan = await prepareThreeDViewPlan({
-            prompt: currentPrompt,
+            prompt: restState ? restState.sujet : currentPrompt,
             intent,
             model: visionModel,
             researchContext: taskContext.researchContext,
@@ -5453,10 +5545,22 @@ export default function ModelView() {
             enrichedDescription: taskContext.generationPrompt,
             overlay: overlayForPlanner,
           })
+          if (restState) {
+            const restRules = restStateRulesEn(restState).join(' ')
+            for (const assignment of referenceViewPlan.assignments) {
+              if (assignment.sourceKind === 'synthetic' && assignment.syntheticPrompt) {
+                assignment.syntheticPrompt = `${assignment.syntheticPrompt}, ${restRules}`
+              }
+            }
+          }
           setViewPlan(referenceViewPlan)
 
           // Build a FLUX-native visual description directly, bypassing the weak distillation
           // This is the AUTHORITATIVE prompt that FLUX will actually render
+          // ANIMATION ON (15/11/2026) : la référence montre le sujet AVANT son mouvement ; un corps
+          // qui s'anime lui-même est posé au repos pour le squelette. Animation OFF : la pose ou
+          // l'action demandée reste le sujet du rendu statique.
+          const referenceCheckPrompt = restState ? restStateVerificationPrompt(restState) : currentPrompt
           setPhase('Référence photo — construction du prompt visuel FLUX...', 20)
           const fluxVisualPrompt = await buildFluxVisualDescription({
             prompt: currentPrompt,
@@ -5464,6 +5568,7 @@ export default function ModelView() {
             model: visionModel,
             motionPreset: activeMotionPreset,
             researchContext: taskContext.researchContext,
+            restState,
           })
           // Override the distilled prompt with the direct FLUX-native description
           taskContext.generationPrompt = fluxVisualPrompt
@@ -5656,7 +5761,7 @@ export default function ModelView() {
               setProgress(referenceSeed ? 'Refinement de la reference 3D...' : 'Generation de la reference image...')
               setPhase(referenceSeed ? 'Référence photo — raffinement de la vue...' : 'Référence photo — génération de la vue...', 25)
               const referenceWorkflow = resolveReferenceWorkflow(intent, hardware, Boolean(referenceSeed), currentPrompt, referenceSupportPlan)
-              const baseReferencePrompt = buildReferencePrompt(taskContext.generationPrompt, intent, activeMotionPreset, referenceSupportPlan, referenceViewPlan, currentPrompt)
+              const baseReferencePrompt = buildReferencePrompt(taskContext.generationPrompt, intent, activeMotionPreset, referenceSupportPlan, referenceViewPlan, currentPrompt, restState)
               const renderReferenceBlob = async (promptText: string, stepsOverride = referenceWorkflow.steps, label = 'Rendu de la reference en cours...') => {
                 const workflow = createFlux2Workflow({
                   prompt: editReferenceSeed ? `Edit the supplied reference image. Preserve the subject identity and all unspecified features. Apply every requested change, including required removals, pose, outfit and full-body scope. Requested changes override the reference. ${promptText} Original request: ${userRequirementsPrompt}. Final authority: ${currentPrompt}. Do not restore excluded features from the reference or any default design.` : `${promptText}\nComplete user requirements: ${userRequirementsPrompt}\nFinal authority: ${currentPrompt}. User exclusions override default appearance, reference details and inferred constraints.`,
@@ -5682,7 +5787,7 @@ export default function ModelView() {
               let imageBlob = await renderReferenceBlob(baseReferencePrompt)
               if (editReferenceSeed) { photoReferenceEdited = true; photoEditSeedFilename = referenceSeed?.filename }
               let referenceAssessment = await verifyGeneratedReferenceVisual({
-                prompt: currentPrompt,
+                prompt: referenceCheckPrompt,
                 model: visionModel,
                 blob: imageBlob,
                 profile: referenceSupportPlan.searchProfile,
@@ -5702,7 +5807,7 @@ export default function ModelView() {
                 )
                 imageBlob = await renderReferenceBlob(correctionPrompt, referenceWorkflow.steps + 4, 'Rendu correctif de la reference...')
                 referenceAssessment = await verifyGeneratedReferenceVisual({
-                  prompt: currentPrompt,
+                  prompt: referenceCheckPrompt,
                   model: visionModel,
                   blob: imageBlob,
                   profile: referenceSupportPlan.searchProfile,
@@ -5727,7 +5832,7 @@ export default function ModelView() {
                 ].filter(Boolean).join('\n')
                 imageBlob = await renderReferenceBlob(rawVisualPrompt, referenceWorkflow.steps + 8, 'Regeneration avec identite forcee...')
                 referenceAssessment = await verifyGeneratedReferenceVisual({
-                  prompt: currentPrompt,
+                  prompt: referenceCheckPrompt,
                   model: visionModel,
                   blob: imageBlob,
                   profile: referenceSupportPlan.searchProfile,
@@ -6022,7 +6127,7 @@ export default function ModelView() {
                 ? genDir.slice(workspacePath.length + 1)
                 : genDir
               await fsMkdir(genDir).catch(() => {})
-              const auroraArgs = ['--prompt', userRequirementsPrompt, '--run-id', runId, '--output-dir', genDir, '--purpose', intent.purpose, '--max-precision', '--defer-motion']
+              const auroraArgs = ['--prompt', userRequirementsPrompt, '--run-id', runId, '--output-dir', genDir, '--purpose', intent.purpose, '--max-precision', '--defer-motion', '--animation', requestedMotion ? 'on' : 'off']
               if (referenceConfirmEnabled) auroraArgs.push('--confirm-ref')
               if (intent.referenceFraming === 'isolated_subject' && intent.subjectKind !== 'assembly') auroraArgs.push('--no-scene')
               const seenImgs = new Set<string>()
@@ -6232,6 +6337,7 @@ export default function ModelView() {
               const preview = failed?.livraison?.modele_couleurs || failed?.final_mesh
               if (preview?.startsWith(runPaths.root + '/') && preview.endsWith('.glb') && await fsExists(preview)) {
                 setModelUrl(toAssetUrl(preview))
+                lastMeshPathRef.current = preview
                 producedButRejected = `Maillage produit et conservé, mais validation échouée : ${failed?.error || excMsg}. Fichier : ${preview}`
               }
               const sentinelle = excMsg.split('\n').reverse().find((l) => l.includes('SENTINELLE ANTI-GEL'))
@@ -6242,6 +6348,23 @@ export default function ModelView() {
             } finally {
               if (auroraWatch !== undefined) window.clearInterval(auroraWatch)
             }
+          }
+          if (producedButRejected && requestedMotion && lastMeshPathRef.current) {
+            // Animation activée : le mouvement est livré aussi pour un maillage refusé, avec l'avertissement.
+            const motion = await bakeRequestedMotion({
+              workspacePath, meshPath: lastMeshPathRef.current, motionDir: runPaths.motion,
+              prompt: currentPrompt, requirements: composeThreeDRequirements(currentPrompt, effectiveHistory),
+              model: activeOllamaModel,
+              subject: editPlan.continuation ? rigSubject : intent.subjectKind === 'character' ? 'humanoid' : intent.subjectKind === 'creature' ? 'quadruped' : 'none',
+              sourceDescription: sourceContext?.description || composeThreeDRequirements(currentPrompt, effectiveHistory),
+              characterRoute: editPlan.continuation || isCharacterLike(intent),
+              setPhase, setProgress, run: runPythonScript,
+            })
+            if (motion.path) {
+              lastMeshPathRef.current = motion.path
+              setModelUrl(toAssetUrl(motion.path))
+            }
+            producedButRejected = `${producedButRejected} ${motion.summary}${motion.path ? ` Animation : ${motion.path}` : ''}`
           }
           if (producedButRejected) throw new Error(producedButRejected)
           // TRELLIS-ONLY: si TRELLIS a ete tente et n'a rien rendu, on N'enchaine PAS
@@ -6573,7 +6696,7 @@ export default function ModelView() {
               const extraSteps = correctionStrategy.escalation === 'maximum' ? 12 : correctionStrategy.escalation === 'strong' ? 8 : 4
               const correctedWorkflow = createFlux2Workflow({
                 referenceImageFilename: photoEditSeedFilename,
-                prompt: buildReferencePrompt(correctedRefPrompt, intent, activeMotionPreset, referenceSupportPlan, referenceViewPlan, currentPrompt),
+                prompt: buildReferencePrompt(correctedRefPrompt, intent, activeMotionPreset, referenceSupportPlan, referenceViewPlan, currentPrompt, restState),
                 width: correctedRefWorkflow.width,
                 height: correctedRefWorkflow.height,
                 steps: correctedRefWorkflow.steps + extraSteps,
@@ -6799,68 +6922,23 @@ export default function ModelView() {
           let autoMotionSummary = ''
           if (!requestedMotion) {
             autoMotionSummary = 'Mouvement désactivé — mesh statique conservé.'
-          } else if (editPlan.continuation || isCharacter) {
-            try {
-              setPhase('Animation — plan sur le squelette réel...', 90)
-              const motionOutput = await runPythonScript(`${workspacePath}/python-services/semantic_animation.py`, [
-                '--input', activeMeshPath, '--output', `${runPaths.motion}/${runId}_requested.glb`,
-                '--prompt', composeThreeDRequirements(currentPrompt, effectiveHistory), '--model', activeOllamaModel,
-                '--subject', editPlan.continuation ? rigSubject : intent.subjectKind === 'character' ? 'humanoid' : intent.subjectKind === 'creature' ? 'quadruped' : 'none',
-                '--source-description', sourceContext?.description || composeThreeDRequirements(currentPrompt, effectiveHistory),
-              ], { resumeKey: 'model_ia' })
-              const motion = parseLastJsonLine(motionOutput)
-              if (motion?.ok && motion.path) {
-                activeMeshPath = String(motion.path)
-                result.path = activeMeshPath
-                lastMeshPathRef.current = activeMeshPath
-                setModelUrl(toAssetUrl(activeMeshPath))
-                autoMotionSummary = 'Animation sur articulations réelles ; déformation mesurée, contacts et collisions non certifiés.'
-              } else {
-                autoMotionSummary = `Animation demandée en repli statique (${String(motion?.error || 'modèle statique conservé').slice(0, 80)}).`
-              }
-            } catch (semMotionExc) {
-              autoMotionSummary = `Animation en repli statique (${getErrorMessage(semMotionExc).slice(0, 80)}).`
-            }
-          } else try {
-            const { getBridgeUrl } = await import('../utils/runtime')
-            const bridge = getBridgeUrl()
-            const autoMotionOutGlb = activeMeshPath.replace(/\.glb$/i, '_anim.glb')
-            setProgress('Classification motion-intent (gemma3:12b)...')
-            setPhase('Animation — classification motion-intent...', 90)
-            const motResp = await fetch(`${bridge}/api/3d/auto-motion-bake`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                prompt: currentPrompt,
-                input_glb: activeMeshPath,
-                output_glb: autoMotionOutGlb,
-                min_confidence: 0.75,
-              }),
-              signal: AbortSignal.timeout(700_000),
+          } else {
+            const motion = await bakeRequestedMotion({
+              workspacePath, meshPath: activeMeshPath, motionDir: runPaths.motion,
+              prompt: currentPrompt, requirements: composeThreeDRequirements(currentPrompt, effectiveHistory),
+              model: activeOllamaModel,
+              subject: editPlan.continuation ? rigSubject : intent.subjectKind === 'character' ? 'humanoid' : intent.subjectKind === 'creature' ? 'quadruped' : 'none',
+              sourceDescription: sourceContext?.description || composeThreeDRequirements(currentPrompt, effectiveHistory),
+              characterRoute: editPlan.continuation || isCharacter,
+              setPhase, setProgress, run: runPythonScript,
             })
-            const motData = await motResp.json() as {
-              ok: boolean
-              intent?: { category: string; confidence: number; rationale: string }
-              decision?: { baked: boolean; category: string; confidence: number; reason: string; size_before: number; size_after: number }
-              glb_path?: string
-              error?: string
+            autoMotionSummary = motion.summary
+            if (motion.path) {
+              activeMeshPath = motion.path
+              result.path = activeMeshPath
+              lastMeshPathRef.current = activeMeshPath
+              setModelUrl(toAssetUrl(activeMeshPath))
             }
-            if (motData.ok && motData.decision) {
-              const dec = motData.decision
-              if (dec.baked && motData.glb_path && motData.glb_path !== activeMeshPath) {
-                activeMeshPath = motData.glb_path
-                result.path = motData.glb_path
-                lastMeshPathRef.current = activeMeshPath
-                setModelUrl(toAssetUrl(activeMeshPath))
-                autoMotionSummary = `Motion auto: ${dec.category} bake (conf=${dec.confidence.toFixed(2)}, ${(dec.size_after / 1024).toFixed(1)}KB).`
-              } else {
-                autoMotionSummary = `Motion auto: ${dec.category} (${dec.reason}).`
-              }
-            } else if (motData.error) {
-              autoMotionSummary = `Motion auto indisponible: ${motData.error.slice(0, 80)}.`
-            }
-          } catch (motExc) {
-            autoMotionSummary = `Motion auto skip: ${getErrorMessage(motExc).slice(0, 80)}.`
           }
           if (autoMotionSummary) {
             meshFidelitySummary = meshFidelitySummary

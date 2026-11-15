@@ -256,9 +256,23 @@ def _explicit_material_requested(prompt: str, kind: str | None = None) -> bool:
 
 
 
+# POSE DE REPOS POUR LE SQUELETTE (15/11/2026). Quand l'animation est demandée, le sujet animé
+# par son propre corps est reconstruit AVANT son mouvement : membres droits et écartés du corps,
+# rien qui se touche. Une référence en pleine action (personnage en course, bras devant le torse)
+# fond les membres entre eux à la reconstruction et déchire le rig ; le mouvement est porté par
+# l'animation, pas par la sculpture. Formulé pour toute anatomie, pas seulement les bipèdes.
+REST_POSE_CUES = (
+    "at rest in a neutral rigging pose before any movement starts: body straight and symmetric, every limb, "
+    "fin, wing or tail held slightly away from the body (arms about 45 degrees from the torso and legs slightly "
+    "apart for a biped), nothing touching or crossing, no action, no motion blur, "
+    "full body entirely visible from head to feet, front view, isolated on clean neutral background, "
+    "sharp detailed face, clear detailed eyes")
+
+
 def enhance_flux_prompt(prompt: str, *, motion_prompt: str | None = None,
                         subject_kind: str | None = None,
-                        objet_isole: bool = False) -> str:
+                        objet_isole: bool = False,
+                        corps_articule: bool | None = None) -> str:
     """Build the faithful FLUX prompt for the CLI/tunnel/extension path.
 
     Three layers, keeping the user's verbatim intent at the front:
@@ -322,17 +336,17 @@ def enhance_flux_prompt(prompt: str, *, motion_prompt: str | None = None,
         r"monstre|monster|lion|tigre|tiger|ours|bear|cheval|horse|lapin|rabbit)\b", re.I)
     _non_organic_kinds = {"motherboard", "pc_tower", "computer", "product", "vehicle", "gadget", "architecture"}
     is_hardware = bool(re.search(r"\b(motherboard|mainboard|carte\s+m[èe]re|x870e|x670e|x670|z890|z790|b850|b650)\b", out, re.I))
-    if (_kind_l in {"character", "creature", "humanoid", "quadruped"} or (_creature_re.search(out) and _kind_l not in _non_organic_kinds and not is_hardware) or (_ontology_decision and _ontology_decision.get("subject_ontology") in {"anime_manga_character", "real_human_subject", "game_character_or_asset", "game_3d_character"} and not is_hardware)):
+    # La lecture de la demande (lecture_demande.corps_articule) décide quand elle existe ; les motifs
+    # ci-dessus ne servent plus que de repli quand elle manque.
+    _est_corps = corps_articule if corps_articule is not None else bool(
+        _kind_l in {"character", "creature", "humanoid", "quadruped"}
+        or (_creature_re.search(out) and _kind_l not in _non_organic_kinds and not is_hardware)
+        or (_ontology_decision and _ontology_decision.get("subject_ontology") in {"anime_manga_character", "real_human_subject", "game_character_or_asset", "game_3d_character"} and not is_hardware))
+    if _est_corps:
         if motion_prompt:
-            out = re.sub(
-                r",?\s*\b(?:qui|en\s+train\s+d[e'])\s+(?:se\s+met|esquive|encha[îi]ne|marche|court|danse|saute|frappe|boxe|attaque|effectue|ex[ée]cute)\b.*$",
-                "",
-                out,
-                flags=re.I,
-            ).strip() or out
-            _base_cues = ("standing upright in a clean full-body A-pose with arms slightly separated from torso and legs separated for 3D skeletal rigging, "
-                          "full body entirely visible from head to feet, front view, isolated on clean neutral background, "
-                          "sharp detailed face, clear detailed eyes")
+            # Le mouvement a déjà été retiré du sujet par la lecture de la demande ; une liste de
+            # verbes ne le retirait que pour les tournures prévues (« qui cours » passait).
+            _base_cues = REST_POSE_CUES
         else:
             _base_cues = ("full body entirely visible from head to feet, front view, isolated on clean white studio background, "
                           "sharp detailed face, clear detailed eyes")
@@ -3491,6 +3505,43 @@ def _conception_assemblage(demande: str, run_id: str, output_dir: Path, audit: l
     }
 
 
+_CORPS_PAR_GENRE = {"character", "creature", "humanoid", "quadruped"}
+
+
+def reference_selon_animation(lecture: dict | None, prompt: str, animation: str,
+                              motion_prompt: str | None = None,
+                              subject_kind_hint: str | None = None) -> dict:
+    """Ce que la référence montre selon le bouton Animation (15/11/2026).
+
+    Animation activée : le sujet AVANT son mouvement ; un corps qui s'anime lui-même est posé au
+    repos pour le squelette (`corps_articule`). Animation désactivée : le résultat est statique, la
+    pose ou l'action demandée EST le sujet (« un homme qui court » statique = une figure en pleine
+    course). `auto` garde la séparation pour les appelants qui ne disent rien (CLI, scènes).
+    """
+    lue = bool(lecture) and lecture.get("source") == "llm"
+    mouvement_lu = str(lecture.get("mouvement") or "") if lue else ""
+    corps = bool(lecture.get("corps_articule")) if lue else None
+    sujet = str(lecture.get("sujet") or "") if lue else ""
+    choix = {"prompt": prompt, "mouvement_reference": None, "corps_articule": corps, "message": ""}
+    if animation == "off":
+        if mouvement_lu:
+            choix["message"] = "animation desactivee — la reference garde la pose demandee « %s »" % prompt[:80]
+        return choix
+    if mouvement_lu:
+        choix["mouvement_reference"] = mouvement_lu
+        if sujet and sujet != prompt:
+            choix["prompt"] = sujet
+            choix["message"] = ("la reference montrera « %s » ; le mouvement « %s » est reserve a l'animation"
+                                % (sujet[:80], mouvement_lu[:80]))
+    if motion_prompt:
+        choix["mouvement_reference"] = motion_prompt
+    if animation == "on":
+        choix["mouvement_reference"] = choix["mouvement_reference"] or "animation demandee"
+        if corps is None and (subject_kind_hint or "").lower() in _CORPS_PAR_GENRE:
+            choix["corps_articule"] = True
+    return choix
+
+
 def run_pipeline(prompt: str, run_id: str, **options) -> dict:
     """Pipeline 3D complet. Le résultat garde la demande de l'utilisateur comme `prompt` ;
     le sujet au repos montré par la référence, quand il en diffère, est rendu à part."""
@@ -3513,8 +3564,12 @@ def _run_pipeline_core(prompt: str, run_id: str, *,
                  subject_kind_hint: str | None = None,
                  allow_scene: bool = True,
                  engine: str = "auto",
+                 animation: str = "auto",
                  _vlm_retry: bool = False) -> dict:
     prompt = _strip_internal_ui_diagnostics(prompt)
+    animation = str(animation or "auto").lower()
+    if animation not in {"auto", "on", "off"}:
+        return {"ok": False, "error": f"animation inconnue : {animation!r} (auto, on, off)"}
     if not prompt.strip():
         return {"ok": False, "error": "empty prompt"}
     if not run_id.strip():
@@ -3555,12 +3610,15 @@ def _run_pipeline_core(prompt: str, run_id: str, *,
                         "sujet": prompt, "mouvement": "", "exemplaires": None}
         _LECTURES_DEMANDE[run_id] = _lecture
     if _lecture is not None:
-        audit.append({"stage": "lecture_demande", **{k: _lecture.get(k) for k in
-                      ("source", "demande", "sujet", "sujet_en", "mouvement", "exemplaires", "raison") if k in _lecture}})
-        if _lecture.get("source") == "llm" and _lecture.get("mouvement") and _lecture.get("sujet") != prompt:
-            print("PROGRESS:comprehension:la reference montrera « %s » ; le mouvement « %s » est reserve a l'animation"
-                  % (str(_lecture["sujet"])[:80], str(_lecture["mouvement"])[:80]), flush=True)
-            prompt = str(_lecture["sujet"])
+        audit.append({"stage": "lecture_demande", "animation": animation, **{k: _lecture.get(k) for k in
+                      ("source", "demande", "sujet", "sujet_en", "mouvement", "exemplaires", "corps_articule",
+                       "raison") if k in _lecture}})
+    _choix_ref = reference_selon_animation(_lecture, prompt, animation, motion_prompt, subject_kind_hint)
+    if _choix_ref["message"]:
+        print("PROGRESS:comprehension:" + _choix_ref["message"], flush=True)
+    prompt = _choix_ref["prompt"]
+    _mouvement_reference = _choix_ref["mouvement_reference"]
+    _corps_articule = _choix_ref["corps_articule"]
     _exemplaires_attendus = (_lecture or {}).get("exemplaires")
     # CONCEPTION D'INGÉNIERIE (14/11/2026). Une demande qui porte sur des pièces à fabriquer et à
     # assembler (« une boîte en bois avec un couvercle à charnière et un loquet ») n'est pas une image
@@ -4402,9 +4460,10 @@ def _run_pipeline_core(prompt: str, run_id: str, *,
         # branded heatsinks, OLED placement, AURA RGB zones, etc. The orig
         # prompt is preserved in the audit_trail for diagnostic.
         flux_prompt = enhance_flux_prompt(
-            prompt, motion_prompt=motion_prompt,
+            prompt, motion_prompt=_mouvement_reference,
             objet_isole=not allow_scene,
             subject_kind=subject_kind_hint or kind,
+            corps_articule=_corps_articule,
         )
         if flux_prompt != prompt:
             faithful_analysis = None
@@ -5526,6 +5585,12 @@ def _run_pipeline_core(prompt: str, run_id: str, *,
                             _vp = f"{_stem}_v{_vi}.png"
                             if os.path.isfile(_vp):
                                 _tr_cmd.append(_vp)
+                        # UN NOUVEL ESSAI EST UN NOUVEAU TIRAGE (15/11/2026). Après un refus de la porte,
+                        # la même image repartait avec la même graine : 481 944 puis 482 040 faces, le même
+                        # défaut, refusé deux fois. La graine suit le numéro d'essai.
+                        _tirage = int(os.environ.get("AURORA_PERFECTION_TIRAGE", "1") or 1)
+                        if _tirage > 1:
+                            _tr_cmd += ["--seed", str(1 + 7919 * (_tirage - 1))]
                         _p = run_neural_process(_tr_cmd,
                                                env=_tr_env, timeout=int(os.environ.get("AURORA_TRELLIS_TIMEOUT_S", "10800")))
                         for _line in reversed((_p.stdout or "").splitlines()):
@@ -6545,7 +6610,7 @@ def _run_pipeline_core(prompt: str, run_id: str, *,
                 output_dir=output_dir, multi_view=multi_view,
                 motion_prompt=motion_prompt, force=True,
                 images=images, purpose=purpose,
-                subject_kind_hint=subject_kind_hint, _vlm_retry=True,
+                subject_kind_hint=subject_kind_hint, animation=animation, _vlm_retry=True,
             )
             retry["audit_trail"] = audit + (retry.get("audit_trail") or [])
             retry["vlm_retry"] = True
@@ -7070,6 +7135,10 @@ def main() -> int:
     parser.add_argument("--force", action="store_true",
                         help="Re-run all stages even when intermediate files exist")
     parser.add_argument("--defer-motion", action="store_true", help="Keep reconstruction static; caller owns subsequent articulation")
+    parser.add_argument("--animation", choices=["auto", "on", "off"], default="auto",
+                        help="Bouton Animation de l'interface. on : référence au repos, avant le mouvement "
+                             "(pose neutre pour un corps qui s'anime) ; off : résultat statique, la pose "
+                             "ou l'action demandée est conservée ; auto : la lecture de la demande décide.")
     parser.add_argument("--motion-prompt", default=None, dest="motion_prompt",
                         help="Optional motion description (e.g. 'le perso marche', "
                              "'engrenages tournent'). When provided, runs motion_parser "
@@ -7189,6 +7258,7 @@ def main() -> int:
     _producer_sha256 = sha256_file(Path(__file__))
 
     for _essai in range(1, _essais_max + 1):
+        os.environ["AURORA_PERFECTION_TIRAGE"] = str(_essai)
         result = run_pipeline(
             args.prompt, args.run_id,
             output_dir=Path(args.output_dir),
@@ -7198,6 +7268,7 @@ def main() -> int:
             purpose=args.purpose,
             subject_kind_hint=args.subject_kind,
             engine=args.engine, allow_scene=not args.no_scene,
+            animation=args.animation,
         )
         _err = str(result.get("error") or "")
         _refus = (not result.get("ok")) and (

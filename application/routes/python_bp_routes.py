@@ -382,6 +382,10 @@ def _run_python_job(job_id: str, script_path: str, args: list[str]):
         _finalize_cancelled_job(job_id, script_path, time.time())
         return
     run_env = _build_python_env()
+    # Marque héritée par tous les sous-processus du travail (TRELLIS, Blender…) : c'est elle, et
+    # non le seul chemin du script, qui dit au pont qu'un travail tourne encore après un
+    # redémarrage. Un service résident (serveur MCP lancé depuis python-services) n'en porte pas.
+    run_env["AURORA_BRIDGE_JOB"] = str(job_id)
     _est_3d = "aurora_3d_pipeline" in str(script_path)
     _est_video_gpu = _is_video_gpu_job(script_path)
     _video_slot_acquired = False
@@ -1315,6 +1319,7 @@ def python_run():
 
     try:
         run_env = _build_python_env()
+        run_env["AURORA_BRIDGE_JOB"] = "sync-" + uuid.uuid4().hex[:12]
         result = subprocess.run(
             [sys.executable, "-W", "ignore", script_path] + args,
             capture_output=True, timeout=900, cwd=WORKSPACE, env=run_env,

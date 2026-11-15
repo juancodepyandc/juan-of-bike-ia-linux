@@ -121,7 +121,7 @@ export function threeDPhaseForStage(stage: string): number | null {
   // référence : vues ou photos d'entrée (y compris l'analyse des photos de photogrammétrie)
   if (['reference', 'confirm_req', 'ref', 'web', 'source', 'scan'].includes(s)) return 1
   // sculpture : moteurs neuronaux, scène multi-entités, Blender procédural, photogrammétrie, géométrie
-  if (['install', 'device', 'bg', 'asset_scan', 'asset_download', 'shape_fallback', 'shape_load', 'shape_run', 'gaussian', 'procedural', 'sfm', 'photogrammetry', 'mesh_extract', 'shape', 'trellis', 'hunyuan', 'engine', 'scene', 'blender', 'preprocess'].includes(s)) return 2
+  if (['install', 'device', 'bg', 'asset_scan', 'asset_download', 'shape_fallback', 'shape_load', 'shape_run', 'gaussian', 'procedural', 'sfm', 'photogrammetry', 'mesh_extract', 'assemblage', 'shape', 'trellis', 'hunyuan', 'engine', 'scene', 'blender', 'preprocess'].includes(s)) return 2
   // matières : peinture, cuisson, zones de matière, fidélité de texture
   if (['texture_load', 'texture_run', 'texture_retry', 'texture_warn', 'paint', 'bake', 'bake_normal', 'bake_ao', 'texture', 'color', 'matieres', 'fidelity', 'texture_fidelity'].includes(s)) return 3
   if (['animation', 'rig', 'motion'].includes(s)) return 4

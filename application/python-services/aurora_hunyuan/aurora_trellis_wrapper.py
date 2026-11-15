@@ -913,7 +913,7 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
         if glb is None:
             return {"ok": False, "error": "to_glb OOM a tous les paliers texture"}
         _opt_meta = None
-        if True:
+        if os.environ.get("AURORA_PBR_CARTOGRAPHY", "1") != "0":
             try:
                 _ps_pbr = str(Path(__file__).resolve().parent.parent)
                 if _ps_pbr not in sys.path:

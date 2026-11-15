@@ -22,6 +22,20 @@ from bridge_server import _ext_default_model
 register_design_routes(asset_bp,WORKSPACE,local=_request_is_local_loopback,extension=_ext_auth,model_default=lambda:_ext_default_model(task="engineering"))
 
 from application.projects_api import register_project_routes
+def _lance_par_le_pont(process) -> bool:
+    """Un travail lancé par le pont porte AURORA_BRIDGE_JOB, hérité par ses sous-processus.
+
+    15/11/2026 : les serveurs MCP résidents (python-services/aurora_3d_mcp.py) suffisaient à faire
+    croire qu'une génération tournait encore ; une réservation expirée n'était alors jamais libérée
+    et toute nouvelle génération 3D restait « en file » derrière elle. Environnement illisible :
+    on reste prudent et on compte le processus comme un travail.
+    """
+    try:
+        return bool(process.environ().get('AURORA_BRIDGE_JOB'))
+    except (psutil.AccessDenied, psutil.ZombieProcess):
+        return True
+
+
 def _frontend_workers_idle():
     try:
         from routes.python_bp_routes import _python_jobs, _python_jobs_lock, _python_job_processes
@@ -42,7 +56,7 @@ def _frontend_workers_idle():
                     try:
                         script = pathlib.Path(arg)
                         if not script.is_absolute():script = pathlib.Path(process.cwd()) / script
-                        if script.resolve().is_relative_to(services):return False
+                        if script.resolve().is_relative_to(services) and _lance_par_le_pont(process):return False
                     except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
                         return False
         queue = requests.get(COMFYUI_URL + '/queue', timeout=3).json()

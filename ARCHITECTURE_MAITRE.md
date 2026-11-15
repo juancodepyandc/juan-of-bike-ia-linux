@@ -1022,6 +1022,26 @@ Défaut signalé : « penser aux pièces dont on a besoin et surtout comment les
 - Composants achetés : enveloppes et motifs supposés par le modèle, à vérifier sur la fiche du fabricant.
 - La route `/api/3d/assembly` et le libellé « Vue éclatée » exigent un redémarrage du pont pour être servis.
 
+### 1.42 Module 3D : animation ON = sujet au repos, couleurs du générateur intactes, mouvement toujours livré — 15 novembre 2026
+
+Défaut signalé sur « natsu Dragneel qui cours », animation activée : personnage reconstruit directement en pleine course, déformé, textures absentes, aucun dossier `mouvement/`. Exigence : une pose neutre (T/A) quand l'animation est activée, la pose demandée seulement en statique, et une règle valable pour tout sujet et tout mouvement.
+
+**Causes mesurées sur le run** (`application/output/3d/conversations/natsu_dragneel_cours_058bb36b-dd3c-46c4/juan_bike_1794697494055/`) :
+- `lecture_demande.py` a rejeté la réponse du modèle (sujet de 190 caractères : tenue rouge inventée et « posture dynamique de course ») sans seconde chance ; la phrase entière, mouvement compris, est partie vers la référence.
+- L'interface synthétise elle-même la référence et demandait à FLUX de « ne jamais remplacer une pose demandée par une pose neutre » ; le pipeline, appelé avec `--defer-motion`, ignorait que l'animation était activée. Le retrait des verbes de mouvement par liste (`court|marche|danse…`) laissait passer « qui cours ».
+- `pbr_cartography.enhance_mesh_and_pbr_cartography`, appelé après chaque export TRELLIS.2, repeignait l'albédo (projection de la référence, propagation de couleurs par composante, veines d'« or » par seuil de teinte, branches `samourai`/`kintsugi`/hibou) et la carte ORM par seuils de couleur. Même référence relancée sans cette retouche (`AURORA_PBR_CARTOGRAPHY=0`) : gilet noir, pantalon blanc, écharpe à damier corrects au rendu f3d. Texels sombres 31,7 % (brut) contre 2,1 % (livré) ; tons peau 21,9 % contre 80,9 %.
+- La porte qualité a refusé deux tirages identiques (même image, même géométrie) ; l'interface lève alors une erreur avant l'étape d'animation, d'où l'absence de `mouvement/`.
+- File 3D bloquée derrière une réservation expirée : `_frontend_workers_idle` comptait comme travail en cours tout processus Python lancé depuis `python-services/`, y compris les serveurs MCP résidents (`aurora_3d_mcp.py`).
+
+**Corrections à la source (aucune règle propre à un sujet).**
+- `lecture_demande.py` : champ `corps_articule` (être qui s'anime par son propre corps : membres, colonne, queue, nageoires, ailes) ; consigne « sujet nommé par les mots de la demande, aucune apparence ajoutée, l'apparence d'un personnage connu se retrouve sur de vraies images » ; une correction unique renvoyée au modèle avec la règle enfreinte avant de déclarer la lecture indisponible ; sortie CLI sur une ligne JSON.
+- `aurora_3d_pipeline.py` : option `--animation auto|on|off` et `reference_selon_animation()` — ON : la référence montre le sujet avant son mouvement et un corps articulé reçoit `REST_POSE_CUES` (pose de repos formulée pour toute anatomie : membres droits écartés du corps, rien qui se touche, bras ≈ 45° pour un bipède) ; OFF : la pose ou l'action demandée reste le sujet du rendu statique ; `auto` : comportement antérieur pour les appelants muets. La liste de verbes est supprimée.
+- Interface (`ModelView.tsx`, `services/threeDRequestReading.ts`, `services/threeDIntent.ts`) : animation ON → lecture de la demande par `lecture_demande.py`, description FLUX et contrat de référence au repos (`restStateRulesEn`), vérification de la référence contre le sujet au repos, `--animation on|off` transmis au pipeline. L'étape d'animation est factorisée (`bakeRequestedMotion`), écrit dans `mouvement/mouvement_couleurs.glb` et tourne aussi pour un maillage refusé par la porte, avec l'avertissement.
+- `pbr_cartography.py` : mode par défaut `fidele` — albédo, géométrie et rugosité du générateur intacts ; seule la loi F0 des conducteurs s'applique (aucun métal courant ne réfléchit moins d'environ 50 % : métallicité nulle sous une luminance linéaire de 0,25, pleine au-dessus de 0,45), avec la calibration globale existante (×0,52, plafond 135). L'ancienne voie reste accessible par `AURORA_PBR_CARTOGRAPHIE=heuristique`. `aurora_trellis_wrapper.py` : `AURORA_PBR_CARTOGRAPHY=0` saute l'appel.
+- Pont : chaque travail porte `AURORA_BRIDGE_JOB` (hérité par ses sous-processus) ; seule cette marque signale un travail détaché à `_frontend_workers_idle`.
+
+**Vérifié.** `tests_agi/test_animation_rest_pose.py` (8 tests : correction unique de la lecture, ON/OFF/repli, objet sans pose de repos, prompt de référence, couleurs conservées et loi F0) ; lecture réelle par le modèle local de cinq demandes (personnage, deux personnages, coffre, fontaine, loup) : sujet, mouvement et `corps_articule` justes, Natsu lu après correction.
+
 <a id="ensemble"></a>
 ## 2. Vue d’ensemble
 

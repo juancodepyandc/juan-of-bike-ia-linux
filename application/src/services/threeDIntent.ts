@@ -2024,6 +2024,29 @@ function buildKinematicsBlockForIntent(intent: ThreeDIntent, prompt: string): st
   )
 }
 
+/**
+ * Animation ON: the reference shows the subject BEFORE its movement (lecture_demande.py reads
+ * the request). A body that moves itself is shown in a neutral rest pose so the reconstruction
+ * keeps its limbs apart and the rig can carry the movement afterwards.
+ */
+export interface ThreeDRestState {
+  /** what the reference shows: the subject at rest, without the movement */
+  sujet: string
+  /** the movement that will be animated afterwards ('' when none was named) */
+  mouvement: string
+  /** the subject moves its own body (limbs, spine, tail, fins, wings) */
+  corpsArticule: boolean
+}
+
+export const REST_POSE_RULE_EN = 'REST POSE FOR RIGGING: body straight and symmetric, every limb, fin, wing or tail held slightly away from the body (arms about 45 degrees from the torso and legs slightly apart for a biped), nothing touching or crossing, facing the camera, neutral expression'
+
+export function restStateRulesEn(rest: ThreeDRestState): string[] {
+  return [
+    `ANIMATION IS ENABLED: the movement "${rest.mouvement || 'requested animation'}" is animated afterwards on the 3D model. Show the subject AT REST, in the state it is in BEFORE that movement starts. Never depict the action itself, no motion blur, no motion lines.`,
+    ...(rest.corpsArticule ? [REST_POSE_RULE_EN] : []),
+  ]
+}
+
 export async function buildFluxVisualDescription({
   prompt,
   intent,
@@ -2031,12 +2054,15 @@ export async function buildFluxVisualDescription({
   motionPreset,
   researchContext = '',
   previousHumanoidMetrics = null,
+  restState = null,
 }: {
   prompt: string
   intent: ThreeDIntent
   model: string
   motionPreset?: ThreeDMotionPreset | null
   researchContext?: string
+  /** Animation ON: describe the subject at rest; the action is animated later. */
+  restState?: ThreeDRestState | null
   /**
    * v77zl: when buildFluxVisualDescription is called as part of an auto-
    * correction pass, the previous attempt's humanoid proportion metrics
@@ -2045,7 +2071,9 @@ export async function buildFluxVisualDescription({
    */
   previousHumanoidMetrics?: HumanoidProportionMetrics | null
 }): Promise<string> {
-  prompt = stripSystemPromptBoilerplate(prompt)
+  prompt = stripSystemPromptBoilerplate(restState?.sujet || prompt)
+  // A requested pose belongs to the animation when animation is ON, never to the sculpture.
+  if (restState) motionPreset = null
   // Gather all product/subject identity knowledge
   const identityLines = intent.referencePromptAdditions.filter((line) =>
     /^(THIS IS NOT|Visual description:|DO NOT generate|Generate ONLY|The .+ is a|.+ variant:)/i.test(line),
@@ -2131,7 +2159,9 @@ CRITICAL RULES:
 - NEVER describe a generic version — describe the SPECIFIC product/character/object named
 - Explicit exclusions override default clothing, accessories, anatomy or product features. Translate "without", "remove", "entirely" and other scope words precisely. Never turn an exclusion into an addition.
 - Do not add any lettering, labels, logos, signatures, watermark, caption or "3D print" branding unless the user explicitly requests that text. Text present on an external example is not permission to reproduce it.
-- Preserve the exact requested body pose, orientation, framing and outfit. Camera view and body pose are different constraints. Use a three-quarter camera view ONLY when no view is specified; never replace a requested pose with a neutral pose.
+${restState
+    ? restStateRulesEn(restState).map((rule) => `- ${rule}`).join('\n') + '\n- Preserve the requested orientation, framing and outfit. Use a three-quarter camera view ONLY when no view is specified.'
+    : '- Preserve the exact requested body pose, orientation, framing and outfit. Camera view and body pose are different constraints. Use a three-quarter camera view ONLY when no view is specified; never replace a requested pose with a neutral pose.'}
 - Use solid black studio background only when no background is specified; keep clean edge separation.
 - CRITICAL FOR 3D RECONSTRUCTION: the image MUST show DEPTH and VOLUME — show the object at a slight angle so 3 faces are visible (front + one side + top or bottom)
 - Depth cues are a reconstruction preference, not permission to override the requested camera view or body pose.
@@ -2145,7 +2175,7 @@ ${ontologyCharacterRule}
 - For products: describe exact shape, connector types, materials, size proportions, surface finish, ALL fine details (USB ports, buttons, screws, ventilation holes, fan grilles, mesh patterns)
 - For PC cases: MUST include tempered glass panel, mesh front pattern, USB/audio ports on top I/O panel, PCIe slots at rear, PSU shroud, rubber feet, power button, fan positions, cable routing holes
 - For mechanical parts: describe geometry, moving vs fixed parts, materials, surface qualities
-- For motion/pose requests: describe EXACTLY which body parts are mobilized and HOW — if "running" then one leg forward bent at knee, other leg back pushing off, arms in opposite swing, torso leaning forward. If "punching" then one fist extended, shoulder rotated, hips turned. Show ANATOMICALLY CORRECT joint articulation.
+${restState ? '' : "- For motion/pose requests: describe EXACTLY which body parts are mobilized and HOW \u2014 if \"running\" then one leg forward bent at knee, other leg back pushing off, arms in opposite swing, torso leaning forward. If \"punching\" then one fist extended, shoulder rotated, hips turned. Show ANATOMICALLY CORRECT joint articulation."}
 - COLOR & PBR (Meshy-grade output): use VIVID SATURATED PBR-ready base colors with strong albedo contrast — clean vibrant materials, deep blacks, bright highlights, NO washed-out greys, NO muddy mids. The downstream texture-paint pass needs maximum color information to bake rich PBR maps. Mention specific material qualities (matte plastic, polished metal, brushed aluminum, glossy paint, soft fabric) so the texture pipeline produces correct metalness/roughness. For mechanical parts: clean primary colors on housings, contrasting accent colors on moving parts so motion is readable. For real-world objects in motion: describe the moving subassemblies with distinctive colors that contrast with the static frame.
 ${motionPreset ? `- The subject MUST be in this exact pose/state: ${motionPreset.promptDirective}` : ''}
 
@@ -2156,7 +2186,7 @@ Framing: ${intent.referenceFraming}
 ${productKnowledge}${motionDirective}${researchSnippet}${buildHumanoidAnatomyBlock(intent, prompt, previousHumanoidMetrics)}
 ${buildQuadrupedAnatomyBlock(intent, prompt)}
 ${buildVehicleAnatomyBlock(intent, prompt)}
-${buildKinematicsBlockForIntent(intent, prompt)}
+${restState ? '' : buildKinematicsBlockForIntent(intent, prompt)}
 ${buildCompoundSceneContract(prompt, motionPreset?.promptDirective ?? '', { isolated: intent.subjectKind === 'character' || intent.subjectKind === 'creature' })}
 
 User request: ${prompt}
