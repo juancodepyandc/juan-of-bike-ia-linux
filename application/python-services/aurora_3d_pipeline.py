@@ -6958,6 +6958,9 @@ def _run_pipeline_core(prompt: str, run_id: str, *,
                               "error": repr(_de)})
             from livraison_organisee import organiser as _organiser
             _run_root = output_dir.parent if output_dir.name in {"models", "work"} and output_dir.parent.name == run_id else output_dir
+            # AVANT le rangement : il déplace work/ dans travail/ puis le supprime (15/11/2026, premier
+            # essai réel : modele/personnages/ restait vide). Le rangement ne touche jamais modele/.
+            _personnages_livres = _livrer_personnages(_run_root, _PERSONNAGES_PLACES.get(run_id) or [], audit)
             livraison = _organiser(
                 _run_root, run_id,
                 # 30/07 (audit): on emballait final_mesh_path, FIGE avant la
@@ -6974,7 +6977,6 @@ def _run_pipeline_core(prompt: str, run_id: str, *,
                         "audit_trail": audit}
             if livraison.get("ok"):
                 _liv = livraison.get("livraison") or {}
-                _personnages_livres = _livrer_personnages(_run_root, _PERSONNAGES_PLACES.get(run_id) or [], audit)
                 if _liv.get("modele_couleurs"):
                     final_mesh_path = _liv["modele_couleurs"]
                 if _liv.get("mouvement_couleurs"):
