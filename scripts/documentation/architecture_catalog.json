@@ -16,7 +16,7 @@
   }
  },
  "source_files": 2501,
- "source_lines": 903532,
+ "source_lines": 903556,
  "static_route_declarations": 719,
  "by_repository": {
   "AuroraIA": 2180,
@@ -2179,8 +2179,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/python-services/animation_multi_sujets.py",
-   "sha256": "73794776ca2c1ef42ad089bd9520319849cc5a31fc61db9eca3222c4bf5a9f89",
-   "lines": 427,
+   "sha256": "cb147e2a517238cb9b0f4b31550a3d35b30fe9ba9c3025b8b1ad54fab657a01e",
+   "lines": 434,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -2275,8 +2275,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/python-services/aurora_3d_pipeline.py",
-   "sha256": "0a2c184018a364beaa06372857dea2d80e9264c147de07a5c9cbc71651991e45",
-   "lines": 7382,
+   "sha256": "a9c33858ff9063801c0f7bcbacecf0eec2eb9d8eb6b8cc50171e9d395d29a0f6",
+   "lines": 7384,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -15292,8 +15292,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/views/ModelView.tsx",
-   "sha256": "c8dde48aedd604c6f0e34f51403efcd21c3f7cc271410357fffb9b71d7724c32",
-   "lines": 8453
+   "sha256": "ff87891ff1961e308f2566790d9b93a0241b6345a1f86b18e90def39af37127e",
+   "lines": 8463
   },
   {
    "repo": "AuroraIA",
@@ -20370,8 +20370,8 @@
   {
    "repo": "AuroraIA",
    "path": "tests_agi/test_animation_multi_sujets.py",
-   "sha256": "5ca41f3b05f87d5dff79d3d55eef3277ae1a54cd7c0fd9c7c502cd0e05ab77b6",
-   "lines": 200,
+   "sha256": "5a0420b48bced9e247ef0cbfdc5d112769b1ca71cf55968f91b9f2d8257c4754",
+   "lines": 205,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },

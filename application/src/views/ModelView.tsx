@@ -34,7 +34,7 @@ import type { SaveDialogData } from '../components/SaveDialog.tsx'
 import SessionSwitcher from '../components/SessionSwitcher.tsx'
 import { buildThreeDModuleAssets } from '../config/moduleAssetPacks.ts'
 import { AUXILIARY_ANALYSIS_MODEL, THREE_D_MODEL_PACK_LABEL } from '../config/models.ts'
-import { fsReadText, ollamaGenerate, clearResumableJob, comfyuiCancelPrompt, comfyuiGetHistory, comfyuiGetImage, comfyuiQueuePrompt, freeGpuBeforeFlux, fsExists, fsMkdir, fsReadBinary, fsWriteBinary, getWorkspacePath, onPythonProgress, peekResumableJob, runPythonScript as runPythonScriptBase, toAssetUrl } from '../hooks/useTauri.ts'
+import { fsReadText, ollamaGenerate, clearResumableJob, comfyuiCancelPrompt, comfyuiGetHistory, comfyuiGetImage, comfyuiQueuePrompt, freeGpuBeforeFlux, fsExists, fsMkdir, fsReadBinary, fsWriteBinary, getWorkspacePath, onPythonProgress, peekResumableJob, runPythonScript as runPythonScriptBase, toAssetUrl, comfyuiUploadImage } from '../hooks/useTauri.ts'
 import { emitGenerationFx, fxAsk } from '../components/generationFx/fxBus.ts'
 import { threeDPhaseForStage } from '../components/generationFx/fxPhases.ts'
 import { StudioDiagnosticsPanel, StudioHero } from '../components/StudioHero.tsx'
@@ -1218,6 +1218,16 @@ export function findSessionAssets(session: ConversationSession) {
     if (!meshPath) meshPath = [...paths].filter(path => /\.(glb|gltf|obj)$/i.test(path)).sort((a,b) => _meshRank(b)-_meshRank(a))[0] || null
   }
   return { referencePath, meshPath }
+}
+
+/**
+ * Met une image d'ancrage là où LoadImage la lit : le dossier d'entrée de ComfyUI (ou son API
+ * d'envoi quand le dossier n'est pas connu). Un nom de fichier rangé ailleurs était retiré en
+ * silence par le pont, et chaque vue repartait du seul texte (15/11/2026).
+ */
+async function stageSeedForComfy(blob: Blob, comfyuiPath: string | null | undefined, prefix: string): Promise<string> {
+  if (comfyuiPath) return (await stageBlobToComfyInput(blob, comfyuiPath, prefix)).filename
+  return (await comfyuiUploadImage(blob, `${Date.now()}_${prefix}.png`)).name
 }
 
 async function stageExistingReference(sourcePath: string, comfyuiPath: string, targetName: string) {
@@ -5672,7 +5682,7 @@ export default function ModelView() {
               const frontBlob = existingFrontAssignment.externalReference.blob
               const frontPath = `${runPaths.references}/${runId}_front_seed.png`
               await fsWriteBinary(frontPath, Array.from(new Uint8Array(await frontBlob.arrayBuffer())))
-              frontSeedFilename = `${runId}_front_seed.png`
+              frontSeedFilename = await stageSeedForComfy(frontBlob, comfyuiPath, `${runId}_front_seed`)
             } else if (syntheticFrontAssignment) {
               // Front view is also synthetic — generate it FIRST without seed so it becomes the consistency anchor
               setPhase('Référence photo — génération de la vue front ancre...', 24)
@@ -5693,7 +5703,7 @@ export default function ModelView() {
                 // Stage the front view for seeding other views
                 const frontPath = `${runPaths.references}/${runId}_front_synth_seed.png`
                 await fsWriteBinary(frontPath, Array.from(new Uint8Array(await frontBlob.arrayBuffer())))
-                frontSeedFilename = `${runId}_front_synth_seed.png`
+                frontSeedFilename = await stageSeedForComfy(frontBlob, comfyuiPath, `${runId}_front_synth_seed`)
                 pushLiveRef('front', toAssetUrl(frontPath))
 
                 // Mark front as resolved so generateAndVerifySyntheticViews skips it
