@@ -22,6 +22,10 @@ LISSAGE_DEG = 35.0
 def finaliser(m: trimesh.Trimesh, lissage_deg: float = LISSAGE_DEG) -> trimesh.Trimesh:
     """Normales par coin (lissées entre faces à moins de `lissage_deg`), UV triplanaires en mètres."""
     m = trimesh.Trimesh(vertices=np.asarray(m.vertices, dtype=np.float64), faces=np.asarray(m.faces), process=False)
+    # Triangles d'aire nulle (toits, berges, raccords) : sans effet visuel, mais ils font tomber
+    # `vertex_faces` de trimesh dans une boucle lente avec une trace d'erreur (village du 15/11/2026).
+    if len(m.faces):
+        m.update_faces(m.nondegenerate_faces(height=1e-10))
     m.remove_unreferenced_vertices()
     if len(m.faces) == 0:
         return m

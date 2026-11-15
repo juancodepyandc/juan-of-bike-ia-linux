@@ -47,10 +47,15 @@ def rendre_vues(glb: str | Path, dossier: str | Path, *, vues: Iterable[str] = (
     dossier = Path(dossier)
     dossier.mkdir(parents=True, exist_ok=True)
     options_hdri: tuple[str, ...] = ()
+    eclairage = None
     if hdri:
         chemin = HDRI / f"{hdri}.exr"
         if chemin.is_file():
             options_hdri = (f"--hdri-file={chemin}", "-f")
+            eclairage = str(chemin)
+        else:
+            # jamais en silence : un rendu sans l'éclairage demandé est signalé dans le rapport
+            eclairage = f"absente : {chemin}"
     rendus = []
     for nom in vues:
         png = dossier / f"{prefixe}_{nom}.png"
@@ -75,4 +80,5 @@ def rendre_vues(glb: str | Path, dossier: str | Path, *, vues: Iterable[str] = (
         planche = dossier / f"planche_{prefixe}.png"
         toile.save(planche)
     return {"ok": len(reussis) == len(rendus), "rendus": rendus, "planche": str(planche) if planche else None,
+            "hdri": eclairage,
             "blanc_pur_max": max((r.get("part_blanc_pur", 0.0) for r in reussis), default=None)}
