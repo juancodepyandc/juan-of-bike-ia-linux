@@ -248,6 +248,33 @@ class ContractAndMedium(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertIn("immersion", report["error"])
 
+    def test_a_lone_swimmer_gets_its_medium_built_too(self):
+        # the interface now sends a single subject in a liquid here (singleSubjectInMedium) instead of the
+        # plain motion engine, which animated the swimmer in empty air
+        alone = {"source": "llm", "sujets": [self.CONTRACT["sujets"][1]]}
+        with tempfile.TemporaryDirectory() as tmp:
+            body = write_glb(Path(tmp) / "corps.glb")
+            composed = []
+
+            def animate(source, output, prompt, model, mode, subject, source_description, mouvement_en=None):
+                Path(output).parent.mkdir(parents=True, exist_ok=True)
+                write_glb(Path(output), animated=True)
+                return {"ok": True, "path": output}
+
+            def with_medium(entries, out):
+                composed.append([(e["nom"], e["milieu"].get("relation")) for e in entries])
+                res = ams.composer(entries, out)
+                res["porte"] = {"ok": True, "raisons": []}
+                return res
+
+            report = ams.animer_sujets(
+                "Glouk la baleine qui nage", [{"index": 0, "glb": str(body), "reference": None, "sujet": 0}],
+                Path(tmp) / "mouvement", "modele", contrat=alone, animer=animate, composer_milieu=with_medium,
+                identifier=lambda *_: self.fail("the contract names the only subject: nothing to recognise"))
+            self.assertEqual(composed, [[("Glouk", "immerge")]])
+            self.assertTrue(report["ok"] and report["milieu_ok"])
+            self.assertTrue(Path(report["path"]).is_file())
+
 
 if __name__ == "__main__":
     unittest.main()

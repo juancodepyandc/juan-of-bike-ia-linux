@@ -39,6 +39,17 @@ export function namesASubject(reading: ThreeDRequestReading | null): boolean {
   return reading?.source === 'llm' && (reading.sujets || []).some((subject) => subject.nomme)
 }
 
+/**
+ * Un seul sujet dont le mouvement se fait dans un liquide ou un gaz (« un homme qui nage ») : son
+ * milieu doit être construit autour du corps animé, comme pour une scène à plusieurs sujets. Sans
+ * cela, le nageur seul partait vers l'animation simple et nageait dans le vide.
+ */
+export function singleSubjectInMedium(reading: ThreeDRequestReading | null): boolean {
+  const subjects = reading?.source === 'llm' ? reading.sujets || [] : []
+  const matter = subjects.length === 1 ? subjects[0].milieu?.matiere : null
+  return matter === 'liquide' || matter === 'gaz'
+}
+
 export async function readThreeDRequest(workspacePath: string, prompt: string): Promise<ThreeDRequestReading | null> {
   try {
     const output = await runPythonScript(`${workspacePath}/python-services/lecture_demande.py`, ['--prompt', prompt])

@@ -4,7 +4,7 @@ import { resolveThreeDRelation, type ThreeDRelation } from '../utils/threeDRelat
 import { retainThreeDRequirements, composeThreeDRequirements } from '../utils/threeDConversationContext.ts'
 import { binaryBase64 } from '../utils/binaryBase64.ts'
 import { parsePythonResult } from '../utils/pythonResult.ts'
-import { namesASubject, readThreeDRequest, restStateFromReading, restStateVerificationPrompt, type ThreeDRequestReading } from '../services/threeDRequestReading'
+import { namesASubject, readThreeDRequest, singleSubjectInMedium, restStateFromReading, restStateVerificationPrompt, type ThreeDRequestReading } from '../services/threeDRequestReading'
 import { materialChannels } from '../utils/materialChannels.ts'
 import { recoverModelDelivery } from '../utils/recoverModelDelivery.ts'
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -314,8 +314,12 @@ function buildColorLoadOutputDir(workspacePath: string, meshPath: string) {
   return `${workspacePath}/output/3d/color_load_${Date.now()}`
 }
 
-/** Chaîne « identité par de vraies images » : prête côté interface, activée après sa validation. */
-const IDENTITY_FROM_REAL_IMAGES = false
+/**
+ * Chaîne « identité par de vraies images » (15/11/2026) : un sujet NOMMÉ sans photo jointe est confié au
+ * pipeline, qui établit son identité sur de vraies images, conditionne la référence par elles et la juge
+ * contre elles. Activée : le dessin d'un nom à partir du seul texte donnait des personnages génériques.
+ */
+const IDENTITY_FROM_REAL_IMAGES = true
 
 function parseLastJsonLine(output: string) {
   return parsePythonResult<ModelGenerationResult>(output)
@@ -345,19 +349,29 @@ async function bakeRequestedMotion(options: {
   characters?: { glb: string; reference?: string | null; sujet?: number }[]
   /** request contract v2 (journal/contrat_demande.json): one reading of the sentence for the whole run */
   contractPath?: string | null
+  /** the contract's only subject moves in a liquid or a gas: its medium is built around the moving body */
+  mediumSubject?: boolean
 }): Promise<{ path: string | null; summary: string }> {
   const output = `${options.motionDir}/mouvement_couleurs.glb`
   try { await fsMkdir(options.motionDir) } catch { /* déjà là */ }
-  if (options.characters && options.characters.length >= 2) {
+  const several = options.characters && options.characters.length >= 2 ? options.characters : null
+  // Un seul sujet dans un milieu : même module que plusieurs sujets, qui construit et juge le milieu.
+  const inMedium = !several && options.mediumSubject && options.contractPath && options.characterRoute
+    ? [{ glb: options.meshPath, reference: options.characters?.[0]?.reference || null, sujet: 0 }]
+    : null
+  const subjects = several || inMedium
+  if (subjects) {
     // Plusieurs sujets : la scène fusionnée n'est pas UN corps. Chacun est reconnu, animé avec son
     // propre mouvement, puis recomposé à sa place (animation_multi_sujets.py).
     try {
-      options.setPhase(`Animation — ${options.characters.length} sujets, chacun son mouvement...`, 90)
+      options.setPhase(several
+        ? `Animation — ${subjects.length} sujets, chacun son mouvement...`
+        : 'Animation — mouvement et milieu (liquide ou gaz) construits ensemble...', 90)
       const args = ['--demande', options.requirements, '--dossier', options.motionDir, '--modele', options.model]
-      for (const character of options.characters) args.push('--personnage', character.glb)
-      for (const character of options.characters) args.push('--reference', character.reference || '')
-      if (options.characters.every((character) => typeof character.sujet === 'number')) {
-        for (const character of options.characters) args.push('--sujet', String(character.sujet))
+      for (const character of subjects) args.push('--personnage', character.glb)
+      for (const character of subjects) args.push('--reference', character.reference || '')
+      if (subjects.every((character) => typeof character.sujet === 'number')) {
+        for (const character of subjects) args.push('--sujet', String(character.sujet))
       }
       if (options.contractPath) args.push('--contrat', options.contractPath)
       const multiOutput = await options.run(`${options.workspacePath}/python-services/animation_multi_sujets.py`, args, { resumeKey: 'model_ia' })
@@ -366,8 +380,9 @@ async function bakeRequestedMotion(options: {
         return {
           path: multi.path,
           summary: multi.ok
-            ? `${options.characters.length} sujets animés, chacun avec son propre mouvement.`
-            : `Animation partielle (${multi.anime ?? 0}/${options.characters.length}) : ${String(multi.error || '').slice(0, 140)}`,
+            ? (several ? `${subjects.length} sujets animés, chacun avec son propre mouvement.`
+              : 'Sujet animé dans son milieu, milieu construit et jugé.')
+            : `Animation partielle (${multi.anime ?? 0}/${subjects.length}) : ${String(multi.error || '').slice(0, 140)}`,
         }
       }
       return { path: null, summary: `Animation multi-sujets non produite (${String(multi?.error || 'sans résultat').slice(0, 120)}).` }
@@ -6477,7 +6492,7 @@ export default function ModelView() {
               subject: editPlan.continuation ? rigSubject : intent.subjectKind === 'character' ? 'humanoid' : intent.subjectKind === 'creature' ? 'quadruped' : 'none',
               sourceDescription: sourceContext?.description || composeThreeDRequirements(currentPrompt, effectiveHistory),
               characterRoute: editPlan.continuation || isCharacterLike(intent),
-              setPhase, setProgress, run: runPythonScript, characters: deliveredCharacters, contractPath: requestContractPath,
+              setPhase, setProgress, run: runPythonScript, characters: deliveredCharacters, contractPath: requestContractPath, mediumSubject: singleSubjectInMedium(requestReading),
             })
             if (motion.path) {
               lastMeshPathRef.current = motion.path
@@ -7049,7 +7064,7 @@ export default function ModelView() {
               subject: editPlan.continuation ? rigSubject : intent.subjectKind === 'character' ? 'humanoid' : intent.subjectKind === 'creature' ? 'quadruped' : 'none',
               sourceDescription: sourceContext?.description || composeThreeDRequirements(currentPrompt, effectiveHistory),
               characterRoute: editPlan.continuation || isCharacter,
-              setPhase, setProgress, run: runPythonScript, characters: deliveredCharacters, contractPath: requestContractPath,
+              setPhase, setProgress, run: runPythonScript, characters: deliveredCharacters, contractPath: requestContractPath, mediumSubject: singleSubjectInMedium(requestReading),
             })
             autoMotionSummary = motion.summary
             if (motion.path) {

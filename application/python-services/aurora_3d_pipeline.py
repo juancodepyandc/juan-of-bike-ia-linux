@@ -3846,9 +3846,9 @@ def _run_pipeline_core(prompt: str, run_id: str, *,
         except Exception:  # noqa: BLE001
             pass
 
-    # DÉSACTIVÉ PAR DÉFAUT (AURORA_IDENTITE_IMAGES=1 pour l'essayer) : les modules d'identité
-    # (identite_visuelle, juge_identite, reference_identite) attendent leur relecture et un essai réel ;
-    # ils vivent sur des branches locales, voir le document maître § 1.43.
+    # ACTIVÉ PAR DÉFAUT depuis la fusion relue du 15/11/2026 (AURORA_IDENTITE_IMAGES=0 pour la couper) :
+    # identite_visuelle établit le dossier, reference_identite écrit la consigne (pixels seulement, aucun
+    # attribut ni vêtement en texte), juge_identite refuse une référence qui ne ressemble pas aux ancres.
     # IDENTITÉ PAR DE VRAIES IMAGES (15/11/2026). « Zig et Sharko » sortait en hyène tachetée et requin
     # génériques : la référence était dessinée par FLUX à partir d'un texte (un dictionnaire de noms codé en
     # dur). Pour tout sujet NOMMÉ sans photo de l'utilisateur, l'identité vient désormais d'un dossier
@@ -3860,7 +3860,7 @@ def _run_pipeline_core(prompt: str, run_id: str, *,
     _photos_utilisateur = [im for im in (images or []) if str(im) not in set(
         os.environ.get("AURORA_SYNTHETIC_REFERENCES", "").split("::")) - {""}]
     if (_contrat and any(s.get("nomme") for s in _contrat.get("sujets") or [])
-            and not _photos_utilisateur and os.environ.get("AURORA_IDENTITE_IMAGES", "0") == "1"):
+            and not _photos_utilisateur and os.environ.get("AURORA_IDENTITE_IMAGES", "1") != "0"):
         _ri = _reference_par_identite(_contrat, run_id, output_dir, animation, audit)
         if not _ri.get("ok"):
             return {"ok": False, "schema": "aurora.pipeline.v1", "run_id": run_id, "prompt": prompt,

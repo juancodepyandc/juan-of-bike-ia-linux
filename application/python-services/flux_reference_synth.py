@@ -135,15 +135,166 @@ def upload_reference_image(image_path: str | Path, comfy_base: str = COMFY_BASE)
         return None
 
 
+# Fond sur lequel une découpe est aplatie avant d'être téléversée (15/11/2026). Le LoadImage de
+# ComfyUI ne donne à VAEEncode que les canaux RGB (l'alpha part dans un MASK que la chaîne de
+# référence n'utilise pas) : sous alpha = 0, une découpe porte du noir (composition sur un fond
+# vide) ou toute la photo d'origine (alpha posé par `putalpha`), que FLUX lirait comme une partie
+# de la référence — l'autre personnage d'une image de groupe compris. Blanc : le fond que les
+# prompts de référence demandent et que les détecteurs aval traitent comme fond
+# (`_foreground_metrics` : RGB > 242 ; `trellis_multi_character.detect_and_crop_characters` :
+# min(RGB) ≥ 240 sur une image opaque).
+FOND_REFERENCE = (255, 255, 255)
+
+
+class ReferenceIndisponible(RuntimeError):
+    """Une image de référence n'a pas pu être lue, préparée ou téléversée : aucun rendu n'est lancé.
+
+    `details` garde, image par image, ce qui a été fait avant l'échec (source, copie envoyée, nom
+    ComfyUI) pour que l'appelant rapporte la cause au lieu de rendre depuis le texte seul — le
+    défaut mesuré sur les six rendus du 15/11, dont aucun ne portait de LoadImage.
+    """
+
+    def __init__(self, message: str, details: list[dict]):
+        super().__init__(message)
+        self.details = details
+
+
+def preparer_reference(source: str | Path, destination: str | Path,
+                       fond: tuple[int, int, int] = FOND_REFERENCE) -> dict:
+    """Écrit `destination` (PNG RGB) : l'image exactement telle que FLUX doit la voir.
+
+    L'orientation EXIF est appliquée (la copie PNG la perdrait) et une image à transparence est
+    composée sur `fond` (opérateur « over »), parce que LoadImage jetterait l'alpha. Retourne
+    {"envoyee", "aplatie", "taille"} ; lève l'erreur de Pillow si l'image est illisible.
+    """
+    from PIL import Image, ImageOps  # Pillow seulement quand une référence est préparée
+
+    dest = Path(destination)
+    with Image.open(source) as ouverte:
+        image = ImageOps.exif_transpose(ouverte)
+        image.load()
+        transparence = image.mode in ("RGBA", "LA", "PA") or (
+            image.mode == "P" and "transparency" in image.info)
+        rgba = image.convert("RGBA")
+    aplatie = bool(transparence and rgba.getchannel("A").getextrema()[0] < 255)
+    if aplatie:
+        fond_plein = Image.new("RGBA", rgba.size, tuple(int(c) for c in fond) + (255,))
+        rgb = Image.alpha_composite(fond_plein, rgba).convert("RGB")
+    else:
+        rgb = rgba.convert("RGB")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    rgb.save(dest, format="PNG")
+    return {"envoyee": str(dest), "aplatie": aplatie, "taille": [rgb.width, rgb.height]}
+
+
+def televerser_references(chemins: list[str | Path], *, dossier: str | Path, prefixe: str,
+                          comfy_base: str = COMFY_BASE, televerser=None) -> list[dict]:
+    """Prépare puis téléverse chaque référence, dans l'ordre « image 1, image 2… » du prompt.
+
+    Chaque image est recopiée sous un nom propre au run et à son rang (`<prefixe>_ancre_<k>.png`) :
+    le dossier d'entrée de ComfyUI est commun à tous les runs et le téléversement écrase
+    (`overwrite=true`). Deux ancres de sujets différents qui portent le même nom sur le disque
+    (`<sujet>/ancre_1.png`) se seraient écrasées et les deux LoadImage auraient chargé le même
+    personnage. `televerser(chemin, comfy_base) -> nom | None` vaut `upload_reference_image` par
+    défaut (injectable). Le premier échec lève ReferenceIndisponible : une image n'est jamais
+    retirée en silence de la chaîne.
+    """
+    envoyer = televerser or upload_reference_image
+    if not chemins:
+        raise ReferenceIndisponible("aucune image de référence fournie", [])
+    racine = re.sub(r"[^\w.-]+", "_", str(prefixe)) or "reference"
+    details: list[dict] = []
+    for rang, chemin in enumerate(chemins, start=1):
+        source = Path(chemin)
+        entree: dict = {"image": rang, "source": str(source)}
+        details.append(entree)
+        if not source.is_file():
+            raise ReferenceIndisponible("référence %d introuvable : %s" % (rang, source), details)
+        try:
+            entree.update(preparer_reference(source, Path(dossier) / ("%s_ancre_%d.png" % (racine, rang))))
+        except Exception as exc:  # noqa: BLE001 — converti en échec bruyant, jamais avalé
+            raise ReferenceIndisponible("référence %d illisible : %s (%s: %s)"
+                                        % (rang, source, type(exc).__name__, exc), details) from exc
+        nom = envoyer(entree["envoyee"], comfy_base)
+        if not nom:
+            raise ReferenceIndisponible("téléversement refusé par ComfyUI pour la référence %d : %s"
+                                        % (rang, source), details)
+        entree["comfy_name"] = str(nom)
+    noms = [entree["comfy_name"] for entree in details]
+    if len(set(noms)) != len(noms):
+        raise ReferenceIndisponible("deux références ont reçu le même nom ComfyUI : %s" % noms, details)
+    return details
+
+
+# Négatif générique du nœud "33", texte inchangé du graphe FLUX.2 validé. Exposé (15/11/2026) pour
+# qu'un appelant qui écrit son propre négatif — la référence conditionnée par l'identité y ajoute
+# les absences du dossier et les marques du médium d'origine — reprenne ce socle au lieu de le
+# recopier.
+NEGATIF_PAR_DEFAUT = (
+    "cropped, cut off, out of frame, partial view, close-up, truncated body, "
+    "missing limbs, deformed hands, extra fingers, malformed limbs, blurry, low quality, "
+    "unwanted background crowd, random pedestrians, deformed background bystanders, "
+    "out-of-scale giant figures, distorted crowd, blurry humanoid blobs, "
+    "random text, misspelled text, gibberish lettering, corrupted words, "
+    "watermark, signature, duplicate subject, split panels, multi-panel layout, "
+    "collage, cluttered background"
+)
+
+# Mode multi-références (15/11/2026). Chaque image suit la chaîne de `createFlux2Workflow`
+# (interface, `src/utils/fluxWorkflow.ts`) : LoadImage → ImageScaleToTotalPixels → VAEEncode →
+# ReferenceLatent, accrochée au positif ET au négatif. ReferenceLatent ajoute son latent EN FIN de
+# liste (`conditioning_set_values(..., append=True)`, `comfy_extras/nodes_edit_model.py`) et FLUX.2
+# place la k-ième référence à l'indice 10·k de ses positions (`comfy/model_detection.py` :
+# `default_ref_method="index"`, `ref_index_scale=10.0`) : le premier maillon accroché au texte est
+# « image 1 ». La référence est présente des deux côtés du CFG : l'écart positif − négatif ne porte
+# que le texte (style, pose), l'identité reste portée par les pixels.
+# 0,5 MP par défaut : une référence d'environ 1 MP ajoute ≈ 4k jetons (estimation du vérificateur,
+# plan du 15/11) ; 0,25 à 0,5 MP visés. ImageScaleToTotalPixels garde les proportions : ni recadrage
+# à 320 px, ni étirement, ni verrou img2img à 0,08 dans ce mode.
+REFERENCE_MEGAPIXELS = 0.5
+# Bornes du nœud ImageScaleToTotalPixels de ComfyUI (`comfy_extras/nodes_post_processing.py`).
+_MEGAPIXELS_MIN, _MEGAPIXELS_MAX = 0.01, 16.0
+# Premier identifiant des chaînes de référence ; 10 identifiants par image, au-delà des nœuds 6-54
+# du graphe historique (aucune collision avec la chaîne mono-référence 50-54).
+_BASE_NOEUDS_REFERENCE = 100
+
+
 def build_workflow(prompt: str, *, width: int = 1024, height: int = 1024,
                    steps: int = 25, seed: int | None = None,
                    filename_prefix: str = "aurora_flux", trained_adapter: bool = True,
                    reference_comfy_name: str | None = None,
-                   reference_denoise: float = 0.08) -> dict:
+                   reference_denoise: float = 0.08,
+                   reference_comfy_names: list[str] | None = None,
+                   reference_megapixels: float = REFERENCE_MEGAPIXELS,
+                   negative_prompt: str | None = None) -> dict:
     """FLUX.2-dev workflow (encodeur Mistral-3, Flux2Scheduler + SamplerCustomAdvanced).
     Poids REELS presents (diffusion 33 Go + Mistral 16.8 Go + VAE 0.31 Go).
     Miroir du template officiel ComfyUI image_flux2_text_to_image, avec support
-    optionnel ReferenceLatent pour ancrer l'identite visuelle officielle d'un personnage."""
+    optionnel ReferenceLatent pour ancrer l'identite visuelle officielle d'un personnage.
+
+    `reference_comfy_names` (15/11/2026) : plusieurs images déjà téléversées dans ComfyUI, dans
+    l'ordre « image 1, image 2… » que le prompt nomme. Chacune passe par ImageScaleToTotalPixels
+    (`reference_megapixels`) puis VAEEncode et un ReferenceLatent chaîné sur le positif (nœud 6)
+    et sur le négatif (nœud 33), au départ d'un EmptyFlux2LatentImage avec Flux2Scheduler. Ce mode
+    exclut `reference_comfy_name` (mono-référence historique, inchangé) ; une liste vide, un nom
+    vide ou deux fois le même nom lèvent ValueError : une identité qui ne passerait plus par les
+    pixels doit échouer bruyamment, jamais se dégrader en rendu depuis le texte seul.
+    `negative_prompt` remplace le négatif générique du nœud 33 (`NEGATIF_PAR_DEFAUT` sinon)."""
+    multi = reference_comfy_names is not None
+    if multi:
+        noms_references = [str(nom or "").strip() for nom in reference_comfy_names]
+        if not noms_references or not all(noms_references):
+            raise ValueError("reference_comfy_names : liste vide ou nom vide — "
+                             "aucune identité ne passerait par les pixels")
+        if reference_comfy_name:
+            raise ValueError("reference_comfy_name et reference_comfy_names sont exclusifs")
+        if len(set(noms_references)) != len(noms_references):
+            raise ValueError("reference_comfy_names : deux références portent le même nom ComfyUI "
+                             "et chargeraient le même fichier")
+        megapixels = float(reference_megapixels)
+        if not _MEGAPIXELS_MIN <= megapixels <= _MEGAPIXELS_MAX:
+            raise ValueError("reference_megapixels hors des bornes d'ImageScaleToTotalPixels "
+                             "(%.2f à %.1f) : %r" % (_MEGAPIXELS_MIN, _MEGAPIXELS_MAX, reference_megapixels))
     if seed is None:
         seed = randint(1, 2**32 - 1)
     is_canonical_lock = bool(reference_comfy_name and reference_denoise < 0.30)
@@ -174,13 +325,7 @@ def build_workflow(prompt: str, *, width: int = 1024, height: int = 1024,
         "33": {
             "class_type": "CLIPTextEncode",
             "inputs": {"clip": ["11", 0], "text": (
-                "cropped, cut off, out of frame, partial view, close-up, truncated body, "
-                "missing limbs, deformed hands, extra fingers, malformed limbs, blurry, low quality, "
-                "unwanted background crowd, random pedestrians, deformed background bystanders, "
-                "out-of-scale giant figures, distorted crowd, blurry humanoid blobs, "
-                "random text, misspelled text, gibberish lettering, corrupted words, "
-                "watermark, signature, duplicate subject, split panels, multi-panel layout, "
-                "collage, cluttered background"
+                NEGATIF_PAR_DEFAUT if negative_prompt is None else str(negative_prompt)
             )},
         },
         "27": {
@@ -258,6 +403,30 @@ def build_workflow(prompt: str, *, width: int = 1024, height: int = 1024,
                 "inputs": {"conditioning": ["33", 0], "latent": ["52", 0]},
             }
 
+    if multi:
+        # Hors verrou et hors restyle (aucun reference_comfy_name) : le graphe de base est celui du
+        # texte seul — Flux2Scheduler, EmptyFlux2LatentImage "27", CFG 5,0 — et seules les entrées
+        # positive/négative du guide passent au bout des chaînes de référence.
+        positif, negatif = ["6", 0], ["33", 0]
+        for rang, nom in enumerate(noms_references):
+            base = _BASE_NOEUDS_REFERENCE + 10 * rang
+            charge, echelle, code, ref_pos, ref_neg = (str(base + j) for j in range(5))
+            workflow[charge] = {"class_type": "LoadImage", "inputs": {"image": nom}}
+            workflow[echelle] = {
+                "class_type": "ImageScaleToTotalPixels",
+                "inputs": {"image": [charge, 0], "upscale_method": "lanczos",
+                           "megapixels": megapixels, "resolution_steps": 1},
+            }
+            workflow[code] = {"class_type": "VAEEncode",
+                              "inputs": {"pixels": [echelle, 0], "vae": ["10", 0]}}
+            workflow[ref_pos] = {"class_type": "ReferenceLatent",
+                                 "inputs": {"conditioning": positif, "latent": [code, 0]}}
+            workflow[ref_neg] = {"class_type": "ReferenceLatent",
+                                 "inputs": {"conditioning": negatif, "latent": [code, 0]}}
+            positif, negatif = [ref_pos, 0], [ref_neg, 0]
+        workflow["26"]["inputs"]["positive"] = positif
+        workflow["26"]["inputs"]["negative"] = negatif
+
     if trained_adapter:
         import sys
         sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -318,6 +487,45 @@ class JobLostError(RuntimeError):
     """Le job n'existe plus cote ComfyUI (serveur redemarre en cours de route)."""
 
 
+class JobFailedError(RuntimeError):
+    """ComfyUI a execute le job et l'a termine en ERREUR (status_str == "error", completed == False).
+
+    15/11/2026 : un rendu d'identite a echoue en CUDA out of memory (un modele Ollama recharge pendant le
+    rendu par un autre processus) ; le job restait dans l'historique, jamais « completed », et l'attente
+    durait les 1800 s du delai en silence. `memoire` dit si l'erreur est un manque de memoire GPU, que
+    l'appelant peut corriger en liberant la memoire puis en re-soumettant.
+    """
+
+    def __init__(self, message: str, *, memoire: bool = False):
+        super().__init__(message)
+        self.memoire = memoire
+
+
+def _echec_execution(statut: dict) -> JobFailedError:
+    """L'erreur d'execution rapportee par ComfyUI (noeud et message), telle quelle."""
+    for message in statut.get("messages") or []:
+        if (isinstance(message, (list, tuple)) and len(message) > 1 and message[0] == "execution_error"
+                and isinstance(message[1], dict)):
+            details = message[1]
+            texte = str(details.get("exception_message") or "").strip()
+            noeud = details.get("node_type") or details.get("node_id") or "?"
+            return JobFailedError(f"ComfyUI a echoue au noeud {noeud} : {texte}"[:600],
+                                  memoire="out of memory" in texte.lower())
+    return JobFailedError("ComfyUI a termine le job en erreur, sans message d'execution")
+
+
+def _liberer_comfy(comfy_base: str) -> None:
+    """Decharge les modeles de ComfyUI et libere sa memoire. Best-effort, ne bloque jamais."""
+    try:
+        req = urllib.request.Request(
+            f"{comfy_base}/free", data=b'{"unload_models": true, "free_memory": true}',
+            headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=10) as r:
+            r.read()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _job_known(prompt_id: str, comfy_base: str) -> bool:
     """Le job est-il encore dans la queue (running/pending) de ComfyUI ?"""
     try:
@@ -349,8 +557,12 @@ def poll_history(prompt_id: str, *, comfy_base: str = COMFY_BASE,
             ) as r:
                 data = json.loads(r.read().decode("utf-8"))
             entry = data.get(prompt_id)
-            if entry and entry.get("status", {}).get("completed"):
+            statut = (entry or {}).get("status") or {}
+            if entry and statut.get("completed"):
                 return entry
+            # Un job termine en erreur ne sera jamais « completed » : le dire tout de suite.
+            if entry and statut.get("status_str") == "error":
+                raise _echec_execution(statut)
             # Job absent de l'historique: encore en queue ? Si ComfyUI a ete
             # tue/redemarre (OOM...), sa queue est VIDE et le job n'existera
             # JAMAIS -> attendre 1h en silence est un faux gel. 5 constats
@@ -363,7 +575,7 @@ def poll_history(prompt_id: str, *, comfy_base: str = COMFY_BASE,
                         "(ComfyUI redemarre ?) -> re-soumettre")
             else:
                 lost_checks = 0
-        except JobLostError:
+        except (JobLostError, JobFailedError):
             raise
         except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError):
             pass
@@ -1265,20 +1477,56 @@ def synth(prompt: str, run_id: str, *,
           seed: int | None = None,
           comfy_base: str = COMFY_BASE,
           reference_image: str | Path | None = None,
-          reference_denoise: float = 0.08) -> dict:
+          reference_denoise: float = 0.08,
+          reference_images: list[str | Path] | None = None,
+          reference_megapixels: float = REFERENCE_MEGAPIXELS,
+          negative_prompt: str | None = None) -> dict:
+    """Rend une image FLUX.2 et la copie en `<output_dir>/<run_id>_reference.png`.
+
+    `reference_images` (15/11/2026) : images dont l'identité doit passer par les pixels, dans
+    l'ordre « image 1, image 2… » du prompt. Chacune est préparée (alpha aplati, nom propre au run)
+    et téléversée par `upload_reference_image` AVANT la construction du graphe ; une image absente,
+    illisible ou refusée par ComfyUI arrête le rendu (`ok: False` avec la cause) au lieu de le
+    laisser partir du texte seul. Exclusif avec `reference_image` (mono-référence historique,
+    inchangé). `negative_prompt` remplace le négatif générique du graphe.
+    """
     if not prompt.strip():
         return {"ok": False, "error": "empty prompt"}
     if not run_id.strip():
         return {"ok": False, "error": "empty run_id"}
 
     started_at = time.time()
-    ref_comfy_name = upload_reference_image(reference_image, comfy_base) if reference_image else None
-    workflow = build_workflow(
-        prompt, width=width, height=height, steps=steps,
-        seed=seed, filename_prefix=f"aurora_{run_id}",
-        reference_comfy_name=ref_comfy_name,
-        reference_denoise=reference_denoise,
-    )
+    references_envoyees: list[dict] | None = None
+    if reference_images is not None:
+        if reference_image:
+            return {"ok": False, "error": "reference_image et reference_images sont exclusifs"}
+        try:
+            # Les copies aplaties des ancres (images protégées d'une série) restent hors de l'arborescence
+            # servie par le pont et le tunnel (relecture du 15/11/2026) : dossier privé, ignoré par git.
+            references_envoyees = televerser_references(
+                list(reference_images), dossier=Path(__file__).resolve().parents[2] / ".aurora" / "identite" / "_envois",
+                prefixe=run_id, comfy_base=comfy_base)
+        except ReferenceIndisponible as exc:
+            return {"ok": False, "error": f"reference indisponible: {exc}", "references": exc.details}
+        try:
+            workflow = build_workflow(
+                prompt, width=width, height=height, steps=steps,
+                seed=seed, filename_prefix=f"aurora_{run_id}",
+                reference_comfy_names=[entree["comfy_name"] for entree in references_envoyees],
+                reference_megapixels=reference_megapixels,
+                negative_prompt=negative_prompt,
+            )
+        except ValueError as exc:
+            return {"ok": False, "error": f"workflow refused: {exc}", "references": references_envoyees}
+    else:
+        ref_comfy_name = upload_reference_image(reference_image, comfy_base) if reference_image else None
+        workflow = build_workflow(
+            prompt, width=width, height=height, steps=steps,
+            seed=seed, filename_prefix=f"aurora_{run_id}",
+            reference_comfy_name=ref_comfy_name,
+            reference_denoise=reference_denoise,
+            negative_prompt=negative_prompt,
+        )
     # FLUX.1: le seed vit dans le KSampler "31". (Sous FLUX.2 il vivait dans le
     # noeud RandomNoise "42"; on lit les deux pour rester robuste si le graphe change.)
     seed_used = (workflow.get("31", {}).get("inputs", {}).get("seed")
@@ -1295,6 +1543,16 @@ def synth(prompt: str, run_id: str, *,
         except JobLostError:
             # ComfyUI tue/redemarre en cours de job (OOM...): la queue est vide,
             # le job n'aboutira jamais. On re-soumet UNE fois sur le serveur neuf.
+            prompt_id = post_prompt(workflow, comfy_base)
+            entry = poll_history(prompt_id, comfy_base=comfy_base)
+        except JobFailedError as echec:
+            if not echec.memoire:
+                raise
+            # Memoire GPU prise pendant le rendu (modele recharge par un autre processus) : ComfyUI est
+            # vide, Ollama decharge (post_prompt le fait), puis UNE seule re-soumission.
+            print(f"PROGRESS:memoire:rendu en manque de memoire GPU, liberation puis nouvel essai ({echec})"[:300],
+                  flush=True)
+            _liberer_comfy(comfy_base)
             prompt_id = post_prompt(workflow, comfy_base)
             entry = poll_history(prompt_id, comfy_base=comfy_base)
     except (TimeoutError, JobLostError, RuntimeError, urllib.error.URLError) as exc:
@@ -1331,7 +1589,7 @@ def synth(prompt: str, run_id: str, *,
     except OSError:
         pass
 
-    return {
+    result = {
         "ok": True,
         "schema": "aurora.flux_synth.v1",
         "run_id": run_id,
@@ -1347,6 +1605,13 @@ def synth(prompt: str, run_id: str, *,
         "size_bytes": size,
         "elapsed_s": round(time.time() - started_at, 1),
     }
+    if negative_prompt is not None:
+        result["negative_prompt"] = negative_prompt
+    if references_envoyees is not None:
+        # Ce qui a réellement conditionné le rendu : source, copie aplatie envoyée, nom ComfyUI.
+        result["references"] = references_envoyees
+        result["reference_megapixels"] = float(reference_megapixels)
+    return result
 
 
 def main() -> int:
@@ -1365,12 +1630,24 @@ def main() -> int:
                         help="Optional motion description used to require animation-ready references")
     parser.add_argument("--multi-view", action="store_true",
                         help="Generate 4 views (front/back/left/right) sharing the seed")
+    parser.add_argument("--reference-image", action="append", default=None, dest="reference_images",
+                        help="Image dont l'identite passe par les pixels (repetable, dans l'ordre "
+                             "« image 1, image 2... » du prompt)")
+    parser.add_argument("--reference-megapixels", type=float, default=REFERENCE_MEGAPIXELS,
+                        dest="reference_megapixels",
+                        help="Taille de chaque reference apres ImageScaleToTotalPixels (defaut 0.5)")
+    parser.add_argument("--negative-prompt", default=None, dest="negative_prompt",
+                        help="Remplace le negatif generique du graphe")
     parser.add_argument("--pretty", action="store_true")
     args = parser.parse_args()
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
     except (AttributeError, ValueError):
         pass
+    if args.multi_view and (args.reference_images or args.negative_prompt is not None):
+        # synth_multiview ne porte ni la chaine multi-references ni le negatif : refuser plutot que
+        # d'ignorer en silence ce que l'appelant a demande.
+        parser.error("--reference-image et --negative-prompt ne s'appliquent pas a --multi-view")
 
     if args.multi_view:
         result = synth_multiview(
@@ -1387,6 +1664,9 @@ def main() -> int:
             output_dir=Path(args.output_dir),
             width=args.width, height=args.height, steps=args.steps,
             seed=args.seed, comfy_base=args.comfy_base,
+            reference_images=args.reference_images,
+            reference_megapixels=args.reference_megapixels,
+            negative_prompt=args.negative_prompt,
         )
     if args.pretty and result.get("ok") and result.get("mode") == "multiview":
         sys.stdout.write(
