@@ -94,6 +94,11 @@ MATERIAUX: dict[str, dict[str, Any]] = {
     "zinc": _m("couverture en zinc", "metal", 1.0, 1.0, 0.45, "#8e959b", False),
     "toit_terrasse": _m("toit-terrasse gravillonné", "sol_ext", 2.0, 0.0, 0.9, "#7b7975", False),
     "carrosserie": _m("peinture de carrosserie", "metal", 1.0, 0.6, 0.25, "#9a1b1b", True),
+    # émissions (monde.emetteurs) : particules translucides ou lumineuses
+    "brume": _m("brume fine (vaporisation, aérosol)", "verre", 1.0, 0.0, 0.9, "#f3f6f9", False, alpha=0.16),
+    "fumee": _m("fumée", "verre", 1.0, 0.0, 0.95, "#8d8f93", False, alpha=0.45),
+    "vapeur": _m("vapeur d'eau", "verre", 1.0, 0.0, 0.9, "#f7f9fb", False, alpha=0.22),
+    "flamme": _m("flamme", "lumiere", 1.0, 0.0, 0.6, "#ffa23a", False, emissif=2.0),
     "caoutchouc": _m("caoutchouc (pneus, joints)", "plastique", 1.0, 0.0, 0.9, "#1b1b1b", False),
 }
 
