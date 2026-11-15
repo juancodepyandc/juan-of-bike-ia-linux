@@ -35,6 +35,8 @@ export type FxAsk = {
   allowPhoto?: boolean
 }
 
+export type FxCodeFeed = { source: string; file?: string; console?: string }
+
 export type FxPatch = {
   active: boolean
   phase?: string
@@ -67,6 +69,7 @@ export type FxPatch = {
   /** rapport largeur/hauteur de l'image demandée */
   aspect?: number
   logLine?: string
+  codeFeed?: FxCodeFeed
   meshUrl?: string
   meshInfo?: string
   ask?: FxAsk | null

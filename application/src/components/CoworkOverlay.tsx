@@ -58,6 +58,7 @@ import {
 } from 'lucide-react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import LyraCharacter from './voice/LyraCharacter.tsx'
+import CoworkMissionStage from './generationFx/CoworkMissionStage.tsx'
 import remarkGfm from 'remark-gfm'
 const remarkPlugins = [remarkGfm]
 import { isTauriRuntime } from '../utils/runtime.ts'
@@ -1809,8 +1810,10 @@ export default function CoworkOverlay({ open, onClose }: CoworkOverlayProps) {
                       <ConversationThread
                         messages={messages}
                         running={running}
+                        events={events}
                         onClear={() => {
                           setMessages([])
+                          setEvents([])
                           setProjectThread(clearCoworkProjectThread())
                         }}
                         onRegenerate={(prompt) => void submit(prompt)}
@@ -2307,10 +2310,11 @@ function getQuickPrompts(module: QuickPromptModule): QuickPrompt[] {
 }
 
 function ConversationThread({
-  messages, running, onClear, onRegenerate, onQuickPrompt, onEditUserTurn, module, projectThread,
+  messages, running, events, onClear, onRegenerate, onQuickPrompt, onEditUserTurn, module, projectThread,
 }: {
   messages: ChatTurn[]
   running: boolean
+  events: CoworkActionEvent[]
   onClear: () => void
   onRegenerate: (userPrompt: string) => void
   onQuickPrompt: (prompt: string) => void
@@ -2387,6 +2391,7 @@ function ConversationThread({
             )
           })
         })()}
+        <CoworkMissionStage events={events} running={running} thread={projectThread}/>
         {running && messages[messages.length - 1]?.pending && (
           <CoworkLiveActivity events={messages[messages.length - 1]?.technical ?? []} compact />
         )}

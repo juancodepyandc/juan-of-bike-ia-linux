@@ -15,11 +15,11 @@
    "working_tree_drafts_included": false
   }
  },
- "source_files": 2542,
- "source_lines": 925516,
+ "source_files": 2547,
+ "source_lines": 926060,
  "static_route_declarations": 719,
  "by_repository": {
-  "AuroraIA": 2221,
+  "AuroraIA": 2226,
   "aurora-remote-cli": 317,
   "aurora-live": 4
  },
@@ -10746,8 +10746,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/scripts/fx-harness/main.tsx",
-   "sha256": "a9e4f789989e886f2e5348be2671420feb0c1e032e555fad45c80ef0b293dd28",
-   "lines": 589
+   "sha256": "5c5f2221d9fb583c80536a197a601c51a305d5ce6699d2c462602f0827b00fe0",
+   "lines": 599
   },
   {
    "repo": "AuroraIA",
@@ -10894,8 +10894,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/scripts/test-fx-visual.mjs",
-   "sha256": "dd89c5d6d3a02b3abfbf89be2711ce20f9bc1d88d6ceb724157edf2a4f08c953",
-   "lines": 152
+   "sha256": "ab3e0ad80a4d207e92f5d85694314b58c789f32ce05f9aa5ed9377ac4c8d9feb",
+   "lines": 175
   },
   {
    "repo": "AuroraIA",
@@ -11082,6 +11082,12 @@
    "path": "application/src/App.tsx",
    "sha256": "59f4579cd3bace6f8f51e09afb055a60f52deff3199718a80f5b9f122fda7ac8",
    "lines": 1390
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "application/src/assets/mission-cast/rigs.json",
+   "sha256": "32abc490916b47765c13ac39e91e13fcd1690d6e4cc132f061a34c419742dafb",
+   "lines": 1
   },
   {
    "repo": "AuroraIA",
@@ -11302,8 +11308,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/components/CoworkOverlay.tsx",
-   "sha256": "768c57ceb98edbcf529c24caf4cb80f6698e2fa9cba94554aab98f611f75da43",
-   "lines": 4469
+   "sha256": "b990bcd14535b9a4e6f887f6d2903fc614652a0869040a6b4a7eccf61ee90096",
+   "lines": 4474
   },
   {
    "repo": "AuroraIA",
@@ -11661,27 +11667,45 @@
   },
   {
    "repo": "AuroraIA",
+   "path": "application/src/components/generationFx/CoworkMissionStage.tsx",
+   "sha256": "ab5d5040890222e4909243469c0284208025376ba389f25cc49a2893415df81a",
+   "lines": 63
+  },
+  {
+   "repo": "AuroraIA",
    "path": "application/src/components/generationFx/DiffusionStage.tsx",
-   "sha256": "fa316273e4c95d54cf53b1406708db40629d3b66dee0d739b2a5e817fd32660b",
-   "lines": 711
+   "sha256": "09b7a4b411dcc04fe0921a82649b79912087aeb8ea46ad02175839f9bfce5692",
+   "lines": 712
   },
   {
    "repo": "AuroraIA",
    "path": "application/src/components/generationFx/GenerationFxHost.tsx",
-   "sha256": "a81e3fc9c3176304c43eb77980dc537b7d321ae82a87f8e6dbcb8877ba5a16dd",
-   "lines": 1326
+   "sha256": "56588441d575e9808edc2508bc12debb8ea5a84e7f9c074ead20fe26f45b8e29",
+   "lines": 1352
   },
   {
    "repo": "AuroraIA",
    "path": "application/src/components/generationFx/HologramStage.tsx",
-   "sha256": "d0d6f5bed044f7c0f37f71b04f05d99d438c9dc7fa96a38962a9008304e54660",
-   "lines": 892
+   "sha256": "694dcf1e815cf80740a7dc2009fccb7c90d6478c24bfb45e8e859e31f08dc62a",
+   "lines": 894
   },
   {
    "repo": "AuroraIA",
    "path": "application/src/components/generationFx/ImageStudioPanel.tsx",
-   "sha256": "e8104eccdb005f2263626b86bd21c0e1907b34c9709fd6e3c80417058b24eeb5",
-   "lines": 228
+   "sha256": "64739ca527712e55ad55e4dc76fa90ae507e8e6ac20c9d150aefba02ff1e4662",
+   "lines": 236
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "application/src/components/generationFx/MissionActor.tsx",
+   "sha256": "0091ca6102884f3d9632c0d6c2e48c2b673f15a888b3d0f271cfdb89d3ae57e7",
+   "lines": 166
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "application/src/components/generationFx/MissionCodeMonitor.tsx",
+   "sha256": "9e331d0a1cecb5a8bbcd1d78cafb0ec795fc149a26945862ffe75a3647bacbaf",
+   "lines": 59
   },
   {
    "repo": "AuroraIA",
@@ -11698,8 +11722,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/components/generationFx/fxBus.ts",
-   "sha256": "e1f1e1ff4a77ba90d744f2a5689e9192b9e70d7b6eeac0b24c4c95c48887c38a",
-   "lines": 159
+   "sha256": "13ebfa170bed3bdd945eee32e43bacf50df8e345b40945b850c70f3f96b9cd9d",
+   "lines": 162
   },
   {
    "repo": "AuroraIA",
@@ -11721,9 +11745,15 @@
   },
   {
    "repo": "AuroraIA",
+   "path": "application/src/components/generationFx/missionStage.css",
+   "sha256": "4c10c0a65d752b10cef7088b692d23dbaff0bd0a42d17eacad78f84a5590da14",
+   "lines": 144
+  },
+  {
+   "repo": "AuroraIA",
    "path": "application/src/components/generationFx/scenes.ts",
-   "sha256": "23fc8c3f51aba292bb78c3d8be806cc89971188e0f1643fa2bb190ed5c381175",
-   "lines": 1412
+   "sha256": "4b5b9d7397871a31fd50253de91503c93d41be315ed90bbaaac6ddf7801d866e",
+   "lines": 1414
   },
   {
    "repo": "AuroraIA",
@@ -15226,8 +15256,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/views/AuroraCoworkView.tsx",
-   "sha256": "988573f914f635fab293959ba19332b02c3115f837d6ffb1f338c068ece26688",
-   "lines": 1710
+   "sha256": "c26ca9f9e51d8765f01fb5153e036b5236118e4309be577c503f03b19b1ba8c3",
+   "lines": 1712
   },
   {
    "repo": "AuroraIA",
@@ -15394,8 +15424,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/views/CodeView.tsx",
-   "sha256": "20e17842782b2edbb0c14feea3d717551e7d47c32ff10192e00ed68ca38cce87",
-   "lines": 717
+   "sha256": "860c0d21486fbc521131198614309eea92a8c8ddbbf37ec316087a731dec490d",
+   "lines": 729
   },
   {
    "repo": "AuroraIA",
@@ -15466,14 +15496,14 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/views/VideoView.tsx",
-   "sha256": "fd01bec9045cda6aa26719c0d56b2df1765c977afe99e144f38ad09192716f28",
-   "lines": 2269
+   "sha256": "637fe4243e3ca94e62682047d56ee0265c28cb7abc3d0ac127370bbf198fd06b",
+   "lines": 2277
   },
   {
    "repo": "AuroraIA",
    "path": "application/src/views/VoiceCopilotView.tsx",
-   "sha256": "416ecd6293cdc3a22ebacf14a54f0ead57290634f14ae4511d5baadd7076e228",
-   "lines": 2754
+   "sha256": "285a40dd38f06c0a42058a4e2ea59c98d33a8fc15d7b70696b92928165ebd69f",
+   "lines": 2763
   },
   {
    "repo": "AuroraIA",

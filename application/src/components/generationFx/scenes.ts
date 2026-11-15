@@ -17,6 +17,7 @@ export type SceneSync = {
   /** une progression chiffrée a-t-elle été mesurée ? */
   measured: boolean
   stage: 'queued' | 'preparing' | 'running' | 'finalizing' | 'done'
+  onToolPoint?: (point: { x: number; y: number } | null) => void
 }
 
 export type SceneDraw = (ctx: CanvasRenderingContext2D, W: number, H: number, now: number, prog: number, accent: string, sync?: SceneSync) => void
@@ -573,7 +574,7 @@ const drawing: FxScene = {
     let sizedW = 0
     const splash: { x: number; y: number; vx: number; vy: number; life: number; r: number; c: string }[] = []
     const drips: { x: number; y: number; len: number; max: number; c: string }[] = []
-    return (ctx, W, H, now, prog, accent) => {
+    return (ctx, W, H, now, prog, accent, sync) => {
       if (!strokes.length || sizedW !== W) {
         sizedW = W
         const cx = W * 0.5, cy = H * 0.44, R = Math.min(W, H) * 0.27
@@ -620,6 +621,7 @@ const drawing: FxScene = {
         if (upto < n) { tip = st.pts[upto - 1]; break }
         tip = st.pts[n - 1]
       }
+      sync?.onToolPoint?.(tip && W > 0 && H > 0 ? { x: tip[0] / W, y: tip[1] / H } : null)
       if (tip) {
         if (Math.random() < 0.5 && splash.length < 70) {
           splash.push({ x: tip[0], y: tip[1], vx: (Math.random() - 0.5) * 2.6, vy: (Math.random() - 0.5) * 2.6 - 0.4, life: 1, r: 0.8 + Math.random() * 2.2, c: accent })

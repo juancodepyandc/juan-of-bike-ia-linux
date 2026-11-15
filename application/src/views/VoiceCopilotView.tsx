@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { ArrowLeft, Camera, CameraOff, Check, ClipboardCheck, Copy, Download, Eye, FileText, Maximize2, Mic, MicOff, Minimize2, Music, RefreshCw, Sparkles, Trash2, Volume2, UserCircle, Loader2 } from 'lucide-react'
 import AuroraAvatar from '../components/AuroraAvatar.tsx'
 import AuroraMascot from '../components/generationFx/mascots.tsx'
+import { MissionActor } from '../components/generationFx/MissionActor.tsx'
 import V4VoiceCharacter from '../components/generationFx/voiceCharacter.tsx'
 import AvatarSelectorModal from '../components/AvatarSelectorModal.tsx'
 import VoiceStage from '../components/voice/VoiceStage.tsx'
@@ -1976,6 +1977,12 @@ export default function VoiceCopilotView({ onClose, onMessage }: VoiceCopilotVie
     return <MusicStudio onClose={() => setMusicStudioOpen(false)} />
   }
 
+  const voiceAtWork = ui === 'transcribing' || ui === 'preparing' || ui === 'speaking'
+  const voiceActor = voiceAtWork ? <div aria-hidden="true" className="mission-inline-actor mission-inline-actor--voice">
+    <MissionActor module="voice" x={ui === 'transcribing' ? .71 : .45}
+      entrance={.8} facing={-1} cue={ui} gesture={ui === 'speaking' ? .64 : .37}/>
+  </div> : null
+
   if (stageMode && !isAuroraV4Skin) {
     return (
       <div
@@ -2010,6 +2017,7 @@ export default function VoiceCopilotView({ onClose, onMessage }: VoiceCopilotVie
           sttInfo={sttModel || undefined}
           modelInfo={mainModel}
         >
+          {voiceActor}
           {examPanel}
           <div style={{ position: 'absolute', top: 18, left: 18, zIndex: 6, display: 'flex', gap: 8 }}>
             <button
@@ -2100,6 +2108,7 @@ export default function VoiceCopilotView({ onClose, onMessage }: VoiceCopilotVie
           <div className="absolute -bottom-40 right-1/4 h-80 w-80 rounded-full bg-cyan-500/15 blur-3xl animate-aurora-drift" style={{ animationDelay: '3s' }} />
         </div>
       )}
+      {voiceActor}
       {isAuroraV4Skin && (
         <div
           className="relative z-10 flex shrink-0 items-center gap-3.5 px-4 pb-3 pt-4"

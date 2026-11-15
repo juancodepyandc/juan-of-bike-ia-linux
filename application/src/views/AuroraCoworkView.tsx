@@ -83,6 +83,7 @@ import {
   type CoworkProjectThread,
 } from '../services/coworkProjectThread.ts'
 import { useCoworkStore } from '../stores/coworkStore.ts'
+import CoworkMissionStage from '../components/generationFx/CoworkMissionStage.tsx'
 import { useAppStore } from '../stores/appStore.ts'
 import { loadSettings, saveSettings, type CoworkSettings } from '../services/coworkSettings.ts'
 import { CONNECTORS } from '../services/coworkConnectors.ts'
@@ -736,6 +737,7 @@ export default function AuroraCoworkView({ open: openProp, onClose }: { open?: b
             {messages.map((m) => (
               <Bubble key={m.id} turn={m} onNotion={handleNotion} />
             ))}
+            <CoworkMissionStage events={events} running={running} thread={projectThread}/>
             {running && (
               <LiveActivity events={events} show={showActivity} onToggle={() => setShowActivity((s) => !s)} />
             )}

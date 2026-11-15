@@ -12,7 +12,7 @@
  *  - courbe de bruit du planificateur au pas réel (approximation affichée comme telle) ;
  *  - présence ou absence d'aperçus latents envoyés par le serveur.
  */
-import { Suspense, lazy, useMemo } from 'react'
+import { Suspense, lazy, useMemo, useState, type ReactNode } from 'react'
 import { analyzeSubjectFidelity } from '../../services/imageSubjectFidelity.ts'
 import { readComfyLive } from './comfyProgress.ts'
 import { IMAGE_PIPELINE, fluxSigmaAt as sigmaAt, medianStepSeconds } from './comfyStages.ts'
@@ -48,10 +48,13 @@ export type ImageStudioPanelProps = {
   narrow: boolean
   /** dernières actions réellement journalisées par le module */
   logLines?: string[]
+  actor?: ReactNode
+  fallback?: ReactNode
 }
 
 export default function ImageStudioPanel(props: ImageStudioPanelProps) {
   const { accent, prompt = '', narrow, done } = props
+  const [unavailable, setUnavailable] = useState(false)
   const fidelity = useMemo(() => analyzeSubjectFidelity(prompt), [prompt])
   const subjectWords = useMemo(() => {
     const out: string[] = []
@@ -148,7 +151,10 @@ export default function ImageStudioPanel(props: ImageStudioPanelProps) {
           border: `1px solid ${hexA(accent, 0.22)}`,
           background: `radial-gradient(ellipse at 50% 55%, ${hexA(accent, 0.1)}, rgba(3,5,10,.94) 65%)`,
         }}>
-          <Suspense fallback={<div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: '#5A6377', fontSize: 11 }}>Initialisation de la chambre de diffusion…</div>}>
+          {unavailable ? <>
+            {props.fallback}
+            {props.resultUrl && <img className="mission-stage-fallback-image" src={props.resultUrl} alt="Image générée" />}
+          </> : <Suspense fallback={<div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: '#5A6377', fontSize: 11 }}>Initialisation de la chambre de diffusion…</div>}>
             <DiffusionStage
               accent={accent}
               phaseIdx={props.phaseIdx}
@@ -163,8 +169,10 @@ export default function ImageStudioPanel(props: ImageStudioPanelProps) {
               resultUrl={props.resultUrl}
               done={done}
               quality={quality}
+              onUnavailable={() => setUnavailable(true)}
             />
-          </Suspense>
+          </Suspense>}
+          {props.actor}
           {done && (
             <div style={{
               position: 'absolute', left: '50%', top: 14, transform: 'translateX(-50%)', padding: '6px 14px', borderRadius: 999,

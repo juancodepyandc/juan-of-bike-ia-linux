@@ -56,6 +56,7 @@ export type HologramStageProps = {
   quality?: 'high' | 'low'
   interactive?: boolean
   onStatus?: (status: HologramStatus) => void
+  onUnavailable?: () => void
 }
 
 type Anim = { from: number; to: number; start: number; dur: number }
@@ -859,6 +860,7 @@ export default function HologramStage(props: HologramStageProps) {
       engineRef.current = new HoloEngine(hostRef.current, () => propsRef.current)
     } catch {
       setFailed(true)
+      propsRef.current.onUnavailable?.()
     }
     return () => {
       engineRef.current?.dispose()

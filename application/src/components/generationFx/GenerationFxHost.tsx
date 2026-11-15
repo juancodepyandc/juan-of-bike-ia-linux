@@ -1,9 +1,9 @@
 import { bridgeFetch as fetch } from '../../utils/bridgeAuth.ts'
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useAppStore } from '../../stores/appStore.ts'
 import { useCodeStreamStore } from '../../stores/codeStreamStore.ts'
 import type { GenerationJobState, ModuleId } from '../../types/app.ts'
-import { FX_EVENT, FX_PREF_EVENT, generationFxEnabled, type FxAsk, type FxCounters, type FxModule, type FxPatch, type FxRef, fxAnswer, markFxHostMounted } from './fxBus.ts'
+import { FX_EVENT, FX_PREF_EVENT, generationFxEnabled, type FxAsk, type FxCodeFeed, type FxCounters, type FxModule, type FxPatch, type FxRef, fxAnswer, markFxHostMounted } from './fxBus.ts'
 import { watchComfyProgress } from './comfyProgress.ts'
 import { imagePatchForEvent } from './comfyStages.ts'
 import ImageStudioPanel from './ImageStudioPanel.tsx'
@@ -11,6 +11,8 @@ import AuroraMascot, { FX_AGENTS, MASCOT_STATE_LABEL, type MascotState } from '.
 import { FX_SCENES, type SceneDraw, type SceneSync } from './scenes.ts'
 import { MODULE_PHASE_RANGES, animationProgress, codePhaseIndex, mascotStateFor, monotonicPhase, resolvePhaseIndex, stageForJob, type FxStage } from './fxPhases.ts'
 import type { HologramStatus } from './HologramStage.tsx'
+import { MissionActorTrack, missionCast } from './MissionActor.tsx'
+import MissionCodeMonitor from './MissionCodeMonitor.tsx'
 import {
   EtaCountdown,
   RunTimeline,
@@ -59,6 +61,7 @@ type FxEntry = {
   prompt?: string
   aspect?: number
   logLines?: string[]
+  codeFeed?: FxCodeFeed
   counters?: FxCounters
   meshUrl?: string
   meshInfo?: string
@@ -329,8 +332,12 @@ function RefsPanel({ refs, accent, narrow }: { refs: FxRef[]; accent: string; na
   )
 }
 
-function CenterStage({ entry, accent, tl, done, narrow }: { entry: FxEntry; accent: string; tl: RunTimeline; done: boolean; narrow: boolean }) {
+function CenterStage({ entry, accent, tl, done, narrow, actor, fallback }: {
+  entry: FxEntry; accent: string; tl: RunTimeline; done: boolean; narrow: boolean;
+  actor: ReactNode; fallback: ReactNode;
+}) {
   const [status, setStatus] = useState<HologramStatus | null>(null)
+  const [unavailable, setUnavailable] = useState(false)
   const c = entry.counters ?? {}
   const feed = (entry.logLines ?? []).slice(-6)
   const lastReject = [...(entry.logLines ?? [])].reverse().find((l) => /rejet|ecart|ignor/i.test(l))
@@ -376,7 +383,7 @@ function CenterStage({ entry, accent, tl, done, narrow }: { entry: FxEntry; acce
         border: `1px solid ${accent}33`,
         background: `radial-gradient(ellipse at 50% 85%, ${hexA(accent, 0.12)}, rgba(3,5,10,.92) 62%)`,
       }}>
-        <Suspense fallback={<div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: '#5A6377', fontSize: 11 }}>Initialisation de l’émetteur…</div>}>
+        {unavailable ? fallback : <Suspense fallback={<div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: '#5A6377', fontSize: 11 }}>Initialisation de l’émetteur…</div>}>
           <HologramStage
             accent={accent}
             phaseIdx={done ? tl.phaseCount - 1 : tl.phaseIdx}
@@ -390,8 +397,10 @@ function CenterStage({ entry, accent, tl, done, narrow }: { entry: FxEntry; acce
             quality={quality}
             interactive
             onStatus={setStatus}
+            onUnavailable={() => setUnavailable(true)}
           />
-        </Suspense>
+        </Suspense>}
+        {actor}
         {status?.note && (
           <div style={{
             position: 'absolute', left: 12, bottom: 10, right: 12, fontSize: 10.5, color: '#B7C0D4',
@@ -400,7 +409,7 @@ function CenterStage({ entry, accent, tl, done, narrow }: { entry: FxEntry; acce
             {status.note}{entry.meshInfo && status.source === 'mesh' ? ` · ${entry.meshInfo}` : ''}
           </div>
         )}
-        {!done && (
+        {!done && !unavailable && (
           <div style={{ position: 'absolute', right: 12, top: 10, fontSize: 10, color: '#7C869C', pointerEvents: 'none' }}>
             glisser pour tourner
           </div>
@@ -485,7 +494,9 @@ function FullOverlay({ module, entry, session, job, onMinimize, onStopOverlay }:
 }) {
   const scene = FX_SCENES[module]
   const agent = FX_AGENTS[module]
+  const castName = missionCast[module].name
   const [, force] = useState(0)
+  const tool = useRef<{ x: number; y: number } | null>(null)
   const [page, setPage] = useState<'scene' | 'construction'>(module === '3d' ? 'construction' : 'scene')
   const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && window.innerWidth < 760)
   useEffect(() => {
@@ -505,7 +516,16 @@ function FullOverlay({ module, entry, session, job, onMinimize, onStopOverlay }:
   const mState = mascotStateFor({ ask: Boolean(entry.ask), reveal: done, stage, phaseIdx: idx, phaseName })
   const says = STATE_SAYS[mState]
     ?? (stage === 'preparing' ? 'Je prépare les modèles et services…' : scene.says[idx] ?? scene.says[scene.says.length - 1])
-  const read = frameReader(session, entry, stage)
+  const readTimeline = frameReader(session, entry, stage)
+  const read = () => {
+    const frame = readTimeline()
+    if (module === 'drawing') frame.sync.onToolPoint = point => { tool.current = point }
+    return frame
+  }
+  const embedded = module === 'image' || (module === '3d' && page === 'construction')
+  const actor = <MissionActorTrack module={module} state={mState} phase={idx} narrow={narrow}
+    embedded={embedded} tool={module === 'drawing' ? tool.current : null} />
+  const fallback = <><FxCanvas module={module} read={read} /><span className="mission-stage-fallback-label">Aperçu animé 2D</span></>
   const pctLabel = done
     ? '100 %'
     : stage === 'queued'
@@ -521,7 +541,7 @@ function FullOverlay({ module, entry, session, job, onMinimize, onStopOverlay }:
   return (
     <div
       role="dialog"
-      aria-label={`${agent.name} — génération ${module} en cours`}
+      aria-label={`${castName} — génération ${module} en cours`}
       style={{
         position: 'fixed', inset: 0,
         width: '100%', height: '100%',
@@ -530,7 +550,8 @@ function FullOverlay({ module, entry, session, job, onMinimize, onStopOverlay }:
         background: '#04060b',
         boxShadow: `inset 0 0 120px ${agent.accent}18`,
         animation: 'aurora-fx-in .45s cubic-bezier(.22,1,.36,1)',
-      }}
+        '--mission-accent': agent.accent,
+      } as React.CSSProperties}
     >
       <div style={{ position: 'absolute', top: 14, right: 16, zIndex: 5, display: 'flex', alignItems: 'center', gap: 8, pointerEvents: 'auto' }}>
         {onMinimize && (
@@ -568,6 +589,8 @@ function FullOverlay({ module, entry, session, job, onMinimize, onStopOverlay }:
         {narrow ? 'File' : 'Projets et file d’attente'}
       </button>
       <FxCanvas module={module} read={read} ambientOnly={(module === '3d' && page === 'construction') || module === 'image'} />
+      {!embedded && actor}
+      {module === 'code' && <MissionCodeMonitor feed={entry.codeFeed} startedAt={entry.startedAt} status={entry.phase || phaseName} />}
       {!done && module !== 'image' && entry.refs && entry.refs.length > 0 && <RefsPanel refs={entry.refs} accent={agent.accent} narrow={narrow} />}
       {module === 'image' && (
         <ImageStudioPanel
@@ -583,10 +606,12 @@ function FullOverlay({ module, entry, session, job, onMinimize, onStopOverlay }:
           done={done}
           narrow={narrow}
           logLines={entry.logLines}
+          actor={actor}
+          fallback={fallback}
         />
       )}
       {module === '3d' && page === 'construction' && (
-        <CenterStage entry={entry} accent={agent.accent} tl={tl} done={done} narrow={narrow} />
+        <CenterStage entry={entry} accent={agent.accent} tl={tl} done={done} narrow={narrow} actor={actor} fallback={fallback} />
       )}
       {!done && module === '3d' && (
         <button
@@ -626,25 +651,22 @@ function FullOverlay({ module, entry, session, job, onMinimize, onStopOverlay }:
         </div>
       )}
       <div style={{ position: 'absolute', left: narrow ? 12 : 48, right: narrow ? 12 : 48, bottom: narrow ? 14 : 24, fontFamily: "'Cascadia Code',Consolas,monospace", pointerEvents: 'none', zIndex: 2 }}>
-        {/* le personnage est posé au-dessus du HUD, quelle que soit sa hauteur */}
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
           <div style={{
             display: 'flex', flexDirection: narrow ? 'row' : 'column', alignItems: 'center', gap: narrow ? 8 : 4,
-            animation: mState === 'success' ? undefined : 'aurora-fx-float 3.6s ease-in-out infinite',
           }}>
             <span style={{
               fontSize: 11, color: '#E6EAF5', padding: '6px 11px', borderRadius: 12,
               background: 'rgba(8,12,22,.86)', border: `1px solid ${agent.accent}44`, maxWidth: narrow ? 200 : 168, textAlign: 'center',
               fontFamily: "'Inter','Segoe UI',system-ui,sans-serif", lineHeight: 1.35,
             }}>
-              <b style={{ color: agent.accent }}>{agent.name}</b> · {says}
+              <b style={{ color: agent.accent }}>{castName}</b> · {says}
             </span>
-            <AuroraMascot module={module} size={narrow ? 52 : 100} state={mState} />
           </div>
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, marginBottom: 8 }}>
           <span style={{ fontSize: 10, letterSpacing: '.24em', color: '#8B93A7', textTransform: 'uppercase' }}>
-            {agent.name} {MASCOT_STATE_LABEL[mState]} · {module === '3d' ? '3D' : module}
+            {castName} {MASCOT_STATE_LABEL[mState]} · {module === '3d' ? '3D' : module}
           </span>
           <span
             title={measured != null ? 'Progression mesurée transmise par le pipeline' : 'Aucune progression chiffrée transmise : étape réelle affichée'}
@@ -1111,6 +1133,7 @@ export default function GenerationFxHost() {
         prompt: patch.prompt ?? base?.prompt,
         aspect: patch.aspect ?? base?.aspect,
         logLines,
+        codeFeed: patch.codeFeed ?? base?.codeFeed,
         counters: patch.logLine ? updateCounters(base?.counters, patch.logLine) : base?.counters,
         meshUrl: patch.meshUrl ?? base?.meshUrl,
         meshInfo: patch.meshInfo ?? base?.meshInfo,
@@ -1240,12 +1263,15 @@ export default function GenerationFxHost() {
   }, [codeStreaming, codePhase, codeMessage, codeProgress, apply])
 
   // une opération courte n'affiche rien ; au-delà du délai, l'écran apparaît
-  const pending = (Object.values(entries) as FxEntry[]).some((e) => !e.reveal && !e.ask && Date.now() - e.startedAt < SHOW_DELAY_MS)
+  const clock = Date.now()
+  const nextShowAt = Math.min(...Object.values(entries)
+    .filter(e => !e.reveal && !e.ask && clock < e.startedAt + SHOW_DELAY_MS)
+    .map(e => e.startedAt + SHOW_DELAY_MS))
   useEffect(() => {
-    if (!pending) return
-    const t = window.setTimeout(() => forceRender((n) => n + 1), SHOW_DELAY_MS + 40)
+    if (!Number.isFinite(nextShowAt)) return
+    const t = window.setTimeout(() => forceRender((n) => n + 1), Math.max(0, nextShowAt - Date.now()) + 15)
     return () => window.clearTimeout(t)
-  }, [pending, entries])
+  }, [nextShowAt])
 
   const activeFx = Object.entries(entries) as [FxModule, FxEntry][]
   if (!enabled || activeFx.length === 0) return null

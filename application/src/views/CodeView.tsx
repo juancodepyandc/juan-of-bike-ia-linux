@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ClarificationDialog from '../components/ClarificationDialog.tsx'
-import { useGenerationFxEmitter } from '../components/generationFx/fxBus.ts'
+import { emitGenerationFx, useGenerationFxEmitter } from '../components/generationFx/fxBus.ts'
 import type { ClarificationRequest } from '../components/ClarificationDialog.tsx'
 import PromptLibraryPanel from '../components/PromptLibraryPanel.tsx'
 import SaveDialog from '../components/SaveDialog.tsx'
@@ -126,6 +126,18 @@ export default function CodeView() {
     running: false, port: null, url: null, process: 'stopped', error: null, rootPath: null,
   })
   const [consoleOutput, setConsoleOutput] = useState('')
+  useEffect(() => {
+    if (!isGenerating) return
+    const file = validationResult?.normalizedFiles?.[0]
+    const consoleText = validationResult
+      ? [validationResult.summary, ...validationResult.steps.map(step => `${step.ok ? '✓' : '×'} ${step.label}`)].join('\n')
+      : consoleOutput
+    emitGenerationFx('code', { active: true, codeFeed: {
+      source: (file?.content || streamPreview).slice(-4800),
+      file: file?.name,
+      console: consoleText.slice(-3200),
+    } })
+  }, [isGenerating, validationResult, consoleOutput, streamPreview])
   const [recoveryStatus, setRecoveryStatus] = useState<string | null>(null)
   const [preflightReport, setPreflightReport] = useState<CodePreflightReport | null>(null)
   const [followUpAnalysis, setFollowUpAnalysis] = useState<FollowUpAnalysis | null>(null)

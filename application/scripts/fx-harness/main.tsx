@@ -226,6 +226,16 @@ function Scenario() {
         emitGenerationFx('image', { active: false, resultUrl: heartVase(0), resultKind: 'image', outcome: 'success' })
       } else if (mode === 'image') {
         emitGenerationFx('image', { active: true, phase: 'Étape 3/5 · Diffusion FLUX — pas 12/28 (43%)', progress: 0.57, logLine: 'Diffusion neuronale FLUX : pas 12/28 (43%)' })
+      } else if (mode === 'code-feed') {
+        emitGenerationFx('code', { active: true, phaseIndex: 3, phase: 'Écriture du fichier' })
+        const source = 'export const increment = value => value + 1'
+        for (let i = 1; i <= source.length; i++) {
+          emitGenerationFx('code', { active: true, codeFeed: { file: 'increment.js', source: source.slice(0, i) } })
+          await new Promise(resolve => setTimeout(resolve, 24))
+        }
+        emitGenerationFx('code', { active: true, phaseIndex: 4, phase: 'Validation', codeFeed: {
+          file: 'increment.js', source, console: 'Assertion exécutée : 1 vérification réussie',
+        } })
       } else if (mode === 'queued') {
         st.addGenerationJob({
           id: 'job-q', module: 'image', title: 'Portrait', detail: 'En attente sur le PC · position 2 · 1 projet(s) devant',

@@ -37,6 +37,7 @@ export type DiffusionStageProps = {
   resultUrl?: string | null
   done?: boolean
   quality?: 'high' | 'low'
+  onUnavailable?: () => void
 }
 
 
@@ -699,7 +700,7 @@ export default function DiffusionStage(props: DiffusionStageProps) {
       scene = new DiffusionScene(host, props)
       sceneRef.current = scene
     } catch {
-      // WebGL indisponible : l'écran garde son HUD et sa scène 2D
+      props.onUnavailable?.()
     }
     return () => { scene?.dispose(); sceneRef.current = null }
     // la scène est construite une fois par génération (prompt, format, qualité)

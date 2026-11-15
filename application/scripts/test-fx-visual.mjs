@@ -26,12 +26,13 @@ const browser = await chromium.launch({
 const shots = process.env.AURORA_FX_SHOTS
 let failures = 0
 
-async function scenario(name, qs, check, device) {
+async function scenario(name, qs, check, device, configure) {
   const context = await browser.newContext(device ? { ...devices[device] } : { viewport: { width: 1440, height: 900 } })
   const page = await context.newPage()
   const errors = []
   page.on('pageerror', (e) => errors.push(String(e)))
   try {
+    if (configure) await configure(page)
     await page.goto(base + qs, { waitUntil: 'load' })
     await check(page)
     assert.deepEqual(errors, [], 'page errors')
@@ -93,13 +94,35 @@ try {
 
   await scenario('queued runs show the PC position and computed wait', '?mode=queued&module=image', async (page) => {
     await page.getByText('En file · position 2 · attente ≈ 40 s').waitFor({ timeout: 8000 })
-    await page.locator('svg[aria-label$="attend son tour"]').first().waitFor()
+    await page.locator('.mission-actor-track[data-state="waiting"] img').waitFor()
+  })
+
+  await scenario('streaming code opens its live monitor without delaying the real phases', '?mode=code-feed&module=code', async (page) => {
+    const monitor = hud(page).getByRole('region', { name: 'Poste Code' })
+    await monitor.getByText('increment.js').waitFor()
+    await page.locator('.mission-actor-track[data-module="code"] img').waitFor({ state: 'attached' })
+    await monitor.getByText('Assertion exécutée : 1 vérification réussie').waitFor()
+    await monitor.getByRole('button', { name: 'Code', exact: true }).click()
+    await monitor.getByText('export const increment = value => value + 1').waitFor()
+    assert.equal(await hud(page).getByRole('button', { name: /lire la scène/i }).count(), 0)
   })
 
   await scenario('without measured runs no countdown is invented', '?mode=image&module=image&history=0', async (page) => {
     await page.getByText(/Estimation en préparation \(0\/3 runs mesurés\)/).waitFor({ timeout: 8000 })
     await page.getByText('57 %').waitFor()
   })
+
+  await scenario('image generation keeps its running scene when WebGL is unavailable', '?mode=image&module=image', async (page) => {
+    await page.getByText('Aperçu animé 2D').waitFor()
+    await hud(page).locator('.mission-actor-track[data-module="image"] img').waitFor({ state: 'attached' })
+    await page.getByText('57 %').waitFor()
+  }, 'Pixel 7', page => page.addInitScript(() => {
+    const original = HTMLCanvasElement.prototype.getContext
+    HTMLCanvasElement.prototype.getContext = function(type, ...options) {
+      if (type.startsWith('webgl')) return null
+      return original.call(this, type, ...options)
+    }
+  }))
 
   await scenario('chat screen steps aside once the answer streams', '?mode=chat&module=conversation', async (page) => {
     await page.getByText('ÉTAPE 4/6', { exact: true }).waitFor({ timeout: 8000 })

@@ -21,6 +21,7 @@ import type { ClarificationRequest } from '../components/ClarificationDialog'
 import ContextFilesField from '../components/ContextFilesField'
 import VoicePushToTalk from '../components/VoicePushToTalk'
 import ModuleAssetPackCard from '../components/ModuleAssetPackCard'
+import { MissionActor } from '../components/generationFx/MissionActor.tsx'
 import ConnectorRecommendationsPanel from '../components/ConnectorRecommendationsPanel'
 import PromptLibraryPanel from '../components/PromptLibraryPanel'
 import SaveDialog from '../components/SaveDialog'
@@ -1176,6 +1177,8 @@ export default function VideoView() {
   const [height, setHeight] = useState(704)
   const [numFrames, setNumFrames] = useState(49)
   const [isGenerating, setIsGenerating] = useState(false)
+  const videoJob = useAppStore(s => s.generationJobs.find(job => job.module === 'video'
+    && (job.status === 'queued' || job.status === 'running')))
   const [progress, setProgress] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [videoUrl, setVideoUrl] = useState<string | null>(null)
@@ -2032,11 +2035,16 @@ export default function VideoView() {
             {(progress || error) && (
               <div className="space-y-3">
                 {progress && (
-                  <div className="rounded-2xl border border-aurora-border/40 bg-aurora-surface/70 px-4 py-3">
+                  <div className="rounded-2xl border border-aurora-border/40 bg-aurora-surface/70 px-4 py-3 relative min-h-20">
+                    {isGenerating && <div className="mission-inline-actor" aria-hidden="true">
+                      <MissionActor module="video" x={videoJob?.phase === 'generate' ? .43 : .76}
+                        entrance={.76} facing={-1} cue={videoJob?.phase}
+                        gesture={videoJob?.status === 'running' && videoJob.phase === 'generate' ? .58 : 0}/>
+                    </div>}
                     <p className="text-[11px] uppercase tracking-[0.2em] text-aurora-text-dim">
                       Etat courant
                     </p>
-                    <p className="mt-2 text-sm text-aurora-text">{progress}</p>
+                    <p className={`mt-2 text-sm text-aurora-text${isGenerating ? ' pr-16' : ''}`}>{progress}</p>
                   </div>
                 )}
 
