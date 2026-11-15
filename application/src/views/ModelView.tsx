@@ -47,7 +47,7 @@ import { detectUploadedImageView, prepareThreeDViewPlan, resolvePreparedReferenc
 import { analyzeReferenceImage, mergePaletteWithOverrides, parseColorOverridesFromPrompt, type VisualReferenceAnalysis, type ReferencePaletteEntry, type ColorOverride } from '../services/visualReferenceAnalyzer.ts'
 import ReferenceInspectorPanel from '../components/ReferenceInspectorPanel.tsx'
 import EngineeringExportPanel from '../components/EngineeringExportPanel.tsx'
-import { analyzeThreeDIntent, buildFluxVisualDescription, restStateRulesEn, type ThreeDRestState, buildMeshCorrectionStrategy, detectMotionVerbHint, inferPbrProfile, previewThreeDIntent, verify3DMeshFidelity, type PbrProfile, type ThreeDIntent, type ThreeDMotionPreset, type ThreeDPipeline, type ThreeDPipelineRouting, type MeshFidelityVerification, type MeshCorrectionStrategy } from '../services/threeDIntent.ts'
+import { analyzeThreeDIntent, buildFluxVisualDescription, restReferenceAdditions, restStateRulesEn, type ThreeDRestState, buildMeshCorrectionStrategy, detectMotionVerbHint, inferPbrProfile, previewThreeDIntent, verify3DMeshFidelity, type PbrProfile, type ThreeDIntent, type ThreeDMotionPreset, type ThreeDPipeline, type ThreeDPipelineRouting, type MeshFidelityVerification, type MeshCorrectionStrategy } from '../services/threeDIntent.ts'
 import { analyzePromptOntologySync } from '../services/cognitivePromptDirector.ts'
 import { runProceduralModeling, runAutoRig, runMeshValidation, runMeshCleanup, renderMeshScreenshot, type BlenderScriptResult, type MeshValidationReport } from '../services/blenderBridge.ts'
 import { runAutoRigFromPrompt } from '../services/motionPipeline.ts'
@@ -5233,6 +5233,8 @@ export default function ModelView() {
               reading = await readThreeDRequest(workspaceForReading, currentPrompt)
             }
             restState = restStateFromReading(reading, currentPrompt, isCharacterLike(intent))
+            // l'identité transmise aux voies de référence décrit le sujet au repos, pas l'action
+            intent.referencePromptAdditions = restReferenceAdditions(intent, restState.sujet)
             setProgress(restState.mouvement
               ? `Référence au repos : « ${short(restState.sujet, 60)} » — mouvement « ${short(restState.mouvement, 60)} » réservé au squelette`
               : `Référence au repos : « ${short(restState.sujet, 60)} »`)

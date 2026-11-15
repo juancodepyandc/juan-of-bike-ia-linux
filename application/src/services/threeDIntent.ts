@@ -2042,6 +2042,21 @@ export interface ThreeDRestState {
 
 export const REST_POSE_RULE_EN = 'REST POSE FOR RIGGING: body straight and symmetric, every limb, fin, wing or tail held slightly away from the body (arms about 45 degrees from the torso and legs slightly apart for a biped), nothing touching or crossing, facing the camera, neutral expression'
 
+/**
+ * Animation ON: the identity lines handed to every reference path describe the subject AT REST.
+ * They were computed from the whole sentence, so "Zig la hyène qui court" became "Zig the hyena
+ * running dynamically" inside the identity itself (run of 15/11/2026). Rebuilt here from the
+ * rest subject only; additions the language model derived from the sentence with its movement
+ * are left out.
+ */
+export function restReferenceAdditions(intent: ThreeDIntent, restSubject: string): string[] {
+  return uniqueStrings([
+    ...buildReferencePromptAdditions(intent.referenceFraming, intent.purpose, intent.subjectKind, intent.motionReadiness, intent.systemClass, intent.representationGoal),
+    ...buildCharacterIdentityPromptAdditions(restSubject, intent.purpose, intent.subjectKind),
+    ...detectKnownProductDescription(restSubject, intent.systemClass),
+  ])
+}
+
 export function restStateRulesEn(rest: ThreeDRestState): string[] {
   return [
     `ANIMATION IS ENABLED: the movement "${rest.mouvement || 'requested animation'}" is animated afterwards on the 3D model. Show the subject AT REST, in the state it is in BEFORE that movement starts. Never depict the action itself, no motion blur, no motion lines.`,
