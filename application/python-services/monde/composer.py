@@ -176,7 +176,10 @@ def construire_ville(programme: dict, graine: int, fabrique) -> dict[str, Any]:
         riviere=bool(v.get("riviere")), arbres_alignement=bool(v.get("arbres_alignement", True)),
         voitures=bool(v.get("voitures", True)), graine=graine)
     noeud = ville_mod.construire_ville(plan, fabrique=fabrique)
-    return {"scene": Scene(noeud), "mesures": mesurer_ville(plan), "plan": plan, "depart": depart_ville(plan)}
+    jets, pistes = jets_des_fontaines(plan)
+    noeud.enfants.extend(jets)
+    return {"scene": Scene(noeud), "mesures": mesurer_ville(plan), "plan": plan, "depart": depart_ville(plan),
+            "pistes": pistes}
 
 
 def depart_ville(plan) -> dict[str, Any] | None:
@@ -192,6 +195,20 @@ def depart_ville(plan) -> dict[str, Any] | None:
     norme = (dx * dx + dz * dz) ** 0.5
     direction = [round(dx / norme, 4), round(dz / norme, 4)] if norme > 1e-6 else [0.0, -1.0]
     return {"x": round(p.x, 3), "y": 0.0, "z": round(p.y, 3), "direction": direction, "lieu": "trottoir central"}
+
+
+def jets_des_fontaines(plan) -> tuple[list, dict[str, dict]]:
+    """Chaque fontaine de la ville jaillit : un jet d'eau balistique au-dessus de sa vasque (monde animé)."""
+    from monde import emetteurs
+    noeuds, pistes = [], {}
+    for k, pl in enumerate(p for p in plan.mobilier if p.categorie == "fontaine"):
+        hauteur = float((pl.options or {}).get("hauteur") or 1.2)
+        noeud, p, _ = emetteurs.construire(emetteurs.Emission(
+            "jet_liquide", origine=(pl.x, pl.y + 0.75 * hauteur, pl.z), direction=(0.0, 1.0, 0.0),
+            echelle=max(0.6, hauteur / 1.4), nom=f"jet_fontaine_{k}", graine=k + 7))
+        noeuds.append(noeud)
+        pistes.update(p)
+    return noeuds, pistes
 
 
 def mesurer_ville(plan) -> dict[str, Any]:
@@ -330,7 +347,15 @@ def composer(programme: dict, racine_run: str | Path, *, graine: int | None = No
         rendus = rendu_f3d.rendre_vues(cible, racine_run / "apercus", vues=VUES[type_scene], prefixe="scene",
                                    hdri=HDRI.get(type_scene))
     verdict = porte.juger(type_scene, construit["mesures"], export, rendus)
+    # matière animée (jets des fontaines, émissions) : pistes ajoutées aux GLB écrits
+    animations = None
+    if construit.get("pistes"):
+        from monde import animation_gltf
+        animations = animation_gltf.injecter(export["chemin"], construit["pistes"], nom="monde_anime")
+        if glb_maquette:
+            animation_gltf.injecter(glb_maquette, construit["pistes"], nom="monde_anime")
     sortie = {"ok": verdict["verdict"] == "accepte", "type_scene": type_scene, "glb": export["chemin"],
+              "animations": None if animations is None else {k: animations[k] for k in ("canaux", "absents", "duree_s")},
               "depart": construit.get("depart"), "rendu": rendu,
               "glb_maquette": glb_maquette, "planche": (rendus or {}).get("planche"), "export": export,
               "porte": verdict, "mesures": construit["mesures"], "programme": programme, "graine": graine,

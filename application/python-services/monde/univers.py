@@ -271,7 +271,8 @@ def construire_monde(programme: dict, graine: int, fabrique) -> dict[str, Any]:
             maisons.append(maison)
     noeud_ville = ville_mod.construire_ville(plan_ville, fabrique=fabrique_legere)
     noeud_campagne, _ = campagne(plan_ville, graine=graine, fabrique=fabrique_legere)
-    racine = Noeud("monde", enfants=[noeud_campagne, noeud_ville, *[m["noeud"] for m in maisons]],
+    jets, pistes = composer.jets_des_fontaines(plan_ville)
+    racine = Noeud("monde", enfants=[noeud_campagne, noeud_ville, *[m["noeud"] for m in maisons], *jets],
                    extras={"maisons_visitables": [m["pieces"] for m in maisons]})
     mesures = composer.mesurer_ville(plan_ville)
     for cle in ("chevauchements", "hors_piece", "portes_bloquees", "fenetres_bloquees"):
@@ -285,4 +286,5 @@ def construire_monde(programme: dict, graine: int, fabrique) -> dict[str, Any]:
         (px, pz), (nx, nz) = maisons[0]["porte"], maisons[0]["normale"]
         depart = {"x": round(px + 4.0 * nx, 3), "y": round(maisons[0]["base"], 3), "z": round(pz + 4.0 * nz, 3),
                   "direction": [round(-nx, 4), round(-nz, 4)], "lieu": "devant une maison visitable"}
-    return {"scene": Scene(racine), "mesures": mesures, "plan": plan_ville, "depart": depart}
+    mesures["jets_de_fontaine"] = len(jets)
+    return {"scene": Scene(racine), "mesures": mesures, "plan": plan_ville, "depart": depart, "pistes": pistes}

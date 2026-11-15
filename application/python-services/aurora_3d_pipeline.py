@@ -3691,6 +3691,25 @@ def run_pipeline(prompt: str, run_id: str, **options) -> dict:
     le sujet au repos montré par la référence, quand il en diffère, est rendu à part."""
     result = _run_pipeline_core(prompt, run_id, **options)
     lecture = _LECTURES_DEMANDE.get(run_id) or {}
+    # ÉMISSIONS (15/11/2026, « un coup de parfum ») : la matière qu'un sujet émet (brume, fumée, vapeur,
+    # flamme, jet, gouttes) est posée, animée, sur le modèle livré — à côté de lui, jamais à sa place.
+    try:
+        _contrat = options.get("contrat") if isinstance(options.get("contrat"), dict) else lecture
+        from monde.emissions_objet import ajouter as _ajouter_emissions, emissions_du_contrat
+        _emissions = emissions_du_contrat(_contrat)
+        _livraison = (result or {}).get("livraison") or {}
+        _modele = _livraison.get("modele_couleurs")
+        if _emissions and _modele and Path(_modele).is_file() and not (result or {}).get("is_scene"):
+            _sortie = Path(_modele).with_name("emission_couleurs.glb")
+            _em = _ajouter_emissions(_modele, _sortie, _emissions)
+            result.setdefault("audit_trail", []).append({"stage": "emissions", **{k: v for k, v in _em.items() if k != "glb"}})
+            if _em.get("ok"):
+                _livraison["emission_couleurs"] = str(_sortie)
+                result["livraison"] = _livraison
+                result["final_mesh"] = str(_sortie)
+    except Exception as _exc_em:  # noqa: BLE001 — le modèle reste livré ; l'émission manquée est dite
+        if isinstance(result, dict):
+            result.setdefault("audit_trail", []).append({"stage": "emissions", "ok": False, "error": repr(_exc_em)[:200]})
     demande = lecture.get("demande")
     if isinstance(result, dict) and lecture.get("source") == "llm" and demande and result.get("prompt") != demande:
         result["sujet_reference"] = result.get("prompt")

@@ -125,3 +125,37 @@ class PlaceToBuild(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EmissionOfASubject(unittest.TestCase):
+    """« Un coup de parfum » (15/11/2026): the matter a subject emits is read from the request's words."""
+
+    SPRAY = "un flacon de parfum qui fait un coup de parfum"
+
+    def reading(self, emission):
+        subject = {"nom": None, "nomme": False, "nature": "flacon de parfum", "nature_en": "perfume bottle",
+                   "clause": "un flacon de parfum qui fait un coup de parfum", "mouvement": "fait un coup de parfum",
+                   "mouvement_en": "", "milieu": {"matiere": "gaz", "relation": "dans_l_air",
+                                                  "justification": "coup de parfum"}}
+        if emission is not None:
+            subject["emission"] = emission
+        return {"sujet": "un flacon de parfum", "sujet_en": "a perfume bottle", "mouvement": "fait un coup de parfum",
+                "exemplaires": 1, "corps_articule": False, "conception": False, "sujets": [subject],
+                "style": {"texte": "", "cible": None, "justification": ""}}
+
+    def test_a_spray_is_typed_placed_and_justified(self):
+        reading = lire_demande(self.SPRAY, interroger=answering(self.reading(
+            {"type": "brume", "point": "avant", "justification": "coup de parfum"})))
+        self.assertEqual(reading["sujets"][0]["emission"],
+                         {"type": "brume", "point": "avant", "justification": "coup de parfum"})
+
+    def test_no_emission_or_an_older_reading_gives_none(self):
+        reading = lire_demande(self.SPRAY + " ", interroger=answering(self.reading(None)))
+        self.assertEqual(reading["sujets"][0]["emission"], {"type": None, "point": None, "justification": ""})
+
+    def test_an_unknown_type_or_an_invented_justification_is_refused(self):
+        for bad in ({"type": "arc_en_ciel", "point": "haut", "justification": "coup de parfum"},
+                    {"type": "brume", "point": "avant", "justification": "nuage parfumé enchanté"}):
+            with self.subTest(bad=bad):
+                reading = lire_demande(self.SPRAY + "  .", interroger=answering(self.reading(bad)))
+                self.assertEqual(reading["source"], "indisponible")

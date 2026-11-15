@@ -78,3 +78,11 @@ class Injection(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Similitude(unittest.TestCase):
+    def test_un_jet_deux_fois_plus_grand_monte_deux_fois_plus_haut(self):
+        # Froude : vitesses en racine de la taille, hauteur atteinte proportionnelle à la taille
+        _, _, petit = emetteurs.construire(emetteurs.Emission("jet_liquide", origine=(0, 0, 0), echelle=1.0, graine=2))
+        _, _, grand = emetteurs.construire(emetteurs.Emission("jet_liquide", origine=(0, 0, 0), echelle=2.0, graine=2))
+        self.assertAlmostEqual(grand["hauteur_max_m"] / petit["hauteur_max_m"], 2.0, delta=0.15)

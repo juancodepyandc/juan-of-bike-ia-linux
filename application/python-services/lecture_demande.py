@@ -33,7 +33,8 @@ _CONSIGNE = (
     '{"sujet": "...", "sujet_en": "...", "mouvement": "...", "exemplaires": 1, "corps_articule": false, '
     '"conception": false, "sujets": [{"nom": "...", "nomme": true, "nature": "...", "nature_en": "...", '
     '"clause": "...", "mouvement": "...", "mouvement_en": "...", "milieu": {"matiere": "solide", '
-    '"relation": "sur", "justification": "..."}}], "style": {"texte": "...", "cible": null, '
+    '"relation": "sur", "justification": "..."}, "emission": {"type": null, "point": null, "justification": ""}}], '
+    '"style": {"texte": "...", "cible": null, '
     '"justification": "..."}, "lieu": {"type": null, "justification": "..."}}\n'
     "- sujet : ce qu'une photo de référence doit montrer — l'objet, l'être ou la scène, nommés avec les "
     "mots de la demande, avec SEULEMENT les matières, couleurs et détails que la demande donne, dans "
@@ -69,6 +70,14 @@ _CONSIGNE = (
     "sur|immerge|a_la_surface|dans_l_air|null ; justification : les mots de la demande qui l'impliquent. "
     "Le milieu peut être impliqué par le verbe (nager se fait dans un liquide, voler dans l'air) ; null "
     "s'il n'y a ni mouvement ni lieu.\n"
+    "  · emission : la matière que ce sujet ÉMET, si la demande l'implique. type ∈ brume|fumee|vapeur|flamme|"
+    "jet_liquide|gouttes|null : brume pour un vaporisateur, un parfum, un aérosol (« un coup de parfum ») ; "
+    "fumee pour une cheminée, un feu, une locomotive à vapeur, une cigarette ; vapeur pour une boisson chaude, "
+    "une bouilloire, une casserole ; flamme pour une bougie, une torche, un dragon qui crache du feu ; "
+    "jet_liquide pour une fontaine, un robinet ouvert, un arrosoir ; gouttes pour une fuite, un robinet qui "
+    "goutte. point ∈ haut|avant|bas|null : d'où part l'émission sur le sujet (le bec d'un vaporisateur : avant ; "
+    "une cheminée, une bougie : haut). justification : les mots EXACTS de la demande qui l'impliquent ; "
+    "type null et chaîne vide sinon.\n"
     "- style : le rendu demandé, séparé des sujets. texte : les mots EXACTS de la demande qui le "
     "décrivent (« en version réaliste »), chaîne vide sinon ; cible ∈ photo|cel_2d|cgi_3d|figurine|autre|"
     "null ; justification : ces mêmes mots. Le style n'apparaît jamais dans un nom ni dans une nature.\n"
@@ -88,6 +97,9 @@ CIBLES_STYLE = {"photo", "cel_2d", "cgi_3d", "figurine", "autre"}
 # Un lieu entier à construire (15/11/2026) : la demande part vers le moteur de scènes « monde » au lieu
 # d'être découpée en objets isolés (un « intérieur complet » donnait trois pièces-objets posées en ligne).
 LIEUX = {"interieur", "ville", "nature"}
+# Matière émise par un sujet (15/11/2026, « un coup de parfum ») : les lois de monde.emetteurs.LOIS.
+EMISSIONS = {"brume", "fumee", "vapeur", "flamme", "jet_liquide", "gouttes"}
+POINTS_EMISSION = {"haut", "avant", "bas"}
 _MATIERE_DE_RELATION = {"sur": "solide", "immerge": "liquide", "a_la_surface": "liquide", "dans_l_air": "gaz"}
 MAX_SUJETS = 8
 
@@ -177,6 +189,16 @@ def _valider_sujets(brut: dict[str, Any], demande: str) -> tuple[list[dict[str, 
         if relation is not None and matiere != _MATIERE_DE_RELATION[relation]:
             return None, None, (f"sujets[{i}].milieu incohérent : {relation} implique la matière "
                                 f"{_MATIERE_DE_RELATION[relation]}")
+        emis = s.get("emission") if isinstance(s.get("emission"), dict) else {}
+        type_emission = emis.get("type") if emis.get("type") not in ("", "null", "aucun") else None
+        point = emis.get("point") if emis.get("point") not in ("", "null") else None
+        justification_emission = " ".join(str(emis.get("justification") or "").split())
+        if type_emission is not None and type_emission not in EMISSIONS:
+            return None, None, f"sujets[{i}].emission.type doit valoir {', '.join(sorted(EMISSIONS))} ou null"
+        if point is not None and point not in POINTS_EMISSION:
+            return None, None, f"sujets[{i}].emission.point doit valoir haut, avant, bas ou null"
+        if type_emission is not None and not (justification_emission and _dans(justification_emission, demande)):
+            return None, None, f"sujets[{i}].emission.justification doit être un morceau exact de la demande"
         sujets.append({
             "nom": nom, "nomme": bool(nom) and s.get("nomme") is not False,
             "nature": nature, "nature_en": nature_en, "clause": clause,
@@ -184,6 +206,8 @@ def _valider_sujets(brut: dict[str, Any], demande: str) -> tuple[list[dict[str, 
             "mouvement_en": " ".join(str(s.get("mouvement_en") or "").split()),
             "milieu": {"matiere": matiere, "relation": relation,
                        "justification": " ".join(str(milieu_brut.get("justification") or "").split())},
+            "emission": {"type": type_emission, "point": point if type_emission else None,
+                         "justification": justification_emission if type_emission else ""},
         })
     style = {"texte": style_texte, "cible": cible,
              "justification": " ".join(str(style_brut.get("justification") or "").split())}

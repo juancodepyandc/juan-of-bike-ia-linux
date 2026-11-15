@@ -6423,6 +6423,7 @@ export default function ModelView() {
               const visitMesh = parsedAurora?.livraison?.scene_visite
               setWalkUrl(visitMesh && await fsExists(visitMesh) ? toAssetUrl(visitMesh) : null)
               const candidateMesh = parsedAurora?.livraison?.scene_couleurs
+                ?? parsedAurora?.livraison?.emission_couleurs
                 ?? parsedAurora?.livraison?.mouvement_couleurs
                 ?? parsedAurora?.livraison?.modele_couleurs
                 ?? parsedAurora?.final_mesh

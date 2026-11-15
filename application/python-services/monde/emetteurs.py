@@ -57,7 +57,7 @@ LOIS: dict[str, Loi] = {
     "flamme": Loi("flamme", "flamme", 34, 0.8, 0.55, 0.8, 0.6, 14.0, 3.0,
                   (0.0, 2.2, 0.0), (0.0, 0.0, 0.0), (0.06, 0.005), "retrecit"),
     # jet d'eau : gouttes balistiques (fontaine, robinet, arrosoir), sans freinage notable
-    "jet_liquide": Loi("jet d'eau", "eau", 56, 1.0, 0.95, 1.0, 4.4, 4.0, 50.0,
+    "jet_liquide": Loi("jet d'eau", "eau", 90, 1.0, 0.95, 1.0, 4.4, 6.0, 50.0,
                        (0.0, -9.81, 0.0), (0.0, 0.0, 0.0), (0.028, 0.028), "constante"),
     # gouttes : chute libre une à une (fuite, robinet qui goutte)
     "gouttes": Loi("gouttes qui tombent", "eau", 6, 1.2, 0.6, 1.2, 0.0, 0.0, 50.0,
@@ -118,7 +118,10 @@ def construire(emission: Emission) -> tuple[Noeud, dict[str, dict[str, Any]], di
         theta = math.radians(loi.cone_deg) * math.sqrt(rng.uniform())
         phi = rng.uniform(0, 2 * math.pi)
         dir_i = math.cos(theta) * d + math.sin(theta) * (math.cos(phi) * u + math.sin(phi) * v)
-        v0 = loi.vitesse * k * rng.uniform(0.8, 1.15) * dir_i
+        # similitude : un écoulement mené par la GRAVITÉ (jet, gouttes) garde ses proportions quand les vitesses
+        # suivent la racine de la taille (Froude) ; un jet freiné par l'air (brume) quand elles suivent la taille
+        gravitaire = loi.acceleration[1] < 0 and loi.trainee > 5.0
+        v0 = loi.vitesse * (math.sqrt(k) if gravitaire else k) * rng.uniform(0.8, 1.15) * dir_i
         acc = np.asarray(loi.acceleration) * (k if loi.acceleration[1] > 0 else 1.0)
         vent = np.asarray(loi.vent) * k
         age = (temps - naissance) % loi.duree_boucle
