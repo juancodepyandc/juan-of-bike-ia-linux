@@ -159,6 +159,21 @@ class Export(unittest.TestCase):
         canape_noeud = next(n for n in gltf["nodes"] if n.get("name") == "canape")
         self.assertIn("rotation", canape_noeud)                     # la pose est portée par le nœud
         self.assertIn("translation", canape_noeud)
+        # les extras d'un objet (catégorie, pivot d'une porte…) arrivent dans le glTF (three.js : userData)
+        self.assertEqual(canape_noeud.get("extras", {}).get("categorie"), "canape")
+
+    def test_une_cle_que_three_js_interprete_n_est_jamais_ecrite_telle_quelle(self):
+        # three.js r183 lit `userData.pivot` comme un tableau : « charniere » y donnait une position NaN
+        porte = Objet("porte", "porte", [Partie(g.boite(0.9, 2.0, 0.04), "bois_peint", "vantail")], 0.9, 0.04, 2.0)
+        scene = Scene(Noeud("logement", instances=[Instance(porte, Pose(1.0, 0.0, 0.0), "porte_a_b",
+                                                            meta={"pivot": "charniere", "angle_ouverture_rad": 1.57})]))
+        with tempfile.TemporaryDirectory() as tmp:
+            export_gltf.exporter(scene, Path(tmp) / "p.glb", resolution=32)
+            gltf, _ = lire_glb(Path(tmp) / "p.glb")
+        extras = next(n for n in gltf["nodes"] if n.get("name") == "porte_a_b")["extras"]
+        self.assertNotIn("pivot", extras)
+        self.assertEqual(extras["aurora_pivot"], "charniere")
+        self.assertAlmostEqual(extras["angle_ouverture_rad"], 1.57)
 
 
 if __name__ == "__main__":

@@ -32,6 +32,7 @@
     "test:conversation-context": "node --test scripts/test-conversation-context.mjs",
     "test:image-understanding": "node --test scripts/test-image-understanding.mjs",
     "test:rest-reference": "node --test scripts/test-rest-reference.mjs",
+    "test:scene-walk": "node --test scripts/test-scene-walk.mjs",
     "test:fx:visual": "node scripts/test-fx-visual.mjs",
     "test:real-gen": "node --test scripts/test-real-gen-flux2.mjs",
     "test:cowork": "node --test scripts/test-cowork-notion-links.mjs",

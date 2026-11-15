@@ -85,7 +85,18 @@ def construire_interieur(programme: dict, graine: int, fabrique) -> dict[str, An
     mesures["violations_plan"] = list((plan.mesures or {}).get("violations") or [])
     mesures["pieces"] = [{"nom": pp.nom, "fonction": pp.fonction, "surface": round(float(pp.surface), 1)}
                          for pp in plan.pieces]
-    return {"scene": Scene(complet), "maquette": Scene(maquette), "mesures": mesures, "plan": plan}
+    return {"scene": Scene(complet), "maquette": Scene(maquette), "mesures": mesures, "plan": plan,
+            "depart": depart_interieur(plan)}
+
+
+def depart_interieur(plan) -> dict[str, Any] | None:
+    """Point de départ d'une visite : juste derrière la porte d'entrée, tourné vers l'intérieur."""
+    entree = next((o for o in plan.ouvertures if o.type == "porte_entree"), None)
+    if entree is None:
+        return None
+    (cx, cz), (nx, nz) = entree.centre, entree.normale      # normale : de la pièce vers l'extérieur
+    return {"x": round(cx - 1.1 * nx, 3), "y": 0.0, "z": round(cz - 1.1 * nz, 3),
+            "direction": [round(-nx, 4), round(-nz, 4)], "lieu": f"entrée ({entree.pieces[0]})"}
 
 
 # ── Ville ──────────────────────────────────────────────────────────────────────────────────────────
@@ -100,7 +111,22 @@ def construire_ville(programme: dict, graine: int, fabrique) -> dict[str, Any]:
         riviere=bool(v.get("riviere")), arbres_alignement=bool(v.get("arbres_alignement", True)),
         voitures=bool(v.get("voitures", True)), graine=graine)
     noeud = ville_mod.construire_ville(plan, fabrique=fabrique)
-    return {"scene": Scene(noeud), "mesures": mesurer_ville(plan), "plan": plan}
+    return {"scene": Scene(noeud), "mesures": mesurer_ville(plan), "plan": plan, "depart": depart_ville(plan)}
+
+
+def depart_ville(plan) -> dict[str, Any] | None:
+    """Sur le trottoir le plus proche du centre, tourné vers le centre (la rue la plus vivante)."""
+    from shapely.geometry import Point
+    from shapely.ops import nearest_points
+    if plan.trottoirs is None or plan.trottoirs.is_empty:
+        return None
+    centre = plan.rectangle.centroid
+    p = nearest_points(plan.trottoirs.buffer(-0.6) if not plan.trottoirs.buffer(-0.6).is_empty else plan.trottoirs,
+                       centre)[0]
+    dx, dz = centre.x - p.x, centre.y - p.y
+    norme = (dx * dx + dz * dz) ** 0.5
+    direction = [round(dx / norme, 4), round(dz / norme, 4)] if norme > 1e-6 else [0.0, -1.0]
+    return {"x": round(p.x, 3), "y": 0.0, "z": round(p.y, 3), "direction": direction, "lieu": "trottoir central"}
 
 
 def mesurer_ville(plan) -> dict[str, Any]:
@@ -138,7 +164,40 @@ def construire_nature(programme: dict, graine: int, fabrique) -> dict[str, Any]:
     mesures = {"vegetation_dans_eau": dans_eau, "vegetation": len(vegetation),
                "amplitude_m": round(float(relief.amplitude), 1),
                "niveau_eau_m": None if relief.niveau_eau is None else round(float(relief.niveau_eau), 1)}
-    return {"scene": Scene(noeud), "mesures": mesures}
+    return {"scene": Scene(noeud), "mesures": mesures, "depart": depart_nature(relief, float(n["taille_m"]))}
+
+
+def depart_nature(relief, taille: float) -> dict[str, Any] | None:
+    """Le point sec et doux le plus proche du centre (spirale), tourné vers l'eau ou vers le centre."""
+    import math
+    niveau = relief.niveau_eau
+    meilleur = None
+    for k in range(400):
+        r, a = 2.0 * math.sqrt(k), k * 2.39996
+        x, z = r * math.cos(a), r * math.sin(a)
+        if max(abs(x), abs(z)) > 0.45 * taille:
+            break
+        if niveau is not None and float(relief(x, z)) < niveau + 0.8:
+            continue
+        if float(relief.pente_deg(x, z)) < 18.0:
+            meilleur = (x, z)
+            break
+    if meilleur is None:
+        return None
+    x, z = meilleur
+    cible = (0.0, 0.0)
+    if niveau is not None:                                   # regarder vers l'eau la plus proche
+        for k in range(1, 400):
+            r, a = 3.0 * math.sqrt(k), k * 2.39996
+            xx, zz = x + r * math.cos(a), z + r * math.sin(a)
+            if max(abs(xx), abs(zz)) < 0.5 * taille and float(relief(xx, zz)) < niveau:
+                cible = (xx, zz)
+                break
+    dx, dz = cible[0] - x, cible[1] - z
+    norme = math.hypot(dx, dz)
+    direction = [round(dx / norme, 4), round(dz / norme, 4)] if norme > 1e-6 else [0.0, -1.0]
+    return {"x": round(x, 3), "y": round(float(relief(x, z)), 3), "z": round(z, 3), "direction": direction,
+            "lieu": "replat sec près du centre"}
 
 
 CONSTRUCTEURS = {"interieur": construire_interieur, "ville": construire_ville, "nature": construire_nature}
@@ -178,7 +237,7 @@ def composer(programme: dict, racine_run: str | Path, *, graine: int | None = No
     fabrique = fabrique or fabrique_meubles()
     construit = CONSTRUCTEURS[type_scene](programme, graine, fabrique)
     scene: Scene = construit["scene"]
-    scene.extras = {"programme": programme, "graine": graine}
+    scene.extras = {"programme": programme, "graine": graine, "depart": construit.get("depart")}
     modele = racine_run / "modele"
     export = export_gltf.exporter(scene, modele / "scene_monde.glb")
     glb_maquette = None
@@ -192,6 +251,7 @@ def composer(programme: dict, racine_run: str | Path, *, graine: int | None = No
                                    hdri=HDRI.get(type_scene))
     verdict = porte.juger(type_scene, construit["mesures"], export, rendus)
     sortie = {"ok": verdict["verdict"] == "accepte", "type_scene": type_scene, "glb": export["chemin"],
+              "depart": construit.get("depart"),
               "glb_maquette": glb_maquette, "planche": (rendus or {}).get("planche"), "export": export,
               "porte": verdict, "mesures": construit["mesures"], "programme": programme, "graine": graine,
               "duree_s": round(time.monotonic() - debut, 1)}

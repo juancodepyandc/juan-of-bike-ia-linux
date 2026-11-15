@@ -56,10 +56,25 @@ def _par_materiau(parties: list[Partie]) -> dict[str, trimesh.Trimesh]:
     return {cle: fusionner(liste) for cle, liste in groupes.items()}
 
 
-def _matrices_en_trs(arbre: dict) -> None:
+# Clés d'extras qu'un visualiseur INTERPRÈTE : three.js r183 reconstruit un pivot depuis `userData.pivot`
+# (convention de son GLTFExporter, un tableau) ; notre « charniere » y devenait une position NaN et faisait
+# disparaître chaque porte de la scène (maison du 15/11/2026). Elles sont écrites sous un nom à nous.
+CLES_RESERVEES = {"pivot": "aurora_pivot"}
+
+
+def _extras_surs(extras: dict) -> dict:
+    return {CLES_RESERVEES.get(k, k): v for k, v in extras.items()}
+
+
+def _matrices_en_trs(arbre: dict, extras_par_nom: dict[str, dict] | None = None) -> None:
     """glTF n'anime que les nœuds en translation/rotation/échelle (jamais un nœud à `matrix`) : chaque
-    matrice est décomposée, pour que la scène reste animable objet par objet."""
+    matrice est décomposée, pour que la scène reste animable objet par objet. Les extras des nœuds
+    (catégorie, pivot et angle d'ouverture d'une porte…) sont écrits ici : trimesh ne les exporte pas
+    (0 nœud sur 223 les portait, maison du 15/11/2026) ; three.js les lit dans `userData`."""
     for noeud in arbre.get("nodes", []):
+        extras = (extras_par_nom or {}).get(noeud.get("name", ""))
+        if extras:
+            noeud["extras"] = json.loads(json.dumps(_extras_surs(extras), ensure_ascii=False, default=str))
         matrice = noeud.pop("matrix", None)
         if matrice is None:
             continue
@@ -92,6 +107,7 @@ def exporter(scene: Scene, chemin: str | Path, *, resolution: int = 512) -> dict
     ts = trimesh.Scene()
     noms = _Noms()
     stats = {"noeuds": 0, "maillages": 0, "triangles": 0, "materiaux": set(), "objets": 0}
+    extras_par_nom: dict[str, dict] = {}
 
     def ajouter_maillage(m: trimesh.Trimesh, cle: str, nom: str, parent: str, matrice: np.ndarray | None = None):
         if m is None or not len(m.faces):
@@ -105,8 +121,9 @@ def exporter(scene: Scene, chemin: str | Path, *, resolution: int = 512) -> dict
 
     def ajouter_vide(nom: str, parent: str, matrice: np.ndarray | None = None, extras: dict | None = None) -> str:
         nom_n = noms(nom)
-        ts.graph.update(frame_to=nom_n, frame_from=parent, matrix=np.eye(4) if matrice is None else matrice,
-                        **({"extras": extras} if extras else {}))
+        ts.graph.update(frame_to=nom_n, frame_from=parent, matrix=np.eye(4) if matrice is None else matrice)
+        if extras:
+            extras_par_nom[nom_n] = extras
         stats["noeuds"] += 1
         return nom_n
 
@@ -134,7 +151,8 @@ def exporter(scene: Scene, chemin: str | Path, *, resolution: int = 512) -> dict
     visiter(scene.racine, ts.graph.base_frame)
     if scene.extras:
         ts.metadata["extras"] = json.loads(json.dumps(scene.extras, ensure_ascii=False, default=str))
-    donnees = ts.export(file_type="glb", include_normals=True, tree_postprocessor=_matrices_en_trs)
+    donnees = ts.export(file_type="glb", include_normals=True,
+                        tree_postprocessor=lambda arbre: _matrices_en_trs(arbre, extras_par_nom))
     chemin.write_bytes(donnees)
     stats["materiaux"] = sorted(stats["materiaux"])
     stats["octets"] = len(donnees)

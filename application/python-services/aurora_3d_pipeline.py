@@ -3883,7 +3883,10 @@ def _run_pipeline_core(prompt: str, run_id: str, *,
         else:
             print(f"PROGRESS:monde:lieu entier ({_lieu}) — programme de scène, plan, disposition, matériaux...", flush=True)
             _monde = composer_depuis_demande(prompt, _racine_run, contrat=_contrat, audit=audit)
-            _livraison = {k: v for k, v in {"scene_couleurs": _monde.get("glb"), "scene_maquette": _monde.get("glb_maquette"),
+            # vue par défaut = la maquette (murs coupés, sans plafond) quand elle existe ; la visite à pied
+            # se fait dans la scène complète (plafonds, portes sur leurs gonds), livrée à part
+            _livraison = {k: v for k, v in {"scene_couleurs": _monde.get("glb_maquette") or _monde.get("glb"),
+                                            "scene_visite": _monde.get("glb"), "scene_maquette": _monde.get("glb_maquette"),
                                             "apercus": _monde.get("planche")}.items() if v}
             return {"ok": bool(_monde.get("ok")), "schema": "aurora.pipeline.v1", "run_id": run_id, "prompt": prompt,
                     "is_scene": True, "monde": _monde, "final_mesh": _monde.get("glb"), "livraison": _livraison,

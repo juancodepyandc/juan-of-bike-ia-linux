@@ -6,6 +6,7 @@ import { binaryBase64 } from '../utils/binaryBase64.ts'
 import { parsePythonResult } from '../utils/pythonResult.ts'
 import { namesASubject, readThreeDRequest, requestsAPlace, singleSubjectInMedium, restStateFromReading, restStateVerificationPrompt, type ThreeDRequestReading } from '../services/threeDRequestReading'
 import { materialChannels } from '../utils/materialChannels.ts'
+import { SceneWalkController, type SceneWalkState } from '../components/SceneWalkController'
 import { recoverModelDelivery } from '../utils/recoverModelDelivery.ts'
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertCircle, BookOpen, Box, Check, Globe, Image as ImageIcon, Layers3, Loader2, Lock, Orbit, Palette, Sparkles, X } from 'lucide-react'
@@ -3604,6 +3605,9 @@ function CameraController({ viewer, modelLoaded, modelRoot }: { viewer: ViewerCo
   const { camera, scene, gl } = useThree()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const controlsRef = useRef<any>(null)
+  // distance d'orbite maximale suivant la taille du modèle : fixée à 50, une ville de 400 à 800 m ne
+  // pouvait jamais être vue en entier (15/11/2026)
+  const [maxOrbitDistance, setMaxOrbitDistance] = useState(50)
   const defaultCameraPos = useMemo(() => new Vector3(...viewer.cameraPosition), [viewer.cameraPosition])
   const defaultTarget = useMemo(() => new Vector3(0, 0, 0), [])
 
@@ -3630,6 +3634,7 @@ function CameraController({ viewer, modelLoaded, modelRoot }: { viewer: ViewerCo
       camera.position.copy(boxCenter).addScaledVector(direction, fitDistance)
       camera.near = Math.max(1e-3, fitDistance / 200)
       camera.far = Math.max(100, fitDistance * 20)
+      setMaxOrbitDistance(Math.max(50, fitDistance * 4))
       camera.lookAt(boxCenter)
       camera.updateProjectionMatrix()
       if (controlsRef.current) {
@@ -3666,7 +3671,7 @@ function CameraController({ viewer, modelLoaded, modelRoot }: { viewer: ViewerCo
       zoomSpeed={1.4}
       rotateSpeed={0.8}
       minDistance={0.3}
-      maxDistance={50}
+      maxDistance={maxOrbitDistance}
       makeDefault
     />
   )
@@ -3928,6 +3933,8 @@ function Scene3D({
   activeAnchorId = 'head',
   showAnchorOverlay = false,
   onSelectAnchorId,
+  walkMode = false,
+  onWalkState,
 }: {
   modelUrl: string
   localMeshPath?: string | null
@@ -3969,6 +3976,9 @@ function Scene3D({
   activeAnchorId?: AnchorJointId
   showAnchorOverlay?: boolean
   onSelectAnchorId?: (id: AnchorJointId) => void
+  /** visite à pied : la caméra devient les yeux d'un marcheur (src/services/sceneWalk.ts) */
+  walkMode?: boolean
+  onWalkState?: (state: SceneWalkState) => void
 }) {
   const [modelLoaded, setModelLoaded] = useState(false)
   const [internalRoot, setInternalRoot] = useState<Object3D | null>(null)
@@ -4005,15 +4015,15 @@ function Scene3D({
       <directionalLight position={[-5, 2, 5]} intensity={0.4} color={AURORA_V4_SKIN ? '#22D3EE' : '#ffd166'} />
       <hemisphereLight args={['#b1e1ff', '#1a1a2e', 0.45]} />
       <ProceduralEnvironment hdri={hdri} />
-      {showGrid && <gridHelper args={AURORA_V4_SKIN ? [10, 20, '#1E2A4A', '#0C1224'] : [10, 20, '#1a2a35', '#0d1a22']} position={[0, -0.01, 0]} />}
-      <AxesOverlay visible={showAxes} />
+      {showGrid && !walkMode && <gridHelper args={AURORA_V4_SKIN ? [10, 20, '#1E2A4A', '#0C1224'] : [10, 20, '#1a2a35', '#0d1a22']} position={[0, -0.01, 0]} />}
+      <AxesOverlay visible={showAxes && !walkMode} />
       <BonesOverlay visible={showBones} modelRoot={internalRoot} />
       <CameraSnapHandler snap={cameraSnap} onSnapHandled={onSnapHandled ?? (() => undefined)} />
       <Suspense fallback={null}>
         <InteractiveModel
           url={modelUrl}
           localMeshPath={localMeshPath}
-          autoRotate={viewer.autoRotate}
+          autoRotate={viewer.autoRotate && !walkMode}
           onPartSelect={onPartSelect}
           onPartInfo={onPartInfo}
           selectAllToken={selectAllToken}
@@ -4046,7 +4056,9 @@ function Scene3D({
           onSelectAnchorId={onSelectAnchorId}
         />
       </Suspense>
-      <CameraController viewer={viewer} modelLoaded={modelLoaded} modelRoot={internalRoot} />
+      {walkMode
+        ? <SceneWalkController modelRoot={internalRoot} onState={onWalkState} />
+        : <CameraController viewer={viewer} modelLoaded={modelLoaded} modelRoot={internalRoot} />}
     </Canvas>
   )
 }
@@ -4082,6 +4094,12 @@ export default function ModelView() {
   useEffect(() => () => { if (importedOriginalUrl.current) URL.revokeObjectURL(importedOriginalUrl.current) }, [])
   const [modelUrl, setModelUrl] = useState<string | null>(null)
   const [viewerFullscreen, setViewerFullscreen] = useState(false)
+  // VISITE À PIED (15/11/2026) : « Se balader » dans la scène livrée ; la maquette (murs coupés, sans
+  // plafond) reste la vue par défaut, la visite charge la scène complète (`livraison.scene_visite`).
+  const [walkMode, setWalkMode] = useState(false)
+  const [walkState, setWalkState] = useState<SceneWalkState>({ captured: false, active: false, flying: false, doors: 0 })
+  const [walkUrl, setWalkUrl] = useState<string | null>(null)
+  const orbitUrlRef = useRef<string | null>(null)
   const [viewerWebUrl, setViewerWebUrl] = useState<string | null>(null)
   const [referenceImageUrl, setReferenceImageUrl] = useState<string | null>(null)
   const [discoveredSourceWeb, setDiscoveredSourceWeb] = useState<{ site?: string; url?: string; title?: string } | null>(null)
@@ -5179,6 +5197,9 @@ export default function ModelView() {
     const requestedMotion = motionEnabledRef.current
     setIsGenerating(true)
     setError(null)
+    setWalkMode(false)
+    setWalkUrl(null)
+    orbitUrlRef.current = null
     const initLabel = 'Analyse de la demande 3D par les 5 sous-agents...'
     setProgress(initLabel)
     setPhaseSnapshot({ label: initLabel, percent: 2 })
@@ -6399,6 +6420,8 @@ export default function ModelView() {
               // pas -> le viewer n'affichait RIEN. `scene_couleurs` passe
               // devant `modele_couleurs`: la scene assemblee est le bon
               // livrable, et c'est elle qui porte les deux matieres.
+              const visitMesh = parsedAurora?.livraison?.scene_visite
+              setWalkUrl(visitMesh && await fsExists(visitMesh) ? toAssetUrl(visitMesh) : null)
               const candidateMesh = parsedAurora?.livraison?.scene_couleurs
                 ?? parsedAurora?.livraison?.mouvement_couleurs
                 ?? parsedAurora?.livraison?.modele_couleurs
@@ -7611,7 +7634,18 @@ export default function ModelView() {
                     activeAnchorId={activeAnchorId}
                     showAnchorOverlay={showAnchorOverlay}
                     onSelectAnchorId={setActiveAnchorId}
+                    walkMode={walkMode}
+                    onWalkState={setWalkState}
                   />
+                  {walkMode && (
+                    <div className="pointer-events-none absolute inset-x-0 bottom-4 z-10 flex justify-center px-4">
+                      <div className="rounded-xl border border-aurora-border/60 bg-black/65 px-4 py-2 text-center text-[11px] leading-relaxed text-white/90">
+                        {walkState.active
+                          ? <>ZQSD / WASD ou flèches : marcher · Maj : courir · Espace : sauter · F : {walkState.flying ? 'quitter le vol' : 'voler'}{walkState.flying ? ' (Espace / C : monter, descendre)' : ''} · {walkState.captured ? 'souris : regarder' : 'glisser la souris : regarder'} · Échap : arrêter</>
+                          : <>Clique dans la vue pour te balader{walkState.doors ? ` — ${walkState.doors} porte(s) s'ouvrent quand tu approches` : ''}</>}
+                      </div>
+                    </div>
+                  )}
                   <div className="pointer-events-none absolute left-3 top-3 z-10 flex flex-wrap gap-1">
                     {(['face', 'side', 'top', 'iso'] as const).map((view) => (
                       <button
@@ -7625,6 +7659,33 @@ export default function ModelView() {
                     ))}
                   </div>
                   <div className="pointer-events-none absolute right-3 top-3 z-10 flex flex-wrap gap-1.5">
+                    <button
+                      onClick={() => {
+                        if (!walkMode) {
+                          // une maquette (murs coupés à 1,2 m, sans plafond) a toujours sa scène complète à côté :
+                          // c'est elle qu'on visite, même ouverte depuis la bibliothèque
+                          const fromLibrary = modelUrl?.replace(/scene_maquette\.glb(\?.*)?$/, 'scene_monde.glb$1') ?? null
+                          const visit = walkUrl ?? (fromLibrary !== modelUrl ? fromLibrary : null)
+                          if (visit && visit !== modelUrl) {
+                            orbitUrlRef.current = modelUrl
+                            setModelUrl(visit)
+                          }
+                          setWalkMode(true)
+                        } else {
+                          setWalkMode(false)
+                          if (orbitUrlRef.current) {
+                            setModelUrl(orbitUrlRef.current)
+                            orbitUrlRef.current = null
+                          }
+                        }
+                      }}
+                      className={`pointer-events-auto rounded-lg border px-2 py-1 text-[10px] font-medium transition-colors ${
+                        walkMode ? 'border-aurora-accent/50 bg-aurora-accent/15 text-aurora-accent' : 'border-aurora-border/60 bg-aurora-surface/80 text-aurora-text-dim hover:text-aurora-text'
+                      }`}
+                      title={walkMode ? 'Revenir à la vue maquette' : 'Visiter la scène à pied (clic dans la vue, puis ZQSD / WASD)'}
+                    >
+                      {walkMode ? '✕ Quitter la visite' : '🚶 Se balader'}
+                    </button>
                     <button
                       onClick={() => setShowGrid((v) => !v)}
                       className={`pointer-events-auto rounded-lg border px-2 py-1 text-[10px] font-medium transition-colors ${

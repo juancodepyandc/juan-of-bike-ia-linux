@@ -15,11 +15,11 @@
    "working_tree_drafts_included": false
   }
  },
- "source_files": 2547,
- "source_lines": 926060,
+ "source_files": 2550,
+ "source_lines": 926840,
  "static_route_declarations": 719,
  "by_repository": {
-  "AuroraIA": 2226,
+  "AuroraIA": 2229,
   "aurora-remote-cli": 317,
   "aurora-live": 4
  },
@@ -1595,8 +1595,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/package.json",
-   "sha256": "f106b9df6ba3c7f456793a785dd5c2e39c10c216ddd28357ec074b64715cb295",
-   "lines": 91
+   "sha256": "0916367c52621ee8bc95e15742163fd049dbd6e9e34219fb02410d18a397f37c",
+   "lines": 92
   },
   {
    "repo": "AuroraIA",
@@ -2275,8 +2275,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/python-services/aurora_3d_pipeline.py",
-   "sha256": "cf53cba2720d89000d0690b0192ab34aebdaa39c72bd208c57a1e04f32a10f2b",
-   "lines": 7558,
+   "sha256": "9165c6923599b7eba493733fbdf9f082f744f3844df98ddd14778ebe3850080e",
+   "lines": 7561,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -4153,8 +4153,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/python-services/monde/composer.py",
-   "sha256": "436d85c5afb40e2800435ef4f501f259de60e80ad1960a741b5fbff7f141a113",
-   "lines": 247,
+   "sha256": "57d46cc0b39c911ed5e6539e5fd0e14a3d28c5f33fa54bd8015dc3b8d9ea694c",
+   "lines": 307,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -4169,8 +4169,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/python-services/monde/export_gltf.py",
-   "sha256": "0cfac9cca647ff495a0d94d6ed4becca64519b325d1b000f40f01f85a972b377",
-   "lines": 142,
+   "sha256": "563302573d9f254e20f416610d61a5ba4f0df031d72ea45cdb144203b13c1d13",
+   "lines": 160,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -11019,6 +11019,12 @@
   },
   {
    "repo": "AuroraIA",
+   "path": "application/scripts/test-scene-walk.mjs",
+   "sha256": "9e67b6dfd048caceb6915a342f2871be5783fb6ebca61ba240ea050d2aa129e1",
+   "lines": 181
+  },
+  {
+   "repo": "AuroraIA",
    "path": "application/scripts/verify-explanation.mjs",
    "sha256": "3d2ede0231f29f3df3ee5227c30d96e3b1949c0707c2823c0d9cf13b2278a3db",
    "lines": 52
@@ -11532,6 +11538,12 @@
    "path": "application/src/components/SaveDialog.tsx",
    "sha256": "ec6cf6817fb4519474a501233471ba68de78782c216fe874f3ce6afaffcffa89",
    "lines": 173
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "application/src/components/SceneWalkController.tsx",
+   "sha256": "7bf7d085e45ab9f17909be2c12cf52b828bd67ca69c467538c415fad3f7aa5cd",
+   "lines": 141
   },
   {
    "repo": "AuroraIA",
@@ -14337,6 +14349,12 @@
   },
   {
    "repo": "AuroraIA",
+   "path": "application/src/services/sceneWalk.ts",
+   "sha256": "4f467607d6c284ce9778a5d203705efa1ffd0cada812e6ec34848a7aa2f2f640",
+   "lines": 262
+  },
+  {
+   "repo": "AuroraIA",
    "path": "application/src/services/selfInformedReference.ts",
    "sha256": "de5226b3f450fdd2d9484ae7499e9175e1a1db3b337df900b05d882db1f3794e",
    "lines": 781
@@ -15490,8 +15508,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/views/ModelView.tsx",
-   "sha256": "bf60315cc679d2c2c26f4b1f774e4d42d6a73cbb5450ec2e4b7458b936c93522",
-   "lines": 8528
+   "sha256": "753275784c4345c6e4f4867065297f553d2a1f4f84a15eaedd4615fa15ec1a63",
+   "lines": 8589
   },
   {
    "repo": "AuroraIA",
@@ -21138,8 +21156,8 @@
   {
    "repo": "AuroraIA",
    "path": "tests_agi/test_monde_composer.py",
-   "sha256": "c5b0d3f16e922f8ed170e4275c35ca0be4e2e67793594f8a95f7c71f5994a0ae",
-   "lines": 76,
+   "sha256": "46ad7bab7900eb8f8030d738ddfd9bd22b3c329bcacc836e17d49a9f87c0f8f1",
+   "lines": 114,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -21154,8 +21172,8 @@
   {
    "repo": "AuroraIA",
    "path": "tests_agi/test_monde_fondation.py",
-   "sha256": "f9c3883b084f79e414ff053e38f39d991e5767174627ee8add3d1c9c7c0fa517",
-   "lines": 165,
+   "sha256": "e936f310a1a05da4ec75a8bec2782cc4ecd802ce3cf5600e5e8f0a83b1835787",
+   "lines": 180,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
