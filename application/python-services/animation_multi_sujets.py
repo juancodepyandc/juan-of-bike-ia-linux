@@ -36,9 +36,11 @@ APPUIS = {"deux_jambes": "humanoid", "quatre_pattes": "quadruped", "sans_pattes"
 _CONSIGNE_REPARTITION = (
     "Tu lis une demande d'animation 3D qui met en scène plusieurs sujets. Pour CHAQUE sujet nommé, "
     "dis quel mouvement la demande lui donne. Réponds UNIQUEMENT par un JSON de la forme exacte "
-    '{"sujets": [{"nom": "...", "mouvement": "..."}]}. '
-    "nom : le sujet avec les mots de la demande. mouvement : son action, reprise fidèlement ; chaîne vide "
-    "si la demande ne lui en donne aucune. Dans l'ordre où la demande les nomme. Rien d'autre."
+    '{"sujets": [{"nom": "...", "nature": "...", "mouvement": "..."}]}. '
+    "nom : le sujet avec les mots de la demande. nature : ce qu'est le sujet en deux à quatre mots (espèce, "
+    "type d'être ou d'objet : « une hyène », « un requin », « un robot »), telle que la demande la dit, sinon "
+    "ce que le nom désigne. mouvement : son action, reprise fidèlement ; chaîne vide si la demande ne lui en "
+    "donne aucune. Dans l'ordre où la demande les nomme. Rien d'autre."
 )
 
 
@@ -87,7 +89,9 @@ def repartir_mouvements(demande: str, *, interroger: Callable[[str], str] | None
     for item in (brut or {}).get("sujets") or []:
         if isinstance(item, dict) and isinstance(item.get("nom"), str) and item["nom"].strip():
             mouvement = item.get("mouvement") if isinstance(item.get("mouvement"), str) else ""
-            sujets.append({"nom": " ".join(item["nom"].split()), "mouvement": " ".join(mouvement.split())})
+            nature = item.get("nature") if isinstance(item.get("nature"), str) else ""
+            sujets.append({"nom": " ".join(item["nom"].split()), "nature": " ".join(nature.split())[:60],
+                           "mouvement": " ".join(mouvement.split())})
     if not sujets:
         return {"source": "indisponible", "raison": "réponse hors contrat", "sujets": []}
     return {"source": "llm", "sujets": sujets}
@@ -102,13 +106,16 @@ def identifier_personnages(references: list[str | None], sujets: list[dict[str, 
     du modèle de vision, l'ordre de mention est supposé, et le rapport le dit.
     """
     noms = [s["nom"] for s in sujets]
+    # Un nom propre seul ne dit rien au modèle de vision (15/11/2026 : « Zig » et « Sharco » nus, la
+    # hyène a été prise pour le requin) ; la nature de chaque sujet l'accompagne.
+    libelles = [f"{s['nom']} — {s['nature']}" if s.get("nature") else s["nom"] for s in sujets]
     if demander is None:
         def demander(image: str, question: str) -> Any:
             from vlm_judge import ask_vlm
             return ask_vlm([image], question,
                            schema_hint='{"sujet": 1, "appui": "deux_jambes|quatre_pattes|sans_pattes"}')
     question = ("Cette image montre UN des sujets suivants : "
-                + "; ".join(f"{i + 1}) {nom}" for i, nom in enumerate(noms))
+                + "; ".join(f"{i + 1}) {libelle}" for i, libelle in enumerate(libelles))
                 + ". Lequel est-ce (son numéro) ? Et comment se tient-il : sur deux jambes, sur quatre "
                   "pattes, ou sans pattes (corps qui nage, rampe ou vole) ?")
     lus: list[dict[str, Any]] = []

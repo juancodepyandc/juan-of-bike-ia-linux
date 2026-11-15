@@ -100,7 +100,8 @@ class PlacementAndRestPose(unittest.TestCase):
 
 
 class WhoIsWho(unittest.TestCase):
-    SUBJECTS = [{"nom": "Zig la hyène", "mouvement": "court"}, {"nom": "Sharko le requin", "mouvement": "nage"}]
+    SUBJECTS = [{"nom": "Zig", "nature": "une hyène", "mouvement": "court"},
+                {"nom": "Sharko", "nature": "un requin", "mouvement": "nage"}]
 
     def test_the_vision_answer_names_each_crop_and_its_stance(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -108,7 +109,11 @@ class WhoIsWho(unittest.TestCase):
             for c in crops:
                 Path(c).write_bytes(b"png")
             answers = {crops[0]: {"sujet": 2, "appui": "sans_pattes"}, crops[1]: {"sujet": 1, "appui": "quatre_pattes"}}
-            read = ams.identifier_personnages(crops, self.SUBJECTS, demander=lambda img, q: answers[img])
+            asked = []
+            read = ams.identifier_personnages(crops, self.SUBJECTS, demander=lambda img, q: asked.append(q) or answers[img])
+        # a bare proper name tells the vision model nothing: each subject comes with what it is
+        self.assertIn("1) Zig — une hyène", asked[0])
+        self.assertIn("2) Sharko — un requin", asked[0])
         self.assertEqual([(r["sujet"], r["appui"], r["source"]) for r in read],
                          [(1, "sans_pattes", "vision"), (0, "quatre_pattes", "vision")])
 
@@ -153,8 +158,8 @@ class Orchestration(unittest.TestCase):
                 identifier=lambda refs, sujets: [{"sujet": 0, "appui": "quatre_pattes", "source": "vision"},
                                                  {"sujet": 1, "appui": "sans_pattes", "source": "vision"}],
                 animer=animate)
-            self.assertEqual(calls, [("p1.glb", "Zig la hyène court", "quadruped"),
-                                     ("p2.glb", "Sharko le requin nage", "creature")])
+            self.assertEqual(calls, [("p1.glb", "Zig court", "quadruped"),
+                                     ("p2.glb", "Sharko nage", "creature")])
             self.assertFalse(report["ok"])
             self.assertEqual(report["anime"], 1)
             self.assertIn("rig impossible", report["error"])
