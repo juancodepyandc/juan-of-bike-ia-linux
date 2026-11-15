@@ -3569,7 +3569,14 @@ def _reference_par_identite(contrat: dict, run_id: str, output_dir: Path, animat
     essais = max(1, int(os.environ.get("AURORA_IDENTITE_ESSAIS", "3")))
     verdicts = []
     corrections: list[str] = []
+    renforces: list[int] = []
     for essai in range(1, essais + 1):
+        if renforces:
+            # Identité refusée au rendu précédent : plus de pixels pour les sujets refusés (seconde ancre,
+            # références à 1 MP), jamais plus de texte (15/11/2026, Zig sorti en hyène générique).
+            consigne = reference_identite.prompt_reference_identite(contrat, dossier, animation=animer,
+                                                                    rest_pose_cues=REST_POSE_CUES,
+                                                                    renforces=renforces)
         positif = consigne["positif"] + ("" if not corrections else ". CORRECTIONS: " + " ".join(corrections))
         print(f"PROGRESS:reference:identité — rendu conditionné par {len(consigne['references'])} image(s) réelle(s), "
               f"essai {essai}/{essais}...", flush=True)
@@ -3579,6 +3586,7 @@ def _reference_par_identite(contrat: dict, run_id: str, output_dir: Path, animat
         res = flux_reference_synth.synth(positif, f"{run_id}_identite_{essai}", output_dir=output_dir, steps=20,
                                          width=min(2048, 1024 + 512 * (n_sujets - 1)), height=1024,
                                          seed=1 + 7919 * essai, reference_images=consigne["references"],
+                                         reference_megapixels=1.0 if renforces else flux_reference_synth.REFERENCE_MEGAPIXELS,
                                          negative_prompt=consigne.get("negatif") or None)
         if not res.get("ok"):
             verdicts.append({"essai": essai, "rendu": False, "erreur": res.get("error")})
@@ -3596,6 +3604,8 @@ def _reference_par_identite(contrat: dict, run_id: str, output_dir: Path, animat
             audit.append({"stage": "reference_identite", "ok": True, "essais": essai})
             return {"ok": True, "front_ref": str(front), "attribution": _ATTRIBUTION_IDENTITE[run_id]}
         corrections = [r for s in verdict.get("sujets") or [] for r in s.get("raisons") or []][:6]
+        renforces = sorted({int(s["index"]) for s in verdict.get("sujets") or []
+                            if "identite" in (s.get("axes_refuses") or []) and s.get("index") is not None})
     (journal / "identite_verdicts.json").write_text(json.dumps(verdicts, ensure_ascii=False, indent=2), encoding="utf-8")
     audit.append({"stage": "reference_identite", "ok": False, "essais": essais})
     dernier = next((v for v in reversed(verdicts) if v.get("verdict")), {})
@@ -3859,6 +3869,27 @@ def _run_pipeline_core(prompt: str, run_id: str, *,
         _lecture if isinstance(_lecture, dict) and _lecture.get("source") == "llm" else None)
     _photos_utilisateur = [im for im in (images or []) if str(im) not in set(
         os.environ.get("AURORA_SYNTHETIC_REFERENCES", "").split("::")) - {""}]
+    # LIEU ENTIER (15/11/2026) : une maison meublée, une ville ou un paysage se construisent d'un bloc par le
+    # moteur de scènes « monde » (programme typé → plan → disposition mesurée → géométrie paramétrique →
+    # matériaux → glTF → rendus f3d → porte). Découpés en objets isolés, ils donnaient trois pièces-objets
+    # posées en ligne, sans mur commun ni meuble. AURORA_MONDE=0 rend l'ancien chemin.
+    _lieu = ((_contrat or {}).get("lieu") or {}).get("type")
+    if _lieu and not _photos_utilisateur and os.environ.get("AURORA_MONDE", "1") != "0":
+        _racine_run = output_dir.parent if output_dir.name in {"models", "work"} and output_dir.parent.name == run_id else output_dir
+        try:
+            from monde.composer import composer_depuis_demande
+        except ImportError as _exc:
+            audit.append({"stage": "monde", "ok": False, "error": f"moteur de scènes absent : {_exc}"})
+        else:
+            print(f"PROGRESS:monde:lieu entier ({_lieu}) — programme de scène, plan, disposition, matériaux...", flush=True)
+            _monde = composer_depuis_demande(prompt, _racine_run, contrat=_contrat, audit=audit)
+            _livraison = {k: v for k, v in {"scene_couleurs": _monde.get("glb"), "scene_maquette": _monde.get("glb_maquette"),
+                                            "apercus": _monde.get("planche")}.items() if v}
+            return {"ok": bool(_monde.get("ok")), "schema": "aurora.pipeline.v1", "run_id": run_id, "prompt": prompt,
+                    "is_scene": True, "monde": _monde, "final_mesh": _monde.get("glb"), "livraison": _livraison,
+                    "error": None if _monde.get("ok") else (_monde.get("error") or "; ".join(
+                        (_monde.get("porte") or {}).get("raisons") or [])[:400] or "scène refusée"),
+                    "audit_trail": audit}
     if (_contrat and any(s.get("nomme") for s in _contrat.get("sujets") or [])
             and not _photos_utilisateur and os.environ.get("AURORA_IDENTITE_IMAGES", "1") != "0"):
         _ri = _reference_par_identite(_contrat, run_id, output_dir, animation, audit)

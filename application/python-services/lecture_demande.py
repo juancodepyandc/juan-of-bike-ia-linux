@@ -34,7 +34,7 @@ _CONSIGNE = (
     '"conception": false, "sujets": [{"nom": "...", "nomme": true, "nature": "...", "nature_en": "...", '
     '"clause": "...", "mouvement": "...", "mouvement_en": "...", "milieu": {"matiere": "solide", '
     '"relation": "sur", "justification": "..."}}], "style": {"texte": "...", "cible": null, '
-    '"justification": "..."}}\n'
+    '"justification": "..."}, "lieu": {"type": null, "justification": "..."}}\n'
     "- sujet : ce qu'une photo de référence doit montrer — l'objet, l'être ou la scène, nommés avec les "
     "mots de la demande, avec SEULEMENT les matières, couleurs et détails que la demande donne, dans "
     "l'état où le sujet se trouve AVANT que le mouvement commence. N'ajoute aucune apparence que la "
@@ -72,6 +72,12 @@ _CONSIGNE = (
     "- style : le rendu demandé, séparé des sujets. texte : les mots EXACTS de la demande qui le "
     "décrivent (« en version réaliste »), chaîne vide sinon ; cible ∈ photo|cel_2d|cgi_3d|figurine|autre|"
     "null ; justification : ces mêmes mots. Le style n'apparaît jamais dans un nom ni dans une nature.\n"
+    "- lieu : la demande veut-elle un LIEU ENTIER à construire plutôt qu'un ou plusieurs objets ou êtres ? "
+    "type ∈ interieur|ville|nature|null : interieur pour une maison, un appartement, une pièce ou un intérieur "
+    "aménagés ; ville pour une ville, un village, un quartier, des rues ; nature pour un paysage, une forêt, une "
+    "plage, une montagne, une île. null quand la demande porte sur des objets, des personnages ou des créatures, "
+    "même placés quelque part (« un homme assis sur une chaise », « un requin qui nage » : null). "
+    "justification : les mots EXACTS de la demande qui désignent ce lieu, chaîne vide si null.\n"
     "N'ajoute rien que la demande ne dit pas. Pas de texte hors du JSON."
 )
 
@@ -79,6 +85,9 @@ _CONSIGNE = (
 MATIERES = {"solide", "liquide", "gaz"}
 RELATIONS = {"sur", "immerge", "a_la_surface", "dans_l_air"}
 CIBLES_STYLE = {"photo", "cel_2d", "cgi_3d", "figurine", "autre"}
+# Un lieu entier à construire (15/11/2026) : la demande part vers le moteur de scènes « monde » au lieu
+# d'être découpée en objets isolés (un « intérieur complet » donnait trois pièces-objets posées en ligne).
+LIEUX = {"interieur", "ville", "nature"}
 _MATIERE_DE_RELATION = {"sur": "solide", "immerge": "liquide", "a_la_surface": "liquide", "dans_l_air": "gaz"}
 MAX_SUJETS = 8
 
@@ -206,6 +215,9 @@ def _valider(brut: dict[str, Any] | None, demande: str) -> tuple[dict[str, Any] 
     sujets, style, raison_v2 = _valider_sujets(brut, demande)
     if sujets is None:
         return None, raison_v2
+    lieu, raison_lieu = _valider_lieu(brut.get("lieu"), demande)
+    if lieu is None:
+        return None, raison_lieu
     return {
         "schema": SCHEMA,
         "source": "llm",
@@ -220,7 +232,26 @@ def _valider(brut: dict[str, Any] | None, demande: str) -> tuple[dict[str, Any] 
         # contrat v2 (15/11/2026) : un élément par sujet, le style à part
         "sujets": sujets,
         "style": style,
+        "lieu": lieu,
     }, ""
+
+
+def _valider_lieu(brut: Any, demande: str) -> tuple[dict[str, Any] | None, str]:
+    """Lieu entier demandé : type fermé, justifié par les mots exacts de la demande. Absent = aucun lieu
+    (lectures antérieures au champ)."""
+    if brut is None:
+        return {"type": None, "justification": ""}, ""
+    if not isinstance(brut, dict):
+        return None, "lieu doit être un objet {type, justification}"
+    type_ = brut.get("type")
+    if type_ in ("", "null", "aucun"):
+        type_ = None
+    if type_ is not None and type_ not in LIEUX:
+        return None, "lieu.type doit valoir interieur, ville, nature ou null"
+    justification = " ".join(str(brut.get("justification") or "").split())
+    if type_ is not None and not (justification and _dans(justification, demande)):
+        return None, "lieu.justification doit être un morceau exact de la demande qui désigne le lieu"
+    return {"type": type_, "justification": justification if type_ else ""}, ""
 
 
 def _correction(demande: str, reponse: str, raison: str) -> str:
@@ -234,7 +265,8 @@ def lecture_indisponible(demande: str, raison: str) -> dict[str, Any]:
     """La demande telle quelle, marquée comme non lue : l'appelant ne doit rien en déduire."""
     return {"schema": SCHEMA, "source": "indisponible", "raison": raison[:200], "demande": demande,
             "sujet": demande, "sujet_en": "", "mouvement": "", "exemplaires": None, "corps_articule": None,
-            "conception": None, "sujets": [], "style": {"texte": "", "cible": None, "justification": ""}}
+            "conception": None, "sujets": [], "style": {"texte": "", "cible": None, "justification": ""},
+            "lieu": {"type": None, "justification": ""}}
 
 
 def lire_demande(demande: str, *, interroger: Callable[[str], str] | None = None,

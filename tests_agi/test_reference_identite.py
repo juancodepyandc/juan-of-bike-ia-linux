@@ -263,6 +263,29 @@ class Ancres(AvecAncres):
         with self.assertRaises(ValueError):
             ri.choisir_ancres(dossier(*(entree(i, n, "x", trois[n][:1]) for i, n in enumerate("abcde"))))
 
+    def test_un_sujet_refuse_recoit_une_seconde_ancre_et_des_roles_exacts(self):
+        # identité refusée au rendu précédent (essai réel du 15/11/2026, une hyène générique) : plus de pixels
+        a1, a2 = self.ancre("tavik/ancre_1.png"), self.ancre("tavik/ancre_2.png")
+        b1, b2 = self.ancre("morvo/ancre_1.png"), self.ancre("morvo/ancre_2.png")
+        c = contrat(sujet("Tavik", "une hyène", "hyena", "qui court"), sujet("Morvo", "un requin", "shark", "qui nage"))
+        d = dossier(entree(0, "Tavik", "hyena", [a1, a2]), entree(1, "Morvo", "shark", [b1, b2]))
+        normal = self.prompt(c, d)
+        self.assertEqual(normal["references"], [str(a1), str(b1)])
+        renforce = self.prompt(c, d, renforces=[0])
+        self.assertEqual(renforce["references"], [str(a1), str(a2), str(b1)])      # seul le sujet refusé
+        self.assertEqual(renforce["renforces"], [0])
+        positif = renforce["positif"]
+        self.assertIn("reference image 1 shows character 1 (hyena)", positif)
+        self.assertIn("reference image 2 shows character 1 (hyena)", positif)
+        self.assertIn("reference image 3 shows character 2 (shark)", positif)
+        self.assertIn("the character of reference images 1 and 2 (hyena)", positif)
+        self.assertIn("the character of reference image 3 (shark)", positif)
+        # quatre références au plus, même si tout le monde est refusé
+        quatre = dossier(*(entree(i, n, "x", [self.ancre("%s/%d.png" % (n, k)) for k in range(2)])
+                           for i, n in enumerate("abcd")))
+        tous = ri._repartir([(i, e["ancres"]) for i, e in enumerate(quatre["sujets"])], renforces=range(4))
+        self.assertEqual([len(chemins) for _, chemins in tous], [1, 1, 1, 1])
+
     def test_ancres_absentes_doublons_et_sujets_non_etablis_sont_ecartes(self):
         a = self.ancre("a.png")
         absente = self.racine / "absente.png"

@@ -4,7 +4,7 @@ import { resolveThreeDRelation, type ThreeDRelation } from '../utils/threeDRelat
 import { retainThreeDRequirements, composeThreeDRequirements } from '../utils/threeDConversationContext.ts'
 import { binaryBase64 } from '../utils/binaryBase64.ts'
 import { parsePythonResult } from '../utils/pythonResult.ts'
-import { namesASubject, readThreeDRequest, singleSubjectInMedium, restStateFromReading, restStateVerificationPrompt, type ThreeDRequestReading } from '../services/threeDRequestReading'
+import { namesASubject, readThreeDRequest, requestsAPlace, singleSubjectInMedium, restStateFromReading, restStateVerificationPrompt, type ThreeDRequestReading } from '../services/threeDRequestReading'
 import { materialChannels } from '../utils/materialChannels.ts'
 import { recoverModelDelivery } from '../utils/recoverModelDelivery.ts'
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -5288,9 +5288,13 @@ export default function ModelView() {
           // IDENTITÉ PAR DE VRAIES IMAGES (15/11/2026) : un sujet nommé sans photo jointe n'est plus dessiné par
           // l'interface à partir d'un texte (« Zig et Sharko » sortaient en hyène tachetée et requin génériques).
           // Le pipeline établit un dossier d'images réelles qui s'accordent, en tire la référence et la juge.
-          // Désactivé tant que la chaîne d'identité (modules sur branches locales, document maître § 1.43)
-          // n'a pas été relue et prouvée sur un run réel : l'interface garde sa synthèse actuelle.
-          const delegateIdentity = IDENTITY_FROM_REAL_IMAGES && namesASubject(requestReading) && !primaryPreparedImage && !editPlan.continuation
+          // Activé depuis la fusion relue du 15/11/2026 (document maître § 1.43).
+          // LIEU ENTIER (15/11/2026) : une maison meublée, une ville ou un paysage se construisent d'un bloc par
+          // le moteur de scènes du pipeline ; l'image FLUX de toute la scène que l'interface dessinait ici
+          // n'était jamais utilisée (≈ 10 min perdues) et la scène partait en objets isolés posés en ligne.
+          const delegatedPlace = !primaryPreparedImage && !editPlan.continuation ? requestsAPlace(requestReading) : null
+          const delegateIdentity = !delegatedPlace && IDENTITY_FROM_REAL_IMAGES && namesASubject(requestReading) && !primaryPreparedImage && !editPlan.continuation
+          const delegateToPipeline = delegateIdentity || Boolean(delegatedPlace)
           if (restState) {
             // l'identité transmise aux voies de référence décrit le sujet au repos, pas l'action
             intent.referencePromptAdditions = restReferenceAdditions(intent, restState.sujet)
@@ -5668,7 +5672,7 @@ export default function ModelView() {
           // l'action demandée reste le sujet du rendu statique.
           const referenceCheckPrompt = restState ? restStateVerificationPrompt(restState) : currentPrompt
           setPhase('Référence photo — construction du prompt visuel FLUX...', 20)
-          const fluxVisualPrompt = delegateIdentity ? taskContext.generationPrompt : await buildFluxVisualDescription({
+          const fluxVisualPrompt = delegateToPipeline ? taskContext.generationPrompt : await buildFluxVisualDescription({
             prompt: currentPrompt,
             intent,
             model: visionModel,
@@ -5688,7 +5692,7 @@ export default function ModelView() {
           // queue en patte (verifie sur le run happy.jpg). L'identite vient
           // de la photo: c'est MV-Adapter (image -> multivues), dans le
           // pipeline Python, qui derive les autres angles a partir d'ELLE.
-          const hasSyntheticViews = !delegateIdentity && preparedImages.length === 0
+          const hasSyntheticViews = !delegateToPipeline && preparedImages.length === 0
             && referenceViewPlan.assignments.some((a) => a.sourceKind === 'synthetic')
           let resolvedViewPlan = referenceViewPlan
           if (hasSyntheticViews) {
@@ -5829,7 +5833,12 @@ export default function ModelView() {
           // laisser une photo utilisateur debiter en plusieurs sujets.
           const referenceIsUserPhoto = Boolean(primaryPreparedImage?.stagedPath)
 
-          if (delegateIdentity) {
+          if (delegatedPlace) {
+            referenceSeedForWorkflow = false
+            const placeLabel = delegatedPlace === 'interieur' ? 'intérieur' : delegatedPlace === 'ville' ? 'ville' : 'paysage'
+            referenceVerificationSummary = `Lieu entier (${placeLabel}) confié au moteur de scènes : plan, disposition mesurée, matériaux, rendus f3d jugés.`
+            setProgress(`Lieu entier (${placeLabel}) : construction par le moteur de scènes du pipeline...`)
+          } else if (delegateIdentity) {
             referenceSeedForWorkflow = false
             referenceVerificationSummary = 'Identité confiée au pipeline : dossier de vraies images de chaque sujet nommé, référence conditionnée et jugée contre elles.'
             setProgress('Identité des sujets nommés : recherche de vraies images par le pipeline...')
@@ -6258,7 +6267,7 @@ export default function ModelView() {
               if (requestContractPath) auroraArgs.push('--contrat', requestContractPath)
               // la référence d'un sujet nommé est rendue par le pipeline : le moteur d'images doit tourner
               if (delegateIdentity) { try { await ensureComfy() } catch { /* le pipeline le redemande au pont */ } }
-              if (intent.referenceFraming === 'isolated_subject' && intent.subjectKind !== 'assembly') auroraArgs.push('--no-scene')
+              if (!delegatedPlace && intent.referenceFraming === 'isolated_subject' && intent.subjectKind !== 'assembly') auroraArgs.push('--no-scene')
               const seenImgs = new Set<string>()
               let effectiveRefImg: string | null = null
               if (referenceImagePath && await fsExists(referenceImagePath)) {
@@ -6339,7 +6348,7 @@ export default function ModelView() {
               setProgress('Liberation des modeles Ollama avant la reconstruction 3D...')
               try { await freeGpuBeforeFlux([]) } catch { /* jamais bloquant */ }
               const auroraOutput = await runPythonScript(`${workspacePath}/python-services/aurora_3d_pipeline.py`, auroraArgs, { resumeKey: 'model_ia' })
-              const parsedAurora = parseLastJsonLine(auroraOutput) as unknown as { ok?: boolean; error?: string; textured?: boolean; is_scene?: boolean; final_mesh?: string; scene_glb?: string; composants?: Record<string, { desc?: string; glb?: string; refus?: string | null }> | null; refuses?: { role: string; motif: string }[] | null; orphelins?: { objet: string; appui_manquant: string }[] | null; composition?: { objet: string; liaison?: string; sur?: string; ok: boolean }[] | null; livraison?: Record<string, string> | null; identite_non_etablie?: boolean; personnages?: { index?: number; glb?: string; reference?: string | null; sujet?: number }[] | null; source_web?: { site?: string; url?: string; title?: string } } | null
+              const parsedAurora = parseLastJsonLine(auroraOutput) as unknown as { ok?: boolean; error?: string; textured?: boolean; is_scene?: boolean; final_mesh?: string; scene_glb?: string; composants?: Record<string, { desc?: string; glb?: string; refus?: string | null }> | null; refuses?: { role: string; motif: string }[] | null; orphelins?: { objet: string; appui_manquant: string }[] | null; composition?: { objet: string; liaison?: string; sur?: string; ok: boolean }[] | null; livraison?: Record<string, string> | null; identite_non_etablie?: boolean; monde?: { ok?: boolean; resume?: string; porte?: { verdict?: string; raisons?: string[] } } | null; personnages?: { index?: number; glb?: string; reference?: string | null; sujet?: number }[] | null; source_web?: { site?: string; url?: string; title?: string } } | null
               if (parsedAurora?.source_web) {
                 setDiscoveredSourceWeb(parsedAurora.source_web)
               }
@@ -6362,6 +6371,7 @@ export default function ModelView() {
               sceneReport = (() => {
                 if (!parsedAurora?.is_scene) return ''
                 const parts: string[] = []
+                if (parsedAurora.monde?.resume) parts.push(parsedAurora.monde.resume)
                 const comp = parsedAurora.composants
                 if (comp && Object.keys(comp).length) {
                   parts.push(`Scene multi-objets: ${Object.keys(comp).map((r) => {
@@ -6483,7 +6493,7 @@ export default function ModelView() {
               if (auroraWatch !== undefined) window.clearInterval(auroraWatch)
             }
           }
-          if (producedButRejected && requestedMotion && lastMeshPathRef.current) {
+          if (producedButRejected && requestedMotion && !delegatedPlace && lastMeshPathRef.current) {
             // Animation activée : le mouvement est livré aussi pour un maillage refusé, avec l'avertissement.
             const motion = await bakeRequestedMotion({
               workspacePath, meshPath: lastMeshPathRef.current, motionDir: runPaths.motion,
@@ -7056,6 +7066,10 @@ export default function ModelView() {
           let autoMotionSummary = ''
           if (!requestedMotion) {
             autoMotionSummary = 'Mouvement désactivé — mesh statique conservé.'
+          } else if (delegatedPlace) {
+            // un lieu entier n'est pas un corps à faire bouger : chaque objet reste un nœud animable (portes
+            // sur leurs gonds), mais aucune animation de scène n'est encore branchée — on le dit
+            autoMotionSummary = 'Scène livrée statique : chaque objet est un nœud animable, l\'animation d\'un lieu entier n\'est pas encore branchée.'
           } else {
             const motion = await bakeRequestedMotion({
               workspacePath, meshPath: activeMeshPath, motionDir: runPaths.motion,

@@ -41,6 +41,7 @@ import os
 import re
 import unicodedata
 from pathlib import Path
+from typing import Iterable
 
 from flux_reference_synth import NEGATIF_PAR_DEFAUT
 
@@ -64,6 +65,10 @@ CONVENTION_MULTI_REFERENCES = (
 MAX_REFERENCES = 4
 # Une ancre par sujet : « image k = sujet k » reste exact et chaque référence coûte des jetons au rendu.
 MAX_ANCRES_PAR_SUJET = 1
+# Un sujet dont l'identité vient d'être REFUSÉE par le juge reçoit une seconde ancre au rendu suivant
+# (15/11/2026 : Zig sorti en hyène générique avec une seule ancre ; l'a priori de l'espèce l'emportait).
+# Les rôles restent écrits image par image (« reference image 2 shows character 1 »), donc exacts.
+MAX_ANCRES_RENFORCEES = 2
 
 # Rendu demandé, par valeur de l'énumération fermée `style.cible` du contrat v2. « autre » et null
 # n'ont pas de description : seul le texte de l'utilisateur est transmis.
@@ -256,9 +261,12 @@ def _ancres_lisibles(entree: dict, ecartes: list[dict]) -> list[str]:
     return chemins
 
 
-def _repartir(candidats: list[tuple[int, list[str]]]) -> list[tuple[int, list[str]]]:
-    """Une ancre par sujet d'abord ; les places restantes (4 au total) donnent une seconde ancre, dans
-    l'ordre des sujets. Règle déterministe : aucun critère de priorité n'a été mesuré."""
+def _repartir(candidats: list[tuple[int, list[str]]],
+              renforces: Iterable[int] = ()) -> list[tuple[int, list[str]]]:
+    """Une ancre par sujet d'abord ; les places restantes (4 au total) vont, dans l'ordre des sujets,
+    aux sujets `renforces` (identité refusée au rendu précédent), jusqu'à MAX_ANCRES_RENFORCEES chacun.
+    Règle déterministe : aucun autre critère de priorité n'a été mesuré."""
+    renforces = {int(i) for i in renforces}
     if len(candidats) > MAX_REFERENCES:
         raise ValueError("%d sujets a ancrer pour %d images de reference au plus : impossible de donner "
                          "une image a chacun" % (len(candidats), MAX_REFERENCES))
@@ -271,9 +279,10 @@ def _repartir(candidats: list[tuple[int, list[str]]]) -> list[tuple[int, list[st
     reste = MAX_REFERENCES - len(candidats)
     plan = []
     for index, chemins in candidats:
+        plafond = MAX_ANCRES_RENFORCEES if index in renforces else MAX_ANCRES_PAR_SUJET
         nombre = 1
-        if reste > 0 and len(chemins) >= MAX_ANCRES_PAR_SUJET:
-            nombre = MAX_ANCRES_PAR_SUJET
+        while nombre < min(plafond, len(chemins)) and reste > 0:
+            nombre += 1
             reste -= 1
         plan.append((index, chemins[:nombre]))
     return plan
@@ -326,7 +335,7 @@ def _images(numeros: list[int]) -> str:
 
 
 def prompt_reference_identite(contrat: dict, dossier: dict, *, animation: bool, rest_pose_cues: str,
-                              accepter_non_etablis: bool = False) -> dict:
+                              accepter_non_etablis: bool = False, renforces: Iterable[int] = ()) -> dict:
     """Compose le prompt FLUX.2 d'une référence où chaque sujet ancré est « le personnage de l'image k ».
 
     Retourne {"positif", "negatif", "references", "roles", ...} : `references` = chemins des ancres
@@ -337,7 +346,8 @@ def prompt_reference_identite(contrat: dict, dossier: dict, *, animation: bool, 
     Un sujet nommé sans identité établie lève IdentiteNonEtablie, sauf `accepter_non_etablis=True`
     (choix explicite de l'utilisateur) : il est alors décrit par sa seule nature et marqué
     « non_verifiee ». Un sujet non nommé est décrit par sa nature. `animation=True` exige
-    `rest_pose_cues` (l'appelant passe `aurora_3d_pipeline.REST_POSE_CUES`).
+    `rest_pose_cues` (l'appelant passe `aurora_3d_pipeline.REST_POSE_CUES`). `renforces` : rangs des
+    sujets dont le juge vient de refuser l'identité ; ils reçoivent une seconde ancre si elle existe.
     """
     sujets = _verifier_contrat(contrat)
     entrees = _verifier_dossier(dossier)
@@ -369,7 +379,7 @@ def prompt_reference_identite(contrat: dict, dossier: dict, *, animation: bool, 
     if manquants and not accepter_non_etablis:
         raise IdentiteNonEtablie(manquants)
 
-    plan = dict(_repartir([(lu["rang"], lu["ancres"]) for lu in lus if lu["ancres"]]))
+    plan = dict(_repartir([(lu["rang"], lu["ancres"]) for lu in lus if lu["ancres"]], renforces))
     references: list[str] = []
     roles: list[str] = []
     total = len(lus)
@@ -491,6 +501,7 @@ def prompt_reference_identite(contrat: dict, dossier: dict, *, animation: bool, 
         "references": references,
         "roles": roles,
         "sujets": traces,
+        "renforces": sorted({int(i) for i in renforces}),
         "ecartes": ecartes,
         "decisions": decisions,
         "convention": CONVENTION_MULTI_REFERENCES,

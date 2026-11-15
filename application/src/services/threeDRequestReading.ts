@@ -32,6 +32,20 @@ export interface ThreeDRequestReading {
   /** contrat v2 (15/11/2026) : un élément par sujet, le style à part */
   sujets?: ThreeDRequestSubject[]
   style?: { texte: string; cible: string | null; justification: string }
+  /** lieu entier à construire (intérieur, ville, nature) : la demande part vers le moteur de scènes */
+  lieu?: { type: ThreeDPlaceKind | null; justification: string }
+}
+
+export type ThreeDPlaceKind = 'interieur' | 'ville' | 'nature'
+
+/**
+ * La demande veut un LIEU entier (une maison meublée, une ville, un paysage) : le moteur de scènes du
+ * pipeline le construit d'un bloc. 15/11/2026 : un « intérieur de maison complet » partait en trois
+ * pièces générées comme des objets isolés et posées en ligne, sans mur commun ni meuble.
+ */
+export function requestsAPlace(reading: ThreeDRequestReading | null): ThreeDPlaceKind | null {
+  const kind = reading?.source === 'llm' ? reading.lieu?.type : null
+  return kind === 'interieur' || kind === 'ville' || kind === 'nature' ? kind : null
 }
 
 /** Un sujet nommé sans photo jointe : son identité vient de vraies images, établies par le pipeline. */

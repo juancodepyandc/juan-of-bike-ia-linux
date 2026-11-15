@@ -84,5 +84,44 @@ class ContractV2(unittest.TestCase):
         self.assertEqual(lire_demande(REQUEST, interroger=answering(leaking))["source"], "indisponible")
 
 
+class PlaceToBuild(unittest.TestCase):
+    """A whole place (interior, town, landscape) goes to the scene engine instead of being cut into objects
+    (15/11/2026: « un intérieur de maison complet » became three room-objects set in a row)."""
+
+    PLACE = "un intérieur de maison complet, salon cuisine chambre, réaliste"
+
+    def reading(self, lieu, demande=None):
+        place = {"nom": None, "nomme": False, "nature": "intérieur de maison", "nature_en": "house interior",
+                 "clause": "un intérieur de maison complet", "mouvement": "", "mouvement_en": "",
+                 "milieu": {"matiere": None, "relation": None, "justification": ""}}
+        answer = {"sujet": "un intérieur de maison complet", "sujet_en": "a complete house interior", "mouvement": "",
+                  "exemplaires": 1, "corps_articule": False, "conception": False, "sujets": [place],
+                  "style": {"texte": "réaliste", "cible": "photo", "justification": "réaliste"}, "lieu": lieu}
+        return answer
+
+    def test_a_place_is_typed_and_justified_by_the_request_words(self):
+        reading = lire_demande(self.PLACE, interroger=answering(self.reading(
+            {"type": "interieur", "justification": "intérieur de maison complet"})))
+        self.assertEqual(reading["lieu"], {"type": "interieur", "justification": "intérieur de maison complet"})
+
+    def test_subjects_in_a_setting_are_not_a_place_and_old_readings_have_none(self):
+        self.assertEqual(lire_demande(REQUEST, interroger=answering(GOOD))["lieu"], {"type": None, "justification": ""})
+        null_place = dict(GOOD, lieu={"type": None, "justification": ""})
+        self.assertIsNone(lire_demande(REQUEST, interroger=answering(null_place))["lieu"]["type"])
+
+    def test_an_invented_justification_gets_one_correction(self):
+        invented = self.reading({"type": "interieur", "justification": "une villa de luxe"})
+        asked = []
+
+        def model(text):
+            asked.append(text)
+            good = {"type": "interieur", "justification": "intérieur de maison"}
+            return json.dumps(self.reading(good if len(asked) > 1 else invented["lieu"]), ensure_ascii=False)
+        self.assertEqual(lire_demande(self.PLACE + " ", interroger=model)["lieu"]["type"], "interieur")
+        self.assertIn("lieu.justification", asked[1])
+        refused = lire_demande(self.PLACE + "  .", interroger=answering(self.reading({"type": "chateau", "justification": "maison"})))
+        self.assertEqual(refused["source"], "indisponible")
+
+
 if __name__ == "__main__":
     unittest.main()
