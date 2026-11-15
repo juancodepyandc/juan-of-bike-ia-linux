@@ -14,6 +14,8 @@ import {
 } from './visualReferenceAnalyzer.ts'
 
 export type ThreeDViewOverlay = {
+  /** distinct subjects the request names (lecture_demande.exemplaires); 1 when unknown */
+  subjectCount?: number
   palette?: ReferencePaletteEntry[]
   visibleText?: ReferenceVisibleText[]
   entities?: ReferenceEntity[]
@@ -396,6 +398,7 @@ function buildViewGenerationDirectives(
   const isCable = intent.systemClass === 'pc_cabling' || intent.systemClass === 'cable_routing' || intent.systemClass === 'electrical_harness'
   const isMechanical = intent.systemClass !== 'generic' && !isCable
   const hasLed = promptSignalsEmissiveLighting(prompt, referenceSupport)
+  const subjectCount = Math.max(1, Math.round(overlay?.subjectCount ?? 1))
 
   // Identity lines from intent analysis
   const identityLines = intent.referencePromptAdditions
@@ -457,11 +460,7 @@ function buildViewGenerationDirectives(
   // HARD RULES that prevent FLUX from generating multi-entity or split-view images
   const hardRules = [
     'solid black studio background',
-    'EXACTLY ONE single isolated subject centered in frame',
-    'ONLY ONE ENTITY IN THE ENTIRE IMAGE — if the subject is a character there must be exactly 1 character, if it is a cable there must be exactly 1 cable',
-    'the ENTIRE canvas is ONE continuous single-angle photograph of that ONE subject',
-    'NEVER split the image into multiple panels or side-by-side views',
-    'NEVER place two copies of the subject next to each other',
+    ...entityCountRules(subjectCount),
     'NEVER generate a turnaround sheet, character lineup, or composite multi-view',
     'no mirror copies, no duplicated subjects, no tiled views',
     'high edge separation, no text overlay, no UI, no watermark',
@@ -851,6 +850,35 @@ function buildViewProfile(
  * Verify a single view image using the vision model.
  * Checks: correct angle, subject presence, functional details, lighting coherence.
  */
+/**
+ * Combien de sujets l'image doit montrer. « EXACTEMENT UNE entité » était imposé à toute demande,
+ * y compris « Zig la hyène qui court et Sharko le requin qui nage » : FLUX dessinait les deux
+ * (c'était la demande), le vérificateur refusait chaque vue et la régénérait (15/11/2026).
+ */
+export function entityCountRules(count = 1): string[] {
+  if (count <= 1) {
+    return [
+      'EXACTLY ONE single isolated subject centered in frame',
+      'ONLY ONE ENTITY IN THE ENTIRE IMAGE — if the subject is a character there must be exactly 1 character, if it is a cable there must be exactly 1 cable',
+      'the ENTIRE canvas is ONE continuous single-angle photograph of that ONE subject',
+      'NEVER split the image into multiple panels or side-by-side views',
+      'NEVER place two copies of the subject next to each other',
+    ]
+  }
+  return [
+    `EXACTLY ${count} distinct subjects, the ones requested, side by side and separated by empty space, none touching or overlapping, each complete from head to toe`,
+    `each of the ${count} subjects appears ONCE: no duplicated or mirrored copy, no extra subject`,
+    `the ENTIRE canvas is ONE continuous single-angle photograph of those ${count} subjects together`,
+    'NEVER split the image into multiple panels, NEVER show the same subject twice from different angles',
+  ]
+}
+
+export function singleEntityCheck(count = 1): string {
+  return count <= 1
+    ? 'singleEntity: does the image show EXACTLY ONE entity from ONE angle? If the image is split into panels, shows side-by-side views, or contains multiple copies of the subject, singleEntity MUST be false.'
+    : `singleEntity: does the image show EXACTLY the ${count} requested distinct subjects, each ONCE, together from ONE angle? If the image is split into panels, shows the same subject twice, or shows another number of subjects, singleEntity MUST be false.`
+}
+
 export async function verifyViewImage({
   view,
   imageBase64,
@@ -858,6 +886,7 @@ export async function verifyViewImage({
   model,
   strategy,
   referenceSupport,
+  subjectCount = 1,
 }: {
   view: ThreeDViewTag
   imageBase64: string
@@ -865,6 +894,8 @@ export async function verifyViewImage({
   model: string
   strategy: ViewStrategy
   referenceSupport: ThreeDReferenceSupport
+  /** number of distinct subjects the request names (lecture_demande) */
+  subjectCount?: number
 }): Promise<ThreeDViewVerification> {
   const viewReqs = strategy.viewRequirements[view] || []
   const functionalChecks = strategy.verificationChecks
@@ -881,13 +912,13 @@ export async function verifyViewImage({
           '{"angleCorrect":true,"subjectPresent":true,"singleEntity":true,"functionalDetailsFound":["..."],"functionalDetailsMissing":["..."],"lightingCoherent":true,"notes":"..."}',
           'angleCorrect: does the image actually show the requested view angle (front/back/left/right)?',
           'subjectPresent: is the main subject clearly visible and identifiable?',
-          'singleEntity: does the image show EXACTLY ONE entity from ONE angle? If the image is split into panels, shows side-by-side views, or contains multiple copies of the subject, singleEntity MUST be false.',
+          singleEntityCheck(subjectCount),
           'functionalDetailsFound: which of the requested functional details are actually visible?',
           'functionalDetailsMissing: which required functional details are NOT visible or wrong?',
           'lightingCoherent: are LED/emissive elements consistent and visible when required?',
           'Be strict: if the view shows the wrong angle, angleCorrect must be false.',
           'Be strict: if the image is a multi-view composite (left+right, front+back on same image), singleEntity must be false.',
-          'Be strict: if there are TWO copies of the subject visible (even from different angles), singleEntity must be false.',
+          subjectCount <= 1 ? 'Be strict: if there are TWO copies of the subject visible (even from different angles), singleEntity must be false.' : 'Be strict: a subject shown twice (even from different angles) makes singleEntity false.',
           'For back views of characters: the face must NOT be visible, only the rear.',
         ].join('\n'),
       },
@@ -960,6 +991,7 @@ export async function verifyViewImage({
 function buildRetryDirective(
   baseDirective: string,
   verification: ThreeDViewVerification,
+  subjectCount = 1,
 ): string {
   const fixes: string[] = []
 
@@ -970,7 +1002,9 @@ function buildRetryDirective(
     fixes.push('the main subject must be clearly visible and centered')
   }
   if (!verification.singleEntity) {
-    fixes.push('CRITICAL: the image must show EXACTLY ONE entity from ONE angle. Do NOT split the image into panels. Do NOT show the subject from multiple angles. Do NOT place two copies of the subject side by side. The ENTIRE image must be ONE continuous single-angle view')
+    fixes.push(subjectCount <= 1
+      ? 'CRITICAL: the image must show EXACTLY ONE entity from ONE angle. Do NOT split the image into panels. Do NOT show the subject from multiple angles. Do NOT place two copies of the subject side by side. The ENTIRE image must be ONE continuous single-angle view'
+      : `CRITICAL: the image must show EXACTLY the ${subjectCount} requested subjects, each ONCE, side by side, from ONE angle. Do NOT split the image into panels and do NOT show a subject twice.`)
   }
   if (verification.functionalDetailsMissing.length > 0) {
     fixes.push(`missing functional details that MUST appear: ${verification.functionalDetailsMissing.join(', ')}`)
@@ -1188,8 +1222,9 @@ export function getSyntheticViewDirective(assignment: ThreeDViewAssignment): str
 export function buildCorrectedViewDirective(
   assignment: ThreeDViewAssignment,
   verification: ThreeDViewVerification,
+  subjectCount = 1,
 ): string | null {
   const base = assignment.syntheticPrompt
   if (!base) return null
-  return buildRetryDirective(base, verification)
+  return buildRetryDirective(base, verification, subjectCount)
 }

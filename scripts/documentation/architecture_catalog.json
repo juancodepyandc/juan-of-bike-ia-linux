@@ -16,7 +16,7 @@
   }
  },
  "source_files": 2501,
- "source_lines": 903468,
+ "source_lines": 903532,
  "static_route_declarations": 719,
  "by_repository": {
   "AuroraIA": 2180,
@@ -10846,8 +10846,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/scripts/test-rest-reference.mjs",
-   "sha256": "0b613f29b13f0ca866bd3bc4e078c90116a4d2c6ba73f5e1aea6ab050ada1aa1",
-   "lines": 28
+   "sha256": "37683b79874e07dd108fd976a51626194b3feeeaf03f580fa03b275071e4d710",
+   "lines": 37
   },
   {
    "repo": "AuroraIA",
@@ -14350,8 +14350,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/threeDViewPlanner.ts",
-   "sha256": "2f3440cc36f6c4144e8cb782b283c4de2b9c40090ac02003d9ce6ef060b24088",
-   "lines": 1195
+   "sha256": "2e1b5eb6f300d0df8bfb4cea73f90338831719cea386e49e2ed994016707b7a8",
+   "lines": 1230
   },
   {
    "repo": "AuroraIA",
@@ -15292,8 +15292,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/views/ModelView.tsx",
-   "sha256": "1a1263857ac4575fba3c6a41416ef6b26e9a235c44309ba89b900d35d822142e",
-   "lines": 8433
+   "sha256": "c8dde48aedd604c6f0e34f51403efcd21c3f7cc271410357fffb9b71d7724c32",
+   "lines": 8453
   },
   {
    "repo": "AuroraIA",

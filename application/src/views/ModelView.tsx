@@ -43,7 +43,7 @@ import { useModuleAssetPack } from '../hooks/useModuleAssetPack.ts'
 import { useStudioDiagnostics } from '../hooks/useStudioDiagnostics.ts'
 import { prepareTaskIntelligence } from '../services/taskIntelligence.ts'
 import { prepareThreeDReferenceSupport, type ThreeDReferenceSupport } from '../services/threeDReferenceSupport.ts'
-import { detectUploadedImageView, prepareThreeDViewPlan, resolvePreparedReferenceViews, verifyViewImage, buildCorrectedViewDirective, getSyntheticViewDirective, type ThreeDViewPlan, type ThreeDViewTag, type ThreeDViewAssignment, type ThreeDViewOverlay } from '../services/threeDViewPlanner.ts'
+import { detectUploadedImageView, prepareThreeDViewPlan, resolvePreparedReferenceViews, verifyViewImage, buildCorrectedViewDirective, getSyntheticViewDirective, type ThreeDViewPlan, type ThreeDViewTag, type ThreeDViewAssignment, type ThreeDViewOverlay, entityCountRules } from '../services/threeDViewPlanner.ts'
 import { analyzeReferenceImage, mergePaletteWithOverrides, parseColorOverridesFromPrompt, type VisualReferenceAnalysis, type ReferencePaletteEntry, type ColorOverride } from '../services/visualReferenceAnalyzer.ts'
 import ReferenceInspectorPanel from '../components/ReferenceInspectorPanel.tsx'
 import EngineeringExportPanel from '../components/EngineeringExportPanel.tsx'
@@ -498,12 +498,15 @@ async function generateSyntheticView(
   referenceSeed: { filename: string; denoise?: number } | null,
   ensureComfy: () => Promise<void>,
   vramGuard?: { ollamaModelsToEvict: string[]; signal?: AbortSignal },
+  subjectCount = 1,
 ): Promise<Blob> {
   // Start the image service only when this route actually renders an image.
   vramGuard?.signal?.throwIfAborted()
   await ensureComfy()
   // Enforce single-entity, single-view constraint at FLUX prompt level
-  const antiSplitSuffix = ', THIS IMAGE MUST SHOW EXACTLY ONE ENTITY FROM ONE SINGLE ANGLE, NEVER split into panels, NEVER show side-by-side views, NEVER generate a multi-view composite, the ENTIRE canvas is ONE continuous single-angle image of ONE subject, no mirror copies, no turnaround sheet'
+  const antiSplitSuffix = subjectCount <= 1
+    ? ', THIS IMAGE MUST SHOW EXACTLY ONE ENTITY FROM ONE SINGLE ANGLE, NEVER split into panels, NEVER show side-by-side views, NEVER generate a multi-view composite, the ENTIRE canvas is ONE continuous single-angle image of ONE subject, no mirror copies, no turnaround sheet'
+    : `, ${entityCountRules(subjectCount).join(', ')}, no turnaround sheet`
   const safePrompt = fluxPrompt + antiSplitSuffix
 
   // FLUX.1 (unet 17.2G + t5xxl + clip_l + ae: les SEULS poids reellement presents).
@@ -573,6 +576,7 @@ async function generateAndVerifySyntheticViews({
   ensureComfy,
   vramGuard,
   onViewReady,
+  subjectCount = 1,
 }: {
   plan: ThreeDViewPlan
   intent: ThreeDIntent
@@ -591,6 +595,8 @@ async function generateAndVerifySyntheticViews({
   vramGuard?: { ollamaModelsToEvict: string[]; signal?: AbortSignal }
   /** each accepted view, as soon as it exists (the loading hologram shows it at once) */
   onViewReady?: (view: ThreeDViewTag, blob: Blob) => void
+  /** distinct subjects the request names: the anti-split rules and the check follow it */
+  subjectCount?: number
 }): Promise<ThreeDViewAssignment[]> {
   const syntheticAssignments = plan.assignments.filter((a) => a.sourceKind === 'synthetic')
   if (syntheticAssignments.length === 0) return plan.assignments
@@ -643,6 +649,7 @@ async function generateAndVerifySyntheticViews({
           seed,
           ensureComfy,
           vramGuard,
+          subjectCount,
         )
 
         // Verify the generated view
@@ -666,6 +673,7 @@ async function generateAndVerifySyntheticViews({
           model,
           strategy: verificationStrategy,
           referenceSupport,
+          subjectCount,
         })
 
         if (verification.passed || retryCount >= 1) {
@@ -700,6 +708,7 @@ async function generateAndVerifySyntheticViews({
         const corrected = buildCorrectedViewDirective(
           { ...assignment, syntheticPrompt: currentDirective },
           verification,
+          subjectCount,
         )
         if (corrected) {
           currentDirective = corrected
@@ -800,6 +809,7 @@ function buildReferencePrompt(
   viewPlan: ThreeDViewPlan | null = null,
   sourcePrompt = prompt,
   restState: ThreeDRestState | null = null,
+  subjectCount = 1,
 ) {
   // Animation ON : la pose appartient à l'animation, jamais à la sculpture de référence.
   if (restState) motionPreset = null
@@ -838,7 +848,7 @@ function buildReferencePrompt(
     '',
     '3D reference image contract:',
     ...(restState ? restStateRulesEn(restState).map((rule) => `- ${rule}`) : []),
-    '- THIS IMAGE MUST SHOW EXACTLY ONE ENTITY FROM ONE SINGLE ANGLE',
+    ...(subjectCount <= 1 ? ['- THIS IMAGE MUST SHOW EXACTLY ONE ENTITY FROM ONE SINGLE ANGLE'] : entityCountRules(subjectCount).map((rule) => `- ${rule}`)),
     '- CRITICAL: Show the subject at a THREE-QUARTER ANGLE (slightly rotated) so that 3 faces are visible (front + one side + top)',
     '- NEVER generate a flat front-on view — depth cues are required for proper 3D reconstruction',
     '- The image must look like a professional 3D studio photograph with visible DEPTH, VOLUME and SHADOWS',
@@ -5224,15 +5234,22 @@ export default function ModelView() {
           // description FLUX, vérification) partent du sujet AU REPOS ; la pose appartient au
           // squelette. `workingPrompt` garde le mouvement pour l'animation et le contrôle final.
           let restState: ThreeDRestState | null = null
-          if (requestedMotion && !editPlan.continuation && !primaryPreparedImage) {
-            setPhase('Compréhension — sujet au repos, mouvement réservé au squelette...', 6)
+          // Combien de sujets l'image de référence doit montrer (« une entité » n'est vrai que pour un seul).
+          let subjectCount = 1
+          if (!editPlan.continuation && !primaryPreparedImage) {
+            setPhase(requestedMotion ? 'Compréhension — sujet au repos, mouvement réservé au squelette...' : 'Compréhension — sujets et nombre d\'exemplaires...', 6)
             const workspaceForReading = await getWorkspacePath()
             let reading = await readThreeDRequest(workspaceForReading, currentPrompt)
             if (reading?.source !== 'llm') {
               setProgress(`Lecture de la demande indisponible (${short(reading?.raison || 'sans réponse', 80)}) — nouvel essai...`)
               reading = await readThreeDRequest(workspaceForReading, currentPrompt)
             }
-            restState = restStateFromReading(reading, currentPrompt, isCharacterLike(intent))
+            if (reading?.source === 'llm' && typeof reading.exemplaires === 'number' && reading.exemplaires > 1) {
+              subjectCount = Math.min(reading.exemplaires, 6)
+            }
+            if (requestedMotion) restState = restStateFromReading(reading, currentPrompt, isCharacterLike(intent))
+          }
+          if (restState) {
             // l'identité transmise aux voies de référence décrit le sujet au repos, pas l'action
             intent.referencePromptAdditions = restReferenceAdditions(intent, restState.sujet)
             setProgress(restState.mouvement
@@ -5552,6 +5569,7 @@ export default function ModelView() {
           }
 
           const overlayForPlanner: ThreeDViewOverlay = {
+            subjectCount,
             palette: mergedPalette,
             visibleText: referenceAnalysisResult?.visibleText,
             entities: referenceAnalysisResult?.entities,
@@ -5670,6 +5688,7 @@ export default function ModelView() {
                   null,  // No seed for front — it IS the anchor
                   ensureComfy,
                   { ollamaModelsToEvict: Array.from(new Set([visionModel, AUXILIARY_ANALYSIS_MODEL])), signal: controller.signal },
+                  subjectCount,
                 )
                 // Stage the front view for seeding other views
                 const frontPath = `${runPaths.references}/${runId}_front_synth_seed.png`
@@ -5711,6 +5730,7 @@ export default function ModelView() {
               ensureComfy,
               vramGuard: { ollamaModelsToEvict: Array.from(new Set([visionModel, AUXILIARY_ANALYSIS_MODEL])), signal: controller.signal },
               onViewReady: (view, blob) => pushLiveRef(view, URL.createObjectURL(blob)),
+              subjectCount,
             })
 
             resolvedViewPlan = { ...referenceViewPlan, assignments: verifiedAssignments }
@@ -5811,7 +5831,7 @@ export default function ModelView() {
               setProgress(referenceSeed ? 'Refinement de la reference 3D...' : 'Generation de la reference image...')
               setPhase(referenceSeed ? 'Référence photo — raffinement de la vue...' : 'Référence photo — génération de la vue...', 25)
               const referenceWorkflow = resolveReferenceWorkflow(intent, hardware, Boolean(referenceSeed), currentPrompt, referenceSupportPlan)
-              const baseReferencePrompt = buildReferencePrompt(taskContext.generationPrompt, intent, activeMotionPreset, referenceSupportPlan, referenceViewPlan, currentPrompt, restState)
+              const baseReferencePrompt = buildReferencePrompt(taskContext.generationPrompt, intent, activeMotionPreset, referenceSupportPlan, referenceViewPlan, currentPrompt, restState, subjectCount)
               const renderReferenceBlob = async (promptText: string, stepsOverride = referenceWorkflow.steps, label = 'Rendu de la reference en cours...') => {
                 const workflow = createFlux2Workflow({
                   prompt: editReferenceSeed ? `Edit the supplied reference image. Preserve the subject identity and all unspecified features. Apply every requested change, including required removals, pose, outfit and full-body scope. Requested changes override the reference. ${promptText} Original request: ${userRequirementsPrompt}. Final authority: ${currentPrompt}. Do not restore excluded features from the reference or any default design.` : `${promptText}\nComplete user requirements: ${userRequirementsPrompt}\nFinal authority: ${currentPrompt}. User exclusions override default appearance, reference details and inferred constraints.`,
@@ -6749,7 +6769,7 @@ export default function ModelView() {
               const extraSteps = correctionStrategy.escalation === 'maximum' ? 12 : correctionStrategy.escalation === 'strong' ? 8 : 4
               const correctedWorkflow = createFlux2Workflow({
                 referenceImageFilename: photoEditSeedFilename,
-                prompt: buildReferencePrompt(correctedRefPrompt, intent, activeMotionPreset, referenceSupportPlan, referenceViewPlan, currentPrompt, restState),
+                prompt: buildReferencePrompt(correctedRefPrompt, intent, activeMotionPreset, referenceSupportPlan, referenceViewPlan, currentPrompt, restState, subjectCount),
                 width: correctedRefWorkflow.width,
                 height: correctedRefWorkflow.height,
                 steps: correctedRefWorkflow.steps + extraSteps,

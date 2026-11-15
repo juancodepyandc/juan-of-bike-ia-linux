@@ -26,3 +26,12 @@ test('the rest rules name the movement and, for a body, the rigging rest pose', 
   const chest = restStateRulesEn({ sujet: 'un coffre fermé', mouvement: "s'ouvre", corpsArticule: false }).join(' ')
   assert.doesNotMatch(chest, /REST POSE FOR RIGGING/)
 })
+
+test('a request naming two subjects asks for two, and the view check accepts two', async () => {
+  const { entityCountRules, singleEntityCheck } = await import('../src/services/threeDViewPlanner.ts')
+  const two = entityCountRules(2).join(' ')
+  assert.match(two, /EXACTLY 2 distinct subjects/)
+  assert.doesNotMatch(two, /ONLY ONE ENTITY/)
+  assert.match(singleEntityCheck(2), /EXACTLY the 2 requested distinct subjects/)
+  assert.match(entityCountRules(1).join(' '), /ONLY ONE ENTITY/)
+})
