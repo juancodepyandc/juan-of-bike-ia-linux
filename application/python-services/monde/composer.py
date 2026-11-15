@@ -16,7 +16,8 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from monde import export_gltf, porte, rendu
+from monde import export_gltf, porte
+from monde import rendu as rendu_f3d
 from monde.ir import Noeud, Objet, Scene
 
 
@@ -38,6 +39,67 @@ def _noeud_nomme(racine: Noeud, nom: str) -> Noeud | None:
     return next((n for n in racine.parcourir() if n.nom == nom), None)
 
 
+# ── Meubler par priorité ───────────────────────────────────────────────────────────────────────────
+# Loi (15/11/2026) : une pièce pose d'abord ce qui la définit — les meubles que la demande nomme, puis les
+# meubles typiques dans l'ordre d'importance de sa fonction. Quand un meuble prioritaire ne trouve pas de
+# place, le typique le moins important posé est retiré et la pièce est redisposée (3 essais) ; un typique qui
+# ne tient pas est écarté FAUTE DE PLACE et dit comme tel. Jamais un meuble demandé n'est écarté. (Salle de
+# bain : le lave-linge, posé avant le WC, lui prenait sa place ; petite cuisine : la table ne tenait pas.)
+def _priorite(categorie: str, fonction: str, origine: str | None) -> int:
+    from monde import vocabulaire as voc
+    if origine == "demande":
+        return 0
+    ordre = [c for c, _, _ in voc.FONCTIONS_PIECES.get(fonction, {}).get("meubles_typiques", [])]
+    return 1 + ordre.index(categorie) if categorie in ordre else 60
+
+
+def meubler_par_priorite(plan, demandes: dict[str, list], origines: dict[str, list[str | None]], *, fabrique,
+                         graine: int, hauteur: float) -> tuple[dict, list[dict]]:
+    """`demandes[piece]` : Demande ; `origines[piece]` : origine de chacune (demande | typique | None)."""
+    from monde import disposition
+    dispositions = disposition.meubler(plan, demandes, fabrique=fabrique, graine=graine)
+    ecartes: list[dict] = []
+    for nom, dispo in list(dispositions.items()):
+        piece = plan.piece(nom)
+        if piece is None:
+            continue
+        liste = list(demandes.get(nom) or [])
+        orig = list(origines.get(nom) or [None] * len(liste))
+        prio = [_priorite(d.categorie, piece.fonction, o) for d, o in zip(liste, orig)]
+        for _ in range(3):
+            echecs = {e.get("categorie") for e in (dispo.echecs or []) if isinstance(e, dict)}
+            if not echecs:
+                break
+            urgence = min((p for d, p in zip(liste, prio) if d.categorie in echecs), default=None)
+            places = {i.objet.categorie for i in dispo.instances}
+            def au_sol(c: str) -> bool:                   # retirer un plafonnier ou un tableau ne libère rien
+                from monde import vocabulaire as voc
+                cat = voc.CATEGORIES.get(c, {})
+                return not (cat.get("plafond") or cat.get("mural") or cat.get("sol_partage") or cat.get("pose_sur"))
+            candidats = [k for k, (d, o, p) in enumerate(zip(liste, orig, prio))
+                         if o != "demande" and urgence is not None and p > urgence and d.categorie in places
+                         and au_sol(d.categorie)]
+            if not candidats:
+                break
+            retire = max(candidats, key=lambda k: prio[k])
+            ecartes.append({"piece": nom, "categorie": liste[retire].categorie,
+                            "raison": "retiré pour faire place à un meuble plus important"})
+            del liste[retire], orig[retire], prio[retire]
+            dispo = disposition.disposer(piece, liste, fabrique=fabrique, hauteur_plafond=hauteur, graine=graine)
+        for e in list(dispo.echecs or []):
+            if not isinstance(e, dict):
+                continue
+            k = next((i for i, d in enumerate(liste) if d.categorie == e.get("categorie")), None)
+            if k is not None and orig[k] != "demande":
+                ecartes.append({"piece": nom, "categorie": e.get("categorie"), "raison": "faute de place (typique)",
+                                "detail": (e.get("raison") or "")[:160]})
+                dispo.echecs.remove(e)
+                if dispo.mesures:
+                    dispo.mesures["demandes"] = max(0, int(dispo.mesures.get("demandes") or 0) - 1)
+        dispositions[nom] = dispo
+    return dispositions, ecartes
+
+
 # ── Intérieur ──────────────────────────────────────────────────────────────────────────────────────
 def construire_interieur(programme: dict, graine: int, fabrique) -> dict[str, Any]:
     from monde import disposition, plan as plan_mod
@@ -55,7 +117,9 @@ def construire_interieur(programme: dict, graine: int, fabrique) -> dict[str, An
                                                relations=[(r[0], r[1]) for r in m.get("relations") or []],
                                                materiaux=m.get("materiaux") or None, style=None)
                            for m in p.get("meubles") or []] for p in interieur["pieces"]}
-    dispositions = disposition.meubler(plan, demandes, fabrique=fabrique, graine=graine)
+    origines = {p["nom"]: [m.get("origine") for m in p.get("meubles") or []] for p in interieur["pieces"]}
+    dispositions, ecartes = meubler_par_priorite(plan, demandes, origines, fabrique=fabrique, graine=graine,
+                                                 hauteur=hauteur)
     complet = plan_mod.construire_geometrie(plan, plafond=True)
     maquette = plan_mod.construire_geometrie(plan, plafond=False, maquette=True)
     for nom, dispo in dispositions.items():
@@ -77,6 +141,7 @@ def construire_interieur(programme: dict, graine: int, fabrique) -> dict[str, An
         mesures["meubles_places"] += len(dispo.instances)
         mesures["echecs"] += [{"piece": nom, **e} if isinstance(e, dict) else {"piece": nom, "raison": str(e)}
                               for e in (dispo.echecs or [])]
+    mesures["ecartes_faute_de_place"] = ecartes
     verification = plan_mod.verifier_plan(plan)
     noms_plan = {pp.nom for pp in plan.pieces}
     mesures["pieces_manquantes"] = [p.nom for p in pieces if p.nom not in noms_plan]
@@ -237,8 +302,9 @@ def resume(programme: dict, mesures: dict, verdict: dict) -> str:
 
 
 def composer(programme: dict, racine_run: str | Path, *, graine: int | None = None, fabrique=None,
-             rendre: bool = True, audit: list | None = None) -> dict[str, Any]:
-    """Construit, exporte, rend et juge la scène d'un programme validé."""
+             rendre: bool = True, audit: list | None = None, rendu: str = "realiste") -> dict[str, Any]:
+    """Construit, exporte, rend et juge la scène d'un programme validé, dans le médium demandé (`rendu` :
+    realiste | anime | toon, voir `materiaux.RENDUS`)."""
     debut = time.monotonic()
     racine_run = Path(racine_run)
     type_scene = programme.get("type_scene")
@@ -249,23 +315,23 @@ def composer(programme: dict, racine_run: str | Path, *, graine: int | None = No
     fabrique = fabrique or fabrique_meubles()
     construit = CONSTRUCTEURS[type_scene](programme, graine, fabrique)
     scene: Scene = construit["scene"]
-    scene.extras = {"programme": programme, "graine": graine, "depart": construit.get("depart")}
+    scene.extras = {"programme": programme, "graine": graine, "depart": construit.get("depart"), "rendu": rendu}
     modele = racine_run / "modele"
     resolution = RESOLUTION.get(type_scene, 512)
-    export = export_gltf.exporter(scene, modele / "scene_monde.glb", resolution=resolution)
+    export = export_gltf.exporter(scene, modele / "scene_monde.glb", resolution=resolution, rendu=rendu)
     glb_maquette = None
     if construit.get("maquette") is not None:
         construit["maquette"].extras = scene.extras
         glb_maquette = str(export_gltf.exporter(construit["maquette"], modele / "scene_maquette.glb",
-                                                resolution=resolution)["chemin"])
+                                                resolution=resolution, rendu=rendu)["chemin"])
     rendus = None
     if rendre:
         cible = glb_maquette or export["chemin"]
-        rendus = rendu.rendre_vues(cible, racine_run / "apercus", vues=VUES[type_scene], prefixe="scene",
+        rendus = rendu_f3d.rendre_vues(cible, racine_run / "apercus", vues=VUES[type_scene], prefixe="scene",
                                    hdri=HDRI.get(type_scene))
     verdict = porte.juger(type_scene, construit["mesures"], export, rendus)
     sortie = {"ok": verdict["verdict"] == "accepte", "type_scene": type_scene, "glb": export["chemin"],
-              "depart": construit.get("depart"),
+              "depart": construit.get("depart"), "rendu": rendu,
               "glb_maquette": glb_maquette, "planche": (rendus or {}).get("planche"), "export": export,
               "porte": verdict, "mesures": construit["mesures"], "programme": programme, "graine": graine,
               "duree_s": round(time.monotonic() - debut, 1)}
@@ -298,7 +364,11 @@ def composer_depuis_demande(demande: str, racine_run: str | Path, *, contrat: di
         if audit is not None:
             audit.append({"stage": "monde", "ok": False, "error": sortie["error"]})
         return sortie
-    return composer(programme, racine_run, graine=graine, rendre=rendre, audit=audit)
+    # le médium vient de la lecture de la demande (« en version réaliste » → photo, « animé » → animation 3D,
+    # « dessin animé » → toon) : c'est le style demandé qui décide, jamais le sujet
+    from monde.materiaux import rendu_depuis_cible
+    cible = ((contrat or {}).get("style") or {}).get("cible")
+    return composer(programme, racine_run, graine=graine, rendre=rendre, audit=audit, rendu=rendu_depuis_cible(cible))
 
 
 def main() -> int:
@@ -309,9 +379,12 @@ def main() -> int:
     ap.add_argument("--programme", default=None, help="programme JSON déjà lu (sinon le LLM le lit)")
     ap.add_argument("--graine", type=int, default=None)
     ap.add_argument("--sans-rendu", action="store_true")
+    ap.add_argument("--cible", default=None, help="médium du contrat de demande : photo | cgi_3d | cel_2d | figurine")
     a = ap.parse_args()
     programme = json.loads(Path(a.programme).read_text(encoding="utf-8")) if a.programme else None
-    res = composer_depuis_demande(a.demande, a.sortie, programme=programme, graine=a.graine, rendre=not a.sans_rendu)
+    contrat = {"style": {"cible": a.cible}} if a.cible else None
+    res = composer_depuis_demande(a.demande, a.sortie, contrat=contrat, programme=programme, graine=a.graine,
+                                  rendre=not a.sans_rendu)
     print(json.dumps({k: v for k, v in res.items() if k not in ("programme", "mesures", "export")},
                      ensure_ascii=False, default=str))
     return 0 if res.get("ok") else 1

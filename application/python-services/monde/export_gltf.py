@@ -38,13 +38,13 @@ class _Noms:
         return base if self.vus[base] == 1 else f"{base}_{self.vus[base]}"
 
 
-def _preparer(maillage: trimesh.Trimesh, cle: str, resolution: int) -> trimesh.Trimesh:
+def _preparer(maillage: trimesh.Trimesh, cle: str, resolution: int, rendu: str = "realiste") -> trimesh.Trimesh:
     spec = vocabulaire.materiau(cle)
     m = trimesh.Trimesh(vertices=maillage.vertices, faces=maillage.faces,
                         vertex_normals=np.asarray(maillage.vertex_normals), process=False)
     uv = getattr(maillage.visual, "uv", None)
     uv = np.zeros((len(m.vertices), 2)) if uv is None else np.asarray(uv, dtype=np.float64) / spec["taille_m"]
-    m.visual = TextureVisuals(uv=uv, material=materiaux.materiau_trimesh(cle, resolution))
+    m.visual = TextureVisuals(uv=uv, material=materiaux.materiau_trimesh(cle, resolution, rendu))
     return m
 
 
@@ -100,7 +100,7 @@ def _parties_monde(instance: Instance) -> list[Partie]:
     return [Partie(transformer(p.maillage, matrice), p.materiau, p.nom) for p in instance.objet.parties]
 
 
-def exporter(scene: Scene, chemin: str | Path, *, resolution: int = 512) -> dict[str, Any]:
+def exporter(scene: Scene, chemin: str | Path, *, resolution: int = 512, rendu: str = "realiste") -> dict[str, Any]:
     """Écrit le GLB et rend un rapport (nœuds, maillages, triangles, matériaux, taille)."""
     chemin = Path(chemin)
     chemin.parent.mkdir(parents=True, exist_ok=True)
@@ -113,7 +113,7 @@ def exporter(scene: Scene, chemin: str | Path, *, resolution: int = 512) -> dict
         if m is None or not len(m.faces):
             return
         nom_g = noms(nom)
-        ts.add_geometry(_preparer(m, cle, resolution), node_name=nom_g, geom_name=nom_g, parent_node_name=parent,
+        ts.add_geometry(_preparer(m, cle, resolution, rendu), node_name=nom_g, geom_name=nom_g, parent_node_name=parent,
                         transform=np.eye(4) if matrice is None else matrice)
         stats["maillages"] += 1
         stats["triangles"] += int(len(m.faces))

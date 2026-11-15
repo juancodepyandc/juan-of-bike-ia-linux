@@ -1283,12 +1283,70 @@ def zone_moyenne(cle: str, resolution: int = 512) -> np.ndarray:
     return _calculer(cle, int(resolution))["moyenne"].copy()
 
 
+# ── Rendu demandé : réaliste, animé (3D d'animation haut de gamme) ou toon (dessin animé 2D) ───────
+# Loi générale (15/11/2026, « le plus réaliste À LA DEMANDE ») : la même scène se rend dans le médium que la
+# demande vise. Réaliste : textures physiques telles quelles. Animé : le grain fin disparaît, les couleurs
+# gagnent en saturation et en lumière, les matières s'adoucissent (rugosité moyenne, relief léger), comme
+# dans un long métrage d'animation 3D. Toon : en plus, les couleurs se posent en aplats (postérisation).
+RENDUS = ("realiste", "anime", "toon")
+
+
+def rendu_depuis_cible(cible: str | None) -> str:
+    """Le médium visé par le contrat de demande (`style.cible`) → rendu des matériaux."""
+    return {"photo": "realiste", "cgi_3d": "anime", "figurine": "anime", "cel_2d": "toon"}.get(cible or "", "realiste")
+
+
+def styliser(images: dict[str, Image.Image], rendu: str) -> dict[str, Image.Image]:
+    """Textures réalistes → textures du médium d'animation (mêmes motifs, sans le grain photographique)."""
+    if rendu == "realiste" or not images:
+        return images
+    from PIL import ImageEnhance, ImageFilter
+    sortie = dict(images)
+    if "couleur" in images:
+        base = images["couleur"]
+        alpha = base.getchannel("A") if base.mode == "RGBA" else None
+        rgb = base.convert("RGB")
+        rayon = max(1.0, rgb.width / 170.0)
+        rgb = rgb.filter(ImageFilter.GaussianBlur(rayon)).filter(ImageFilter.MedianFilter(3))
+        rgb = ImageEnhance.Color(rgb).enhance(1.35 if rendu == "anime" else 1.5)
+        rgb = ImageEnhance.Brightness(rgb).enhance(1.06)
+        rgb = ImageEnhance.Contrast(rgb).enhance(1.05)
+        if rendu == "toon":
+            rgb = rgb.quantize(colors=6, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE).convert("RGB")
+        if alpha is not None:
+            rgb.putalpha(alpha)
+        sortie["couleur"] = rgb
+    if "orm" in images:
+        a = np.asarray(images["orm"].convert("RGB"), dtype=np.float32)
+        a[..., 0] = 255.0                                        # pas d'occlusion photographique gravée
+        a[..., 1] = 0.55 * a[..., 1] + 0.45 * 0.62 * 255.0       # matières adoucies
+        sortie["orm"] = Image.fromarray(np.clip(a, 0, 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(2))
+    if "normale" in images:
+        n = np.asarray(images["normale"].convert("RGB"), dtype=np.float32) / 127.5 - 1.0
+        force = 0.3 if rendu == "anime" else 0.15
+        n[..., :2] *= force
+        n /= np.linalg.norm(n, axis=2, keepdims=True) + 1e-9
+        sortie["normale"] = Image.fromarray(np.clip((n + 1.0) * 127.5, 0, 255).astype(np.uint8))
+    return sortie
+
+
+def _saturer(rgb: tuple[float, float, float], rendu: str) -> tuple[float, float, float]:
+    if rendu == "realiste":
+        return rgb
+    gris = sum(rgb) / 3.0
+    k = 1.35 if rendu == "anime" else 1.5
+    return tuple(min(1.0, max(0.0, (gris + (c - gris) * k) * 1.06)) for c in rgb)  # type: ignore[return-value]
+
+
 @lru_cache(maxsize=512)
-def materiau_trimesh(cle: str, resolution: int = 512) -> PBRMaterial:
+def materiau_trimesh(cle: str, resolution: int = 512, rendu: str = "realiste") -> PBRMaterial:
     spec: dict[str, Any] = vocabulaire.materiau(cle)
     r, g, b = couleur_lineaire(spec["couleur"])
     alpha = float(spec.get("alpha", 1.0))
-    images = dict(textures(cle, resolution))
+    if rendu not in RENDUS:
+        raise KeyError(f"rendu hors vocabulaire : {rendu!r}")
+    images = styliser(dict(textures(cle, resolution)), rendu)
+    r, g, b = _saturer((r, g, b), rendu)
     if alpha < 0.999:
         # f3d 2.5 ignore l'alpha du facteur (mesuré dans ce projet) : la translucidité passe par la texture,
         # et le facteur garde alpha = 1 pour que tous les visualiseurs montrent la même chose.

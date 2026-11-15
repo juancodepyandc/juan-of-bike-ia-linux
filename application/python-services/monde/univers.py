@@ -141,8 +141,11 @@ def maison_visitable(b, lot, plan_ville, *, graine: int, fabrique) -> dict[str, 
                 break
         else:
             continue
+        from monde.composer import meubler_par_priorite
         demandes = {pp.nom: disposition.demandes_typiques(pp.fonction) for pp in plan.pieces}
-        dispositions = disposition.meubler(plan, demandes, fabrique=fabrique, graine=graine)
+        origines = {nom: ["typique"] * len(liste) for nom, liste in demandes.items()}
+        dispositions, _ = meubler_par_priorite(plan, demandes, origines, fabrique=fabrique, graine=graine,
+                                               hauteur=PLAFOND_MAISON)
         noeud = plan_mod.construire_geometrie(plan, plafond=True)
         for nom, dispo in dispositions.items():
             cible = next((n for n in noeud.parcourir() if n.nom == nom), None)

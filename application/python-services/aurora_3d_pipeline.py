@@ -3806,8 +3806,12 @@ def _run_pipeline_core(prompt: str, run_id: str, *,
     except Exception:  # noqa: BLE001
         pass
     try:
-        from universal_style_engine import classify_style as _classify_style
+        from universal_style_engine import aligner_sur_cible as _aligner, classify_style as _classify_style
         _style_prof = _classify_style(prompt)
+        # le style DEMANDÉ (contrat de demande, mots exacts) l'emporte sur le style déduit du sujet
+        _contrat_style = contrat if isinstance(contrat, dict) and contrat.get("source") == "llm" else (
+            _lecture if isinstance(_lecture, dict) and _lecture.get("source") == "llm" else None)
+        _style_prof = _aligner(_style_prof, ((_contrat_style or {}).get("style") or {}).get("cible"), prompt)
         for _sk, _sv in (_style_prof.get("3d_env") or {}).items():
             os.environ[str(_sk)] = str(_sv)
         os.environ["AURORA_3D_PROMPT"] = prompt
@@ -3817,6 +3821,7 @@ def _run_pipeline_core(prompt: str, run_id: str, *,
             "ok": True,
             "style_id": _style_prof.get("style_id"),
             "label": _style_prof.get("label"),
+            "impose_par_la_demande": _style_prof.get("impose_par_la_demande"),
             "3d_env": _style_prof.get("3d_env"),
         })
     except Exception:  # noqa: BLE001

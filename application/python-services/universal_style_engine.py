@@ -1068,6 +1068,46 @@ def synthesize_dynamic_style_profile(prompt: str | None) -> dict[str, Any] | Non
     }
 
 
+# ── Le style DEMANDÉ l'emporte sur le style déduit du sujet (15/11/2026) ─────────────────────────────
+# « Zig et Sharko en version réaliste » sortait en « Cartoon 2D Franco-Belge / Xilam » : les déclencheurs
+# reconnaissent le SUJET (une série animée) et imposaient son médium d'origine. Règle de l'utilisateur :
+# réaliste demandé → réalisme haut de gamme ; animé demandé → animation haut de gamme ; un personnage
+# animé « en version réaliste » → réaliste. Le médium vient du contrat de demande (`style.cible`, lu
+# par le modèle de langue sur les mots exacts) et n'est appliqué que s'il contredit la famille déduite.
+FAMILLES_STYLE = {
+    "realistic_pbr": "realiste", "crystal_glossy": "realiste",
+    "cartoon_2d_flat": "2d", "anime_cel": "2d", "comic_manga_ink": "2d",
+    "figurine_collector": "figurine", "voxel_cubic": "figurine", "clay_stopmotion": "figurine",
+}
+FAMILLE_DE_CIBLE = {"photo": "realiste", "cel_2d": "2d", "figurine": "figurine", "cgi_3d": "animation_3d"}
+
+
+def _profil_archetype(style_id: str, texte: str) -> dict[str, Any]:
+    prof = STYLE_PROFILES[style_id]
+    return {"style_id": style_id, **prof, "3d_env": dict(prof["3d_env"]),
+            "pbr_profile": compute_continuous_optical_physics(texte, dict(prof["pbr_profile"]))}
+
+
+def aligner_sur_cible(profil: dict[str, Any], cible: str | None, texte: str = "") -> dict[str, Any]:
+    """Profil de style conforme au médium demandé ; inchangé sans demande explicite ou s'il y est déjà conforme."""
+    voulu = FAMILLE_DE_CIBLE.get(cible or "")
+    if voulu is None:
+        return profil
+    famille = FAMILLES_STYLE.get(str(profil.get("style_id", "")).split("__")[0], "dynamique")
+    if voulu == "animation_3d":
+        if famille not in ("realiste", "2d"):
+            return profil
+        nouveau = classify_style("rendu de long métrage d'animation 3D haut de gamme, style Pixar")
+    elif famille == voulu:
+        return profil
+    else:
+        nouveau = _profil_archetype({"realiste": "realistic_pbr", "2d": "anime_cel", "figurine": "figurine_collector"}[voulu],
+                                    texte)
+    nouveau = dict(nouveau)
+    nouveau["impose_par_la_demande"] = {"cible": cible, "remplace": profil.get("style_id")}
+    return nouveau
+
+
 def classify_style(prompt: str | None) -> dict[str, Any]:
     """Identifie la famille de style d'une requête (2D ou 3D) ou synthétise à la volée
     un profil multi-axes sur-mesure pour tout style inédit ou hybride."""

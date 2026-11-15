@@ -72,12 +72,17 @@ MAX_ANCRES_RENFORCEES = 2
 
 # Rendu demandé, par valeur de l'énumération fermée `style.cible` du contrat v2. « autre » et null
 # n'ont pas de description : seul le texte de l'utilisateur est transmis.
+# Chaque médium est visé À SON MEILLEUR (15/11/2026, « le plus réaliste à la demande ») : une demande
+# « réaliste » veut la photographie haut de gamme ; une demande « animée » veut le haut de gamme de
+# l'animation — jamais un réalisme de la vie réelle qui en retirerait le charme.
 RENDU_PAR_CIBLE = {
-    "photo": ("photorealistic rendering with real-world physical materials, natural light and lifelike "
+    "photo": ("high-end photorealistic rendering with real-world physical materials, natural light and lifelike "
               "eyes, as if photographed"),
-    "cel_2d": "cel-shaded toon rendering with clean outlines",
-    "cgi_3d": "3D animated-feature CGI rendering",
-    "figurine": "physical collectible figurine, sculpted and painted",
+    "cel_2d": ("premium hand-drawn animation look: confident clean line art, crisp cel shading with soft "
+               "gradients, vibrant harmonious colours, as in a high-end animated feature"),
+    "cgi_3d": ("high-end 3D animated-feature look: appealing stylised forms, soft subsurface shading, rich "
+               "saturated colours and cinematic soft lighting, as in a premium animation studio film"),
+    "figurine": "premium collectible figurine, finely sculpted and hand-painted, photographed in a studio",
 }
 
 # Marques que chaque médium laisse sur une image ; elles vont au négatif quand le médium visé
