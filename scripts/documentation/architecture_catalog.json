@@ -15,11 +15,11 @@
    "working_tree_drafts_included": false
   }
  },
- "source_files": 2516,
- "source_lines": 912354,
+ "source_files": 2542,
+ "source_lines": 925516,
  "static_route_declarations": 719,
  "by_repository": {
-  "AuroraIA": 2195,
+  "AuroraIA": 2221,
   "aurora-remote-cli": 317,
   "aurora-live": 4
  },
@@ -2275,8 +2275,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/python-services/aurora_3d_pipeline.py",
-   "sha256": "c2b99c52ce8e6f1bec1297f8eb7ef0db90fe7d67d61b37393942499ea2ebe998",
-   "lines": 7527,
+   "sha256": "cf53cba2720d89000d0690b0192ab34aebdaa39c72bd208c57a1e04f32a10f2b",
+   "lines": 7558,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -3849,8 +3849,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/python-services/lecture_demande.py",
-   "sha256": "0fc1f5f14dd926fa5fd7c13a38ee97b13ecdcc55a1a57ea54dc456056b620db4",
-   "lines": 302,
+   "sha256": "e0ab6281edcb65aed077c914303c489e6c1469e2cdf5fa6d4dc6a83852c06e9c",
+   "lines": 334,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -4139,6 +4139,126 @@
    "path": "application/python-services/momask_generate.py",
    "sha256": "d3f5d752f40e1478d841fe4b6fde11f90830cff15a9cc894fe536be959bff78d",
    "lines": 236,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "application/python-services/monde/__init__.py",
+   "sha256": "afefe0e4a02223a9c07289a0032fd0ba6bb090026938079565d6aaa4c8217f10",
+   "lines": 18,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "application/python-services/monde/composer.py",
+   "sha256": "436d85c5afb40e2800435ef4f501f259de60e80ad1960a741b5fbff7f141a113",
+   "lines": 247,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "application/python-services/monde/disposition.py",
+   "sha256": "dd325ace179419cd8d5363a12c5ada427fe2179a970c15c049105099b400759e",
+   "lines": 1242,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "application/python-services/monde/export_gltf.py",
+   "sha256": "0cfac9cca647ff495a0d94d6ed4becca64519b325d1b000f40f01f85a972b377",
+   "lines": 142,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "application/python-services/monde/geometrie.py",
+   "sha256": "4daa5bfb03dbea560d5332665c7f44aff7e4c75611d7f5808c9ca06a87c41a90",
+   "lines": 219,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "application/python-services/monde/ir.py",
+   "sha256": "fcea33975d87a079bdf45ec59e3900912b5e406424e299e23893deb7bb5528b8",
+   "lines": 139,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "application/python-services/monde/materiaux.py",
+   "sha256": "2c58132694ea9290fcdbcb580f1509c5294a96ffba8df97a230eaf2f83c7ce86",
+   "lines": 1449,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "application/python-services/monde/meubles.py",
+   "sha256": "bb02f845f6e9b34e961a3c14c9d38cf711c862746b422ab8cc6f3a6011080de0",
+   "lines": 2275,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "application/python-services/monde/paysage.py",
+   "sha256": "4eca4adb289bc813fc52500eb5c0846bbcfab2d7ab43eb3fce47aded54c08aba",
+   "lines": 857,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "application/python-services/monde/plan.py",
+   "sha256": "cc57590698bf1cb6ba3aa36fccbe21a27ce6800e518d1f3ffaf2917abd1cb578",
+   "lines": 1047,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "application/python-services/monde/porte.py",
+   "sha256": "8b80306a4eb58a2f21141c59817b071738a0b3326505c81faf14804beba49015",
+   "lines": 158,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "application/python-services/monde/programme.py",
+   "sha256": "11c7a66ca198578c8a1b128fb6581843848fd93cec517a7ab37599b18b17fa55",
+   "lines": 685,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "application/python-services/monde/rendu.py",
+   "sha256": "07950e3cb99dcf1965f322772679e1557d3c1615dc0521f6677132e27590d1f5",
+   "lines": 84,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "application/python-services/monde/ville.py",
+   "sha256": "7fa75bbfa6f8ebb88fde6b28ea1226d6e1eded1a8a8bb7464afc6d501aab6ca6",
+   "lines": 1857,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "application/python-services/monde/vocabulaire.py",
+   "sha256": "7692a334e464d362aa829ce3f34fdca04fde603448a18e244f39ea7a33b2686f",
+   "lines": 466,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -6905,8 +7025,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/python-services/reference_identite.py",
-   "sha256": "adf28098b4ad43724f8a3a1eaaba1c8112f417e58528255526914ee2b71fa530",
-   "lines": 497,
+   "sha256": "1afc1a8d3ba21a0b664a806ea03ec56b405b858b37afce3121067674c9738675",
+   "lines": 508,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -11584,8 +11704,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/components/generationFx/fxPhases.ts",
-   "sha256": "b651204d649a7d1bcd8ff55d6ea3a5f21b34be2cd56d34cff4bcf3586673e87d",
-   "lines": 190
+   "sha256": "ce1f256e2ed5da6c8d7659a526ecc04407c806c1cf7d0322ab6b9dfc3dff8897",
+   "lines": 191
   },
   {
    "repo": "AuroraIA",
@@ -14374,8 +14494,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/threeDRequestReading.ts",
-   "sha256": "1f31e4ec8cbba2949b012a2f8048fef029d35b84f1ab65ee3c094041ab2d833d",
-   "lines": 88
+   "sha256": "5708a1ffd9aa885640e3c22108089aec483b0b64a32b44da318dc1b0ae69881d",
+   "lines": 102
   },
   {
    "repo": "AuroraIA",
@@ -15340,8 +15460,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/views/ModelView.tsx",
-   "sha256": "8771e0ac47dad393b00361dffe1ab1fad422a272d671149e949e3a4e806015fc",
-   "lines": 8514
+   "sha256": "bf60315cc679d2c2c26f4b1f774e4d42d6a73cbb5450ec2e4b7458b936c93522",
+   "lines": 8528
   },
   {
    "repo": "AuroraIA",
@@ -20755,6 +20875,14 @@
   },
   {
    "repo": "AuroraIA",
+   "path": "tests_agi/test_identite_essai_renforce.py",
+   "sha256": "baf3c08c80915bea2271f6f9cddd488472dbc449af444db0767ba482e8e6225d",
+   "lines": 90,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
    "path": "tests_agi/test_identite_visuelle.py",
    "sha256": "62d44d2f6ba0c092bc9aa63509723e78bd2f9a2ffc22fca486f9a477c7d5055a",
    "lines": 642,
@@ -20828,8 +20956,8 @@
   {
    "repo": "AuroraIA",
    "path": "tests_agi/test_lecture_demande_v2.py",
-   "sha256": "de8de46e94b750ec2c4de06f39ffbe6f900d16d268a7191c28e5dafd279f9c28",
-   "lines": 88,
+   "sha256": "b8cbaaa68c42dff2cb557fbbedc774ba2dfca53d96f0fdfab2639d290b1cb4c4",
+   "lines": 127,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -20979,6 +21107,86 @@
   },
   {
    "repo": "AuroraIA",
+   "path": "tests_agi/test_monde_composer.py",
+   "sha256": "c5b0d3f16e922f8ed170e4275c35ca0be4e2e67793594f8a95f7c71f5994a0ae",
+   "lines": 76,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "tests_agi/test_monde_disposition.py",
+   "sha256": "1454cd4e0b27f61b08296118397cc1b16c010cb24b45ce042b14662521f1dcd2",
+   "lines": 194,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "tests_agi/test_monde_fondation.py",
+   "sha256": "f9c3883b084f79e414ff053e38f39d991e5767174627ee8add3d1c9c7c0fa517",
+   "lines": 165,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "tests_agi/test_monde_materiaux.py",
+   "sha256": "b412b082b8da6054de885f602864af824da533ff54468f61d3425a1ede7a0a06",
+   "lines": 174,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "tests_agi/test_monde_meubles.py",
+   "sha256": "62a84229b1f298159f2812af1bf5d9340320c9b300a44c839643d87ca3636aae",
+   "lines": 279,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "tests_agi/test_monde_paysage.py",
+   "sha256": "6e908314b24c0de4fa94bbf786ea80fc87c0e543c9e2651bd6d26eab1f8b0fdd",
+   "lines": 186,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "tests_agi/test_monde_plan.py",
+   "sha256": "03840590639cf3a95d7f6c1257336ca0c7fa1143e56b919a16d00f894f21226b",
+   "lines": 258,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "tests_agi/test_monde_porte.py",
+   "sha256": "4fb6e75dd0edd8f9bf5a31145a54075e790f5bdf0b59bb1312c6131af7464c0b",
+   "lines": 110,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "tests_agi/test_monde_programme.py",
+   "sha256": "908ae103af2173738303648b8708b17f457b7729b460b6a56b19adf567084714",
+   "lines": 288,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "tests_agi/test_monde_ville.py",
+   "sha256": "ecd9826c75375716496a98a1f7b2837378f000f7c12da4b2d6d1e435dd60cc2b",
+   "lines": 292,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
    "path": "tests_agi/test_motion_intent_transport.py",
    "sha256": "c1ec93cd3f2c8930b181d9b8586818c112d31bfee7bd8b963ce6f5851cc07f11",
    "lines": 42,
@@ -21100,8 +21308,8 @@
   {
    "repo": "AuroraIA",
    "path": "tests_agi/test_reference_identite.py",
-   "sha256": "0b629c9c299e9b6eb93491b1b2c3a9fb0277d1d458f2640de06b59a1f81d6d9e",
-   "lines": 341,
+   "sha256": "09c21776ffb437a8298b23c7ebc4632fc09b7969f0ef9f8995c6aae80471b6d7",
+   "lines": 364,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },

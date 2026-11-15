@@ -50,7 +50,7 @@ def construire_interieur(programme: dict, graine: int, fabrique) -> dict[str, An
                                      sol=p.get("sol") or None, murs=p.get("murs") or defauts.get("murs"))
               for p in interieur["pieces"]]
     hauteur = float(interieur.get("hauteur_plafond") or 2.5)
-    plan = plan_mod.concevoir_plan(pieces, hauteur_plafond=hauteur, graine=graine)
+    plan = plan_mod.concevoir_plan(pieces, hauteur_plafond=hauteur, graine=graine, style=style)
     demandes = {p["nom"]: [disposition.Demande(categorie=m["categorie"], nombre=int(m.get("nombre") or 1),
                                                relations=[(r[0], r[1]) for r in m.get("relations") or []],
                                                materiaux=m.get("materiaux") or None, style=None)
@@ -58,25 +58,31 @@ def construire_interieur(programme: dict, graine: int, fabrique) -> dict[str, An
     dispositions = disposition.meubler(plan, demandes, fabrique=fabrique, graine=graine)
     complet = plan_mod.construire_geometrie(plan, plafond=True)
     maquette = plan_mod.construire_geometrie(plan, plafond=False, maquette=True)
-    noms_plan = {pp.nom for pp in plan.pieces}
     for nom, dispo in dispositions.items():
         for arbre in (complet, maquette):
             noeud = _noeud_nomme(arbre, nom)
             if noeud is not None:
                 noeud.instances.extend(dispo.instances)
+    # Les mesures sont RECALCULÉES depuis les instances livrées (juge indépendant de la recherche).
     mesures: dict[str, Any] = {"chevauchements": 0, "hors_piece": 0, "portes_bloquees": 0, "fenetres_bloquees": 0,
-                               "inaccessibles": [], "meubles_demandes": 0, "meubles_places": 0, "echecs": []}
+                               "degagements_occupes": 0, "inaccessibles": [], "meubles_demandes": 0,
+                               "meubles_places": 0, "echecs": []}
     for nom, dispo in dispositions.items():
-        m = dispo.mesures or {}
-        for cle in ("chevauchements", "hors_piece", "portes_bloquees", "fenetres_bloquees"):
+        piece = plan.piece(nom)
+        m = disposition.mesurer_instances(piece, dispo.instances, hauteur) if piece is not None else {}
+        for cle in ("chevauchements", "hors_piece", "portes_bloquees", "fenetres_bloquees", "degagements_occupes"):
             mesures[cle] += int(m.get(cle) or 0)
         mesures["inaccessibles"] += [f"{x} ({nom})" for x in (m.get("inaccessibles") or [])]
-        mesures["meubles_demandes"] += int(m.get("demandes") or 0)
-        mesures["meubles_places"] += int(m.get("places") or len(dispo.instances))
+        mesures["meubles_demandes"] += int((dispo.mesures or {}).get("demandes") or 0)
+        mesures["meubles_places"] += len(dispo.instances)
         mesures["echecs"] += [{"piece": nom, **e} if isinstance(e, dict) else {"piece": nom, "raison": str(e)}
                               for e in (dispo.echecs or [])]
+    verification = plan_mod.verifier_plan(plan)
+    noms_plan = {pp.nom for pp in plan.pieces}
     mesures["pieces_manquantes"] = [p.nom for p in pieces if p.nom not in noms_plan]
-    mesures["pieces_isolees"] = list(getattr(plan, "pieces_isolees", []) or [])
+    mesures["pieces_isolees"] = list(verification.get("inaccessibles") or [])
+    mesures["fenetres_interieures"] = list(verification.get("fenetres_interieures") or [])
+    mesures["violations_plan"] = list((plan.mesures or {}).get("violations") or [])
     mesures["pieces"] = [{"nom": pp.nom, "fonction": pp.fonction, "surface": round(float(pp.surface), 1)}
                          for pp in plan.pieces]
     return {"scene": Scene(complet), "maquette": Scene(maquette), "mesures": mesures, "plan": plan}
