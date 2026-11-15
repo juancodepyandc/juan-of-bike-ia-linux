@@ -1009,7 +1009,7 @@ def compile_plan(doc,blob,plan,mode='animation',physical_refinement=False,prompt
     return out,binary,proof
 
 
-def animate_existing(source,output,prompt,model,mode='animation',subject='humanoid',planner=None,reviewer=None,source_description=None):
+def animate_existing(source,output,prompt,model,mode='animation',subject='humanoid',planner=None,reviewer=None,source_description=None,mouvement_en=None):
     import os
     import re
     import shutil
@@ -1033,7 +1033,9 @@ def animate_existing(source,output,prompt,model,mode='animation',subject='humano
             print('PROGRESS:animation:génération biomécanique HY-Motion-1.0 Renforcé + squelette anatomique MIA 52 os...',flush=True)
             bake_res=_a3d.run_motion_bake(
                 rescued_mesh=source,
-                motion_prompt=prompt,
+                # le moteur de mouvement lit l'anglais : la phrase du contrat (« a person swims ») plutôt
+                # qu'une traduction de « Sharko nage » faite par une liste de mots (15/11/2026)
+                motion_prompt=mouvement_en or prompt,
                 output_dir=bake_dir,
                 run_id=output.stem,
                 subject_kind='humanoid',
@@ -1064,7 +1066,8 @@ def animate_existing(source,output,prompt,model,mode='animation',subject='humano
                     'joints':sum(len(s.get('joints',[])) for s in out_doc.get('skins',[])),
                     'geometry_kind':'skinned' if out_doc.get('skins') else 'rigid',
                     'engine':'HY-Motion-1.0+Aurora-Animation-UniRig-GeodesicDQS-HYMotion-v2+MIA-52bones',
-                    'physical_validation':True,
+                    # rien n'a mesuré la physique ici : « non évalué », jamais True par défaut (15/11/2026)
+                    'physical_validation':'non_evalue',
                 }
                 plan={
                     'schema':'aurora.hymotion-mia.v2',
@@ -1082,9 +1085,11 @@ def animate_existing(source,output,prompt,model,mode='animation',subject='humano
                     'plan':plan,
                     'measurements':measurements,
                     'mode':mode,
-                    'semantic_review':{'conforms':True,'missing_requirements':[],'defects':[]},
+                    # Aucun juge n'a comparé ce mouvement à la demande dans cette voie : un nageur accroupi
+                    # sur le sol sortait « conforme » (15/11/2026). Le verdict dit ce qui a été fait.
+                    'semantic_review':{'conforms':None,'evaluated':False,'missing_requirements':[],'defects':[]},
                     'revision_errors':[],
-                    'physical_validation':True,
+                    'physical_validation':'non_evalue',
                     'audit':bake_res.get('audit_animation') or bake_res.get('audit',[]),
                 }
                 output.with_suffix('.motion.json').write_text(json.dumps(report,ensure_ascii=False,indent=2))

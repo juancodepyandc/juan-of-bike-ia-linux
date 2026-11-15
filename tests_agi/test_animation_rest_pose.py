@@ -24,7 +24,11 @@ sys.path.insert(0, str(SERVICES))
 from lecture_demande import lire_demande  # noqa: E402
 
 GOOD = {"sujet": "Natsu Dragneel", "sujet_en": "Natsu Dragneel", "mouvement": "qui cours", "exemplaires": 1,
-        "corps_articule": True, "conception": False}
+        "corps_articule": True, "conception": False,
+        "sujets": [{"nom": "natsu Dragneel", "nomme": True, "nature": "personnage", "nature_en": "character",
+                    "clause": "natsu Dragneel qui cours", "mouvement": "qui cours", "mouvement_en": "a person runs forward",
+                    "milieu": {"matiere": None, "relation": None, "justification": ""}}],
+        "style": {"texte": "", "cible": None, "justification": ""}}
 EMBROIDERED = dict(GOOD, sujet="Natsu Dragneel, personnage aux cheveux roses portant une tenue rouge sans manches, "
                                "des gants rouges et un pantalon noir, dans une posture dynamique de course")
 

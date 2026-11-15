@@ -4,7 +4,7 @@ import { resolveThreeDRelation, type ThreeDRelation } from '../utils/threeDRelat
 import { retainThreeDRequirements, composeThreeDRequirements } from '../utils/threeDConversationContext.ts'
 import { binaryBase64 } from '../utils/binaryBase64.ts'
 import { parsePythonResult } from '../utils/pythonResult.ts'
-import { readThreeDRequest, restStateFromReading, restStateVerificationPrompt } from '../services/threeDRequestReading'
+import { namesASubject, readThreeDRequest, restStateFromReading, restStateVerificationPrompt, type ThreeDRequestReading } from '../services/threeDRequestReading'
 import { materialChannels } from '../utils/materialChannels.ts'
 import { recoverModelDelivery } from '../utils/recoverModelDelivery.ts'
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -314,6 +314,9 @@ function buildColorLoadOutputDir(workspacePath: string, meshPath: string) {
   return `${workspacePath}/output/3d/color_load_${Date.now()}`
 }
 
+/** Chaîne « identité par de vraies images » : prête côté interface, activée après sa validation. */
+const IDENTITY_FROM_REAL_IMAGES = false
+
 function parseLastJsonLine(output: string) {
   return parsePythonResult<ModelGenerationResult>(output)
 }
@@ -339,7 +342,9 @@ async function bakeRequestedMotion(options: {
   /** the job's own runner: it carries the job's abort signal and cleanup root */
   run: (scriptPath: string, args: string[], options?: { resumeKey?: string }) => Promise<string>
   /** several characters rebuilt separately, each in place: each gets its own movement */
-  characters?: { glb: string; reference?: string | null }[]
+  characters?: { glb: string; reference?: string | null; sujet?: number }[]
+  /** request contract v2 (journal/contrat_demande.json): one reading of the sentence for the whole run */
+  contractPath?: string | null
 }): Promise<{ path: string | null; summary: string }> {
   const output = `${options.motionDir}/mouvement_couleurs.glb`
   try { await fsMkdir(options.motionDir) } catch { /* déjà là */ }
@@ -351,6 +356,10 @@ async function bakeRequestedMotion(options: {
       const args = ['--demande', options.requirements, '--dossier', options.motionDir, '--modele', options.model]
       for (const character of options.characters) args.push('--personnage', character.glb)
       for (const character of options.characters) args.push('--reference', character.reference || '')
+      if (options.characters.every((character) => typeof character.sujet === 'number')) {
+        for (const character of options.characters) args.push('--sujet', String(character.sujet))
+      }
+      if (options.contractPath) args.push('--contrat', options.contractPath)
       const multiOutput = await options.run(`${options.workspacePath}/python-services/animation_multi_sujets.py`, args, { resumeKey: 'model_ia' })
       const multi = parsePythonResult<{ ok?: boolean; path?: string; anime?: number; error?: string }>(String(multiOutput || ''))
       if (multi?.path) {
@@ -5246,6 +5255,7 @@ export default function ModelView() {
           let restState: ThreeDRestState | null = null
           // Combien de sujets l'image de référence doit montrer (« une entité » n'est vrai que pour un seul).
           let subjectCount = 1
+          let requestReading: ThreeDRequestReading | null = null
           if (!editPlan.continuation && !primaryPreparedImage) {
             setPhase(requestedMotion ? 'Compréhension — sujet au repos, mouvement réservé au squelette...' : 'Compréhension — sujets et nombre d\'exemplaires...', 6)
             const workspaceForReading = await getWorkspacePath()
@@ -5254,11 +5264,18 @@ export default function ModelView() {
               setProgress(`Lecture de la demande indisponible (${short(reading?.raison || 'sans réponse', 80)}) — nouvel essai...`)
               reading = await readThreeDRequest(workspaceForReading, currentPrompt)
             }
+            requestReading = reading
             if (reading?.source === 'llm' && typeof reading.exemplaires === 'number' && reading.exemplaires > 1) {
               subjectCount = Math.min(reading.exemplaires, 6)
             }
             if (requestedMotion) restState = restStateFromReading(reading, currentPrompt, isCharacterLike(intent))
           }
+          // IDENTITÉ PAR DE VRAIES IMAGES (15/11/2026) : un sujet nommé sans photo jointe n'est plus dessiné par
+          // l'interface à partir d'un texte (« Zig et Sharko » sortaient en hyène tachetée et requin génériques).
+          // Le pipeline établit un dossier d'images réelles qui s'accordent, en tire la référence et la juge.
+          // Désactivé tant que la chaîne d'identité (modules sur branches locales, document maître § 1.43)
+          // n'a pas été relue et prouvée sur un run réel : l'interface garde sa synthèse actuelle.
+          const delegateIdentity = IDENTITY_FROM_REAL_IMAGES && namesASubject(requestReading) && !primaryPreparedImage && !editPlan.continuation
           if (restState) {
             // l'identité transmise aux voies de référence décrit le sujet au repos, pas l'action
             intent.referencePromptAdditions = restReferenceAdditions(intent, restState.sujet)
@@ -5382,6 +5399,15 @@ export default function ModelView() {
           const runId = `juan_bike_${Date.now()}`
           const active3dSession = useModuleHistoryStore.getState().getActiveSession('3d')
           const runPaths = buildThreeDRunOutputPaths(workspacePath, active3dSession, runId, prompt)
+          // Une seule lecture de la phrase pour tout le run : le pipeline et l'animation reçoivent le contrat.
+          let requestContractPath: string | null = null
+          if (requestReading?.source === 'llm') {
+            try {
+              await fsMkdir(`${runPaths.root}/journal`)
+              requestContractPath = `${runPaths.root}/journal/contrat_demande.json`
+              await fsWriteBinary(requestContractPath, utf8Bytes(JSON.stringify(requestReading, null, 2)))
+            } catch { requestContractPath = null }
+          }
           cleanupRoot = runPaths.root
           cleanupSessionId = active3dSession.id
           controller.signal.throwIfAborted()
@@ -5627,7 +5653,7 @@ export default function ModelView() {
           // l'action demandée reste le sujet du rendu statique.
           const referenceCheckPrompt = restState ? restStateVerificationPrompt(restState) : currentPrompt
           setPhase('Référence photo — construction du prompt visuel FLUX...', 20)
-          const fluxVisualPrompt = await buildFluxVisualDescription({
+          const fluxVisualPrompt = delegateIdentity ? taskContext.generationPrompt : await buildFluxVisualDescription({
             prompt: currentPrompt,
             intent,
             model: visionModel,
@@ -5647,7 +5673,7 @@ export default function ModelView() {
           // queue en patte (verifie sur le run happy.jpg). L'identite vient
           // de la photo: c'est MV-Adapter (image -> multivues), dans le
           // pipeline Python, qui derive les autres angles a partir d'ELLE.
-          const hasSyntheticViews = preparedImages.length === 0
+          const hasSyntheticViews = !delegateIdentity && preparedImages.length === 0
             && referenceViewPlan.assignments.some((a) => a.sourceKind === 'synthetic')
           let resolvedViewPlan = referenceViewPlan
           if (hasSyntheticViews) {
@@ -5788,7 +5814,11 @@ export default function ModelView() {
           // laisser une photo utilisateur debiter en plusieurs sujets.
           const referenceIsUserPhoto = Boolean(primaryPreparedImage?.stagedPath)
 
-          if (directMultiView && materializedViewPlan.primaryPath) {
+          if (delegateIdentity) {
+            referenceSeedForWorkflow = false
+            referenceVerificationSummary = 'Identité confiée au pipeline : dossier de vraies images de chaque sujet nommé, référence conditionnée et jugée contre elles.'
+            setProgress('Identité des sujets nommés : recherche de vraies images par le pipeline...')
+          } else if (directMultiView && materializedViewPlan.primaryPath) {
             referenceImagePath = materializedViewPlan.primaryPath
             lastReferenceImagePathRef.current = referenceImagePath
             setReferenceImageUrl(toAssetUrl(referenceImagePath))
@@ -6193,7 +6223,7 @@ export default function ModelView() {
           let auroraAttempted = false
           let auroraFailReason = ''
           let producedButRejected = ''
-          let deliveredCharacters: { glb: string; reference?: string | null }[] = []
+          let deliveredCharacters: { glb: string; reference?: string | null; sujet?: number }[] = []
           if (!result) {
             // Voie principale: pipeline Aurora complet (TRELLIS.2-4B natif MIT, branche
             // qualite native, materiaux par zones). DreamGaussian ne sert plus que de
@@ -6210,6 +6240,9 @@ export default function ModelView() {
               await fsMkdir(genDir).catch(() => {})
               const auroraArgs = ['--prompt', userRequirementsPrompt, '--run-id', runId, '--output-dir', genDir, '--purpose', intent.purpose, '--max-precision', '--defer-motion', '--animation', requestedMotion ? 'on' : 'off']
               if (referenceConfirmEnabled) auroraArgs.push('--confirm-ref')
+              if (requestContractPath) auroraArgs.push('--contrat', requestContractPath)
+              // la référence d'un sujet nommé est rendue par le pipeline : le moteur d'images doit tourner
+              if (delegateIdentity) { try { await ensureComfy() } catch { /* le pipeline le redemande au pont */ } }
               if (intent.referenceFraming === 'isolated_subject' && intent.subjectKind !== 'assembly') auroraArgs.push('--no-scene')
               const seenImgs = new Set<string>()
               let effectiveRefImg: string | null = null
@@ -6291,12 +6324,15 @@ export default function ModelView() {
               setProgress('Liberation des modeles Ollama avant la reconstruction 3D...')
               try { await freeGpuBeforeFlux([]) } catch { /* jamais bloquant */ }
               const auroraOutput = await runPythonScript(`${workspacePath}/python-services/aurora_3d_pipeline.py`, auroraArgs, { resumeKey: 'model_ia' })
-              const parsedAurora = parseLastJsonLine(auroraOutput) as unknown as { ok?: boolean; error?: string; textured?: boolean; is_scene?: boolean; final_mesh?: string; scene_glb?: string; composants?: Record<string, { desc?: string; glb?: string; refus?: string | null }> | null; refuses?: { role: string; motif: string }[] | null; orphelins?: { objet: string; appui_manquant: string }[] | null; composition?: { objet: string; liaison?: string; sur?: string; ok: boolean }[] | null; livraison?: Record<string, string> | null; personnages?: { index?: number; glb?: string; reference?: string | null }[] | null; source_web?: { site?: string; url?: string; title?: string } } | null
+              const parsedAurora = parseLastJsonLine(auroraOutput) as unknown as { ok?: boolean; error?: string; textured?: boolean; is_scene?: boolean; final_mesh?: string; scene_glb?: string; composants?: Record<string, { desc?: string; glb?: string; refus?: string | null }> | null; refuses?: { role: string; motif: string }[] | null; orphelins?: { objet: string; appui_manquant: string }[] | null; composition?: { objet: string; liaison?: string; sur?: string; ok: boolean }[] | null; livraison?: Record<string, string> | null; identite_non_etablie?: boolean; personnages?: { index?: number; glb?: string; reference?: string | null; sujet?: number }[] | null; source_web?: { site?: string; url?: string; title?: string } } | null
               if (parsedAurora?.source_web) {
                 setDiscoveredSourceWeb(parsedAurora.source_web)
               }
+              if (parsedAurora?.identite_non_etablie) {
+                throw new Error(`Identité non établie pour un sujet nommé : je n'ai pas trouvé assez de vraies images concordantes (${String(parsedAurora.error || '').replace(/^identite_non_etablie\s*:\s*/, '').slice(0, 220)}). Joins une image de chaque sujet puis relance : une image jointe fait foi.`)
+              }
               deliveredCharacters = (parsedAurora?.personnages || [])
-                .filter((p): p is { glb: string; reference?: string | null } => typeof p?.glb === 'string' && p.glb.length > 0)
+                .filter((p): p is { glb: string; reference?: string | null; sujet?: number } => typeof p?.glb === 'string' && p.glb.length > 0)
               const deliveredReference = parsedAurora?.livraison?.reference_face
               if (deliveredReference && await fsExists(deliveredReference)) {
                 referenceImagePath = deliveredReference
@@ -6441,7 +6477,7 @@ export default function ModelView() {
               subject: editPlan.continuation ? rigSubject : intent.subjectKind === 'character' ? 'humanoid' : intent.subjectKind === 'creature' ? 'quadruped' : 'none',
               sourceDescription: sourceContext?.description || composeThreeDRequirements(currentPrompt, effectiveHistory),
               characterRoute: editPlan.continuation || isCharacterLike(intent),
-              setPhase, setProgress, run: runPythonScript, characters: deliveredCharacters,
+              setPhase, setProgress, run: runPythonScript, characters: deliveredCharacters, contractPath: requestContractPath,
             })
             if (motion.path) {
               lastMeshPathRef.current = motion.path
@@ -7013,7 +7049,7 @@ export default function ModelView() {
               subject: editPlan.continuation ? rigSubject : intent.subjectKind === 'character' ? 'humanoid' : intent.subjectKind === 'creature' ? 'quadruped' : 'none',
               sourceDescription: sourceContext?.description || composeThreeDRequirements(currentPrompt, effectiveHistory),
               characterRoute: editPlan.continuation || isCharacter,
-              setPhase, setProgress, run: runPythonScript, characters: deliveredCharacters,
+              setPhase, setProgress, run: runPythonScript, characters: deliveredCharacters, contractPath: requestContractPath,
             })
             autoMotionSummary = motion.summary
             if (motion.path) {

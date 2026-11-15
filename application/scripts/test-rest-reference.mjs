@@ -35,3 +35,10 @@ test('a request naming two subjects asks for two, and the view check accepts two
   assert.match(singleEntityCheck(2), /EXACTLY the 2 requested distinct subjects/)
   assert.match(entityCountRules(1).join(' '), /ONLY ONE ENTITY/)
 })
+
+test('a style clause stops at a colon instead of swallowing the subjects', async () => {
+  const { extractUniversalStyleClause } = await import('../src/services/cognitivePromptDirector.ts')
+  const clause = extractUniversalStyleClause('Plim et Glouk en version réaliste : Plim le renard qui court et Glouk la baleine qui nage')
+  assert.ok(clause.stylePhraseRaw, 'a style is read')
+  assert.doesNotMatch(clause.stylePhraseRaw, /Plim|Glouk|renard|:/)
+})

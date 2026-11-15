@@ -29,7 +29,13 @@ def _encode_images(images, max_images=4, max_side=768):
     images = list(images)
     if len(images) > max_images:
         step = (len(images) - 1) / float(max_images - 1)
-        images = [images[round(i * step)] for i in range(max_images)]
+        gardes = [round(i * step) for i in range(max_images)]
+        # Jamais en silence (15/11/2026) : la porte de perfection envoyait la référence + 4 vues et
+        # perdait ainsi la vue de FACE du modèle, puis notait 100/100 ce qu'elle n'avait pas vu.
+        import sys as _sys
+        print("vlm_judge: %d images recues, %d gardees (indices %s) — regrouper en planche pour tout voir"
+              % (len(images), max_images, gardes), file=_sys.stderr, flush=True)
+        images = [images[i] for i in gardes]
     encoded = []
     for p in images:
         raw = None

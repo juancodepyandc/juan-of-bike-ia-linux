@@ -201,5 +201,53 @@ class MergeKeepsEachCharacterInPlace(unittest.TestCase):
             self.assertTrue(np.allclose(hi, np.maximum(boxes[0][1], boxes[1][1]), atol=1e-3))
 
 
+class ContractAndMedium(unittest.TestCase):
+    CONTRACT = {"source": "llm", "sujets": [
+        {"nom": "Plim", "nature": "un renard", "nature_en": "fox", "clause": "Plim le renard qui court",
+         "mouvement": "qui court", "mouvement_en": "a person runs forward",
+         "milieu": {"matiere": "solide", "relation": "sur", "justification": "court"}},
+        {"nom": "Glouk", "nature": "une baleine", "nature_en": "whale", "clause": "Glouk la baleine qui nage",
+         "mouvement": "qui nage", "mouvement_en": "a person swims",
+         "milieu": {"matiere": "liquide", "relation": "immerge", "justification": "nage"}}]}
+
+    def run_with(self, porte_ok):
+        with tempfile.TemporaryDirectory() as tmp:
+            p1, p2 = write_glb(Path(tmp) / "p1.glb"), write_glb(Path(tmp) / "p2.glb", offset=(3, 0, 0))
+            calls, composed = [], []
+
+            def animate(source, output, prompt, model, mode, subject, source_description, mouvement_en=None):
+                calls.append((prompt, source_description, mouvement_en))
+                Path(output).parent.mkdir(parents=True, exist_ok=True)
+                write_glb(Path(output), animated=True)
+                return {"ok": True, "path": output}
+
+            def with_medium(entries, out):
+                composed.append([e["milieu"].get("matiere") for e in entries])
+                res = ams.composer(entries, out)
+                res["porte"] = {"ok": porte_ok, "raisons": [] if porte_ok else ["immersion 0.00 < 0.95"]}
+                return res
+
+            report = ams.animer_sujets(
+                "Plim et Glouk en version réaliste : Plim le renard qui court et Glouk la baleine qui nage",
+                [{"index": 0, "glb": str(p1), "reference": None, "sujet": 0},
+                 {"index": 1, "glb": str(p2), "reference": None, "sujet": 1}],
+                Path(tmp) / "mouvement", "modele", contrat=self.CONTRACT, animer=animate, composer_milieu=with_medium,
+                repartir=lambda d: self.fail("the contract must spare a second reading"))
+            return report, calls, composed
+
+    def test_the_whole_clause_the_english_motion_and_the_nature_reach_the_motion_engine(self):
+        report, calls, composed = self.run_with(porte_ok=True)
+        self.assertEqual(calls, [("Plim le renard qui court", "Plim (un renard)", "a person runs forward"),
+                                 ("Glouk la baleine qui nage", "Glouk (une baleine)", "a person swims")])
+        self.assertEqual(composed, [["solide", "liquide"]])           # the medium composer received the media
+        self.assertEqual([s["attribution"] for s in report["sujets"]], ["juge_identite", "juge_identite"])
+        self.assertTrue(report["ok"])
+
+    def test_a_swimmer_without_water_is_not_a_success(self):
+        report, _, _ = self.run_with(porte_ok=False)
+        self.assertFalse(report["ok"])
+        self.assertIn("immersion", report["error"])
+
+
 if __name__ == "__main__":
     unittest.main()

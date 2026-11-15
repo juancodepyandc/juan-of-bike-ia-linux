@@ -3505,8 +3505,111 @@ def _conception_assemblage(demande: str, run_id: str, output_dir: Path, audit: l
     }
 
 
+_ATTRIBUTION_IDENTITE: dict[str, list[int]] = {}
+
+
+def _assurer_comfyui(delai_s: float = 240.0) -> bool:
+    """ComfyUI doit répondre avant un rendu conditionné : la voie déléguée par l'interface ne le démarre
+    plus elle-même. Demande au pont de le lancer (route /api/comfyui/start) puis attend qu'il réponde."""
+    import urllib.request
+    try:
+        from comfy_client import check_comfy_health
+    except Exception:  # noqa: BLE001
+        return True
+    if check_comfy_health().get("online"):
+        return True
+    print("PROGRESS:reference:démarrage du moteur d'images (ComfyUI)...", flush=True)
+    try:
+        req = urllib.request.Request("http://127.0.0.1:3001/api/comfyui/start", data=b"{}",
+                                     headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=delai_s) as rep:
+            rep.read()
+    except Exception:  # noqa: BLE001 — on attend quand même : il peut être en train de démarrer
+        pass
+    fin = time.time() + delai_s
+    while time.time() < fin:
+        if check_comfy_health().get("online"):
+            return True
+        time.sleep(3)
+    return False
+
+
+def _reference_par_identite(contrat: dict, run_id: str, output_dir: Path, animation: str, audit: list) -> dict:
+    """Dossier d'identité (images réelles qui s'accordent) → référence FLUX conditionnée par ces images
+    → juge contre le dossier et la demande → nouvel essai ciblé, au plus AURORA_IDENTITE_ESSAIS fois.
+
+    Rend {"ok": True, "front_ref": chemin, "attribution": [...]} ou {"ok": False, "error": ...,
+    "identite_non_etablie": bool}. Aucun repli sur une description de mémoire.
+    """
+    try:
+        import identite_visuelle
+        import juge_identite
+        import reference_identite
+        import flux_reference_synth
+    except ImportError as exc:
+        return {"ok": False, "error": f"modules d'identité absents de cette version ({exc})"}
+    _assurer_comfyui()
+    run_root = output_dir.parent if output_dir.name in {"models", "work"} and output_dir.parent.name == run_id else output_dir
+    journal = run_root / "journal"
+    journal.mkdir(parents=True, exist_ok=True)
+    print("PROGRESS:reference:identité — recherche de vraies images de chaque sujet nommé...", flush=True)
+    dossier = identite_visuelle.etablir(contrat, REPO_ROOT / ".aurora" / "identite", journal)
+    nommes = [s for s in dossier.get("sujets") or [] if s.get("nom")]
+    manquants = [s for s in nommes if not s.get("etabli")]
+    audit.append({"stage": "identite_visuelle", "ok": not manquants,
+                  "sujets": [{k: s.get(k) for k in ("nom", "etabli", "raison", "domaines")} for s in nommes]})
+    if manquants:
+        raisons = "; ".join(f"{s.get('nom')} : {s.get('raison')}" for s in manquants)
+        print("PROGRESS:reference:identité non établie — " + raisons[:200], flush=True)
+        return {"ok": False, "identite_non_etablie": True, "identite": str(journal / "identite.json"),
+                "error": "identite_non_etablie : " + raisons[:300]}
+    animer = animation == "on" or (animation == "auto" and any(s.get("mouvement") for s in contrat.get("sujets") or []))
+    consigne = reference_identite.prompt_reference_identite(contrat, dossier, animation=animer,
+                                                            rest_pose_cues=REST_POSE_CUES)
+    essais = max(1, int(os.environ.get("AURORA_IDENTITE_ESSAIS", "3")))
+    verdicts = []
+    corrections: list[str] = []
+    for essai in range(1, essais + 1):
+        positif = consigne["positif"] + ("" if not corrections else ". CORRECTIONS: " + " ".join(corrections))
+        print(f"PROGRESS:reference:identité — rendu conditionné par {len(consigne['references'])} image(s) réelle(s), "
+              f"essai {essai}/{essais}...", flush=True)
+        # N sujets côte à côte, séparés par un écart net : une toile plus large qu'un portrait, pour que
+        # chaque sujet garde sa résolution et que la découpe multi-personnages les retrouve un par un.
+        n_sujets = max(1, len(contrat.get("sujets") or []))
+        res = flux_reference_synth.synth(positif, f"{run_id}_identite_{essai}", output_dir=output_dir, steps=20,
+                                         width=min(2048, 1024 + 512 * (n_sujets - 1)), height=1024,
+                                         seed=1 + 7919 * essai, reference_images=consigne["references"],
+                                         negative_prompt=consigne.get("negatif") or None)
+        if not res.get("ok"):
+            verdicts.append({"essai": essai, "rendu": False, "erreur": res.get("error")})
+            continue
+        image = res.get("reference_path") or str(output_dir / f"{run_id}_identite_{essai}_reference.png")
+        verdict = juge_identite.juger_reference(image, dossier, contrat)
+        verdicts.append({"essai": essai, "image": image, **verdict})
+        print(f"PROGRESS:reference:identité — juge : {verdict.get('verdict')} "
+              f"{'; '.join(r for s in verdict.get('sujets') or [] for r in s.get('raisons') or [])[:160]}", flush=True)
+        if verdict.get("verdict") == "accepte":
+            front = output_dir / f"{run_id}_reference.png"
+            shutil.copyfile(image, front)
+            _ATTRIBUTION_IDENTITE[run_id] = list((verdict.get("attribution") or {}).get("permutation") or [])
+            (journal / "identite_verdicts.json").write_text(json.dumps(verdicts, ensure_ascii=False, indent=2), encoding="utf-8")
+            audit.append({"stage": "reference_identite", "ok": True, "essais": essai})
+            return {"ok": True, "front_ref": str(front), "attribution": _ATTRIBUTION_IDENTITE[run_id]}
+        corrections = [r for s in verdict.get("sujets") or [] for r in s.get("raisons") or []][:6]
+    (journal / "identite_verdicts.json").write_text(json.dumps(verdicts, ensure_ascii=False, indent=2), encoding="utf-8")
+    audit.append({"stage": "reference_identite", "ok": False, "essais": essais})
+    dernier = next((v for v in reversed(verdicts) if v.get("verdict")), {})
+    return {"ok": False, "identite": str(journal / "identite.json"),
+            "error": f"identité refusée après {essais} essai(s) : "
+                     + ("; ".join(r for s in dernier.get("sujets") or [] for r in s.get("raisons") or []) or str(dernier.get("raison") or "rendu impossible"))[:300]}
+
+
 _CORPS_PAR_GENRE = {"character", "creature", "humanoid", "quadruped"}
 _PERSONNAGES_PLACES: dict[str, list[dict]] = {}
+
+
+def _run_id_de(run_root: Path) -> str:
+    return Path(run_root).name
 
 
 def _livrer_personnages(run_root: Path, places: list[dict], audit: list) -> list[dict]:
@@ -3529,8 +3632,12 @@ def _livrer_personnages(run_root: Path, places: list[dict], audit: list) -> list
         if ref.is_file():
             ref_cible = dossier / f"personnage_{int(p.get('index', len(livres))) + 1}_reference{ref.suffix}"
             _sh.copy2(ref, ref_cible)
-        livres.append({"index": int(p.get("index", len(livres))), "glb": str(cible),
-                       "reference": str(ref_cible) if ref_cible else None})
+        entree = {"index": int(p.get("index", len(livres))), "glb": str(cible),
+                  "reference": str(ref_cible) if ref_cible else None}
+        attribution = _ATTRIBUTION_IDENTITE.get(_run_id_de(run_root)) or []
+        if entree["index"] < len(attribution):
+            entree["sujet"] = int(attribution[entree["index"]])      # attribué par le juge d'identité
+        livres.append(entree)
     audit.append({"stage": "personnages_livres", "ok": bool(livres), "nombre": len(livres)})
     return livres
 
@@ -3592,6 +3699,7 @@ def _run_pipeline_core(prompt: str, run_id: str, *,
                  allow_scene: bool = True,
                  engine: str = "auto",
                  animation: str = "auto",
+                 contrat: dict | None = None,
                  _vlm_retry: bool = False) -> dict:
     prompt = _strip_internal_ui_diagnostics(prompt)
     animation = str(animation or "auto").lower()
@@ -3737,6 +3845,32 @@ def _run_pipeline_core(prompt: str, run_id: str, *,
             sys.stdout = _Tee(sys.__stdout__, _jf)
         except Exception:  # noqa: BLE001
             pass
+
+    # DÉSACTIVÉ PAR DÉFAUT (AURORA_IDENTITE_IMAGES=1 pour l'essayer) : les modules d'identité
+    # (identite_visuelle, juge_identite, reference_identite) attendent leur relecture et un essai réel ;
+    # ils vivent sur des branches locales, voir le document maître § 1.43.
+    # IDENTITÉ PAR DE VRAIES IMAGES (15/11/2026). « Zig et Sharko » sortait en hyène tachetée et requin
+    # génériques : la référence était dessinée par FLUX à partir d'un texte (un dictionnaire de noms codé en
+    # dur). Pour tout sujet NOMMÉ sans photo de l'utilisateur, l'identité vient désormais d'un dossier
+    # d'images réelles qui s'accordent entre elles ; la référence est conditionnée par ces images et jugée
+    # contre elles, sinon elle est refaite. Identité non établie = on le dit et on demande, jamais de repli
+    # sur un dictionnaire.
+    _contrat = contrat if isinstance(contrat, dict) and contrat.get("source") == "llm" else (
+        _lecture if isinstance(_lecture, dict) and _lecture.get("source") == "llm" else None)
+    _photos_utilisateur = [im for im in (images or []) if str(im) not in set(
+        os.environ.get("AURORA_SYNTHETIC_REFERENCES", "").split("::")) - {""}]
+    if (_contrat and any(s.get("nomme") for s in _contrat.get("sujets") or [])
+            and not _photos_utilisateur and os.environ.get("AURORA_IDENTITE_IMAGES", "0") == "1"):
+        _ri = _reference_par_identite(_contrat, run_id, output_dir, animation, audit)
+        if not _ri.get("ok"):
+            return {"ok": False, "schema": "aurora.pipeline.v1", "run_id": run_id, "prompt": prompt,
+                    "error": _ri.get("error") or "référence par identité impossible",
+                    "identite_non_etablie": bool(_ri.get("identite_non_etablie")),
+                    "identite": _ri.get("identite"), "audit_trail": audit}
+        images = [_ri["front_ref"]]
+        os.environ["AURORA_SYNTHETIC_REFERENCES"] = "::".join(
+            [p for p in os.environ.get("AURORA_SYNTHETIC_REFERENCES", "").split("::") if p] + [_ri["front_ref"]])
+        allow_scene = False
 
     # SCENE MULTI-OBJETS. "un homme assis sur une chaise" doit produire un homme ET
     # une chaise: sans ce branchement, l'orchestrateur existait mais n'etait appele
@@ -7174,6 +7308,8 @@ def main() -> int:
     parser.add_argument("--force", action="store_true",
                         help="Re-run all stages even when intermediate files exist")
     parser.add_argument("--defer-motion", action="store_true", help="Keep reconstruction static; caller owns subsequent articulation")
+    parser.add_argument("--contrat", default=None, dest="contrat",
+                        help="contrat de demande v2 (lecture_demande.py --sortie) : une seule lecture pour tout le run")
     parser.add_argument("--animation", choices=["auto", "on", "off"], default="auto",
                         help="Bouton Animation de l'interface. on : référence au repos, avant le mouvement "
                              "(pose neutre pour un corps qui s'anime) ; off : résultat statique, la pose "
@@ -7296,6 +7432,12 @@ def main() -> int:
     from agi_core.operation_receipts import sha256_file, write_receipt
     _producer_sha256 = sha256_file(Path(__file__))
 
+    _contrat_cli = None
+    if args.contrat:
+        try:
+            _contrat_cli = json.loads(Path(args.contrat).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as _ce:
+            print("PROGRESS:comprehension:contrat illisible (%s) — le pipeline relit la demande" % _ce, flush=True)
     for _essai in range(1, _essais_max + 1):
         os.environ["AURORA_PERFECTION_TIRAGE"] = str(_essai)
         result = run_pipeline(
@@ -7308,6 +7450,7 @@ def main() -> int:
             subject_kind_hint=args.subject_kind,
             engine=args.engine, allow_scene=not args.no_scene,
             animation=args.animation,
+            contrat=_contrat_cli,
         )
         _err = str(result.get("error") or "")
         _refus = (not result.get("ok")) and (

@@ -10,6 +10,17 @@ import { runPythonScript } from '../hooks/useTauri'
 import { parsePythonResult } from '../utils/pythonResult.ts'
 import type { ThreeDRestState } from './threeDIntent'
 
+export interface ThreeDRequestSubject {
+  nom: string | null
+  nomme: boolean
+  nature: string
+  nature_en: string
+  clause: string
+  mouvement: string
+  mouvement_en: string
+  milieu: { matiere: 'solide' | 'liquide' | 'gaz' | null; relation: 'sur' | 'immerge' | 'a_la_surface' | 'dans_l_air' | null; justification: string }
+}
+
 export interface ThreeDRequestReading {
   source: 'llm' | 'indisponible'
   sujet: string
@@ -18,6 +29,14 @@ export interface ThreeDRequestReading {
   corps_articule: boolean | null
   conception?: boolean | null
   raison?: string
+  /** contrat v2 (15/11/2026) : un élément par sujet, le style à part */
+  sujets?: ThreeDRequestSubject[]
+  style?: { texte: string; cible: string | null; justification: string }
+}
+
+/** Un sujet nommé sans photo jointe : son identité vient de vraies images, établies par le pipeline. */
+export function namesASubject(reading: ThreeDRequestReading | null): boolean {
+  return reading?.source === 'llm' && (reading.sujets || []).some((subject) => subject.nomme)
 }
 
 export async function readThreeDRequest(workspacePath: string, prompt: string): Promise<ThreeDRequestReading | null> {

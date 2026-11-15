@@ -847,7 +847,7 @@ export function extractUniversalStyleClause(rawText: string): UniversalStyleClau
   }
 
   const mTrans = text.match(
-    /\b(?:transform(?:e|er|ee?|es)?|chang(?:e|er|ee?|es)?|converti(?:s|r|e|es)?|adapt(?:e|er|ee?|es)?|met(?:s|tre)|pass(?:e|er)|rend(?:s|re))\s+((?:[\wÀ-ÿ'’_-]+\s+){0,6}?)en\s+([^,.;!?]+?)(?=\s+(?:qui\s+|avec\s+|sans\s+|dans\s+un|sur\s+fond)|[,.;!?]|$)/i,
+    /\b(?:transform(?:e|er|ee?|es)?|chang(?:e|er|ee?|es)?|converti(?:s|r|e|es)?|adapt(?:e|er|ee?|es)?|met(?:s|tre)|pass(?:e|er)|rend(?:s|re))\s+((?:[\wÀ-ÿ'’_-]+\s+){0,6}?)en\s+([^,.;:!?]+?)(?=\s+(?:qui\s+|avec\s+|sans\s+|dans\s+un|sur\s+fond)|[,.;:!?]|$)/i,
   )
   if (mTrans && mTrans.index !== undefined) {
     const midSubj = (mTrans[1] || '').trim()
@@ -870,7 +870,7 @@ export function extractUniversalStyleClause(rawText: string): UniversalStyleClau
   }
 
   const mStyle = text.match(
-    /\b(?:dans\s+le\s+style(?:\s+de|\s+d['’])?|en\s+style|style|fa[cç]on|[aà]\s+la\s+mani[eè]re\s+de|comme\s+dans|version|esth[eé]tique|rendu)\s+([^,.;!?]+?)(?=\s+(?:qui\s+|avec\s+|sans\s+|dans\s+un|sur\s+fond)|[,.;!?]|$)/i,
+    /\b(?:dans\s+le\s+style(?:\s+de|\s+d['’])?|en\s+style|style|fa[cç]on|[aà]\s+la\s+mani[eè]re\s+de|comme\s+dans|version|esth[eé]tique|rendu)\s+([^,.;:!?]+?)(?=\s+(?:qui\s+|avec\s+|sans\s+|dans\s+un|sur\s+fond)|[,.;:!?]|$)/i,
   )
   if (mStyle && mStyle.index !== undefined) {
     const styleRaw = (mStyle[1] || '').trim()
@@ -890,7 +890,7 @@ export function extractUniversalStyleClause(rawText: string): UniversalStyleClau
   }
 
   const mEn = text.match(
-    /(?<=\S)\s+\ben\s+(?!forme\b|formes\b|taille\b|coupe\b|biseau\b|relief\b|gravure\b|train\b|feu\b|flammes?\b|col[eè]re\b|pleurs?\b|larmes?\b|souriant\b|criant\b|courant\b|marchant\b|volant\b|sautant\b|dormant\b|dansant\b|nageant\b|tirant\b|frappant\b|mouvement\b|action\b|marche\b|course\b|vol\b|combat\b|bataille\b|guerre\b|garde\b|posture\b|pose\b|[eé]quilibre\b|l[eé]vitation\b|chute\b|vie\b|paix\b|danger\b|urgence\b|3d\b|2d\b|4k\b|8k\b|16k\b|hd\b|uhd\b|pbr\b|pied\b|entier\b|buste\b|gros\s+plan\b|plan\s+large\b|contre[- ]?plong[eé]e\b|plong[eé]e\b|profil\b|face\b|dos\b|couleurs?\b|noir\s+et\s+blanc\b|ligne\b|direct\b|jeu\b|vrai\b|armure\b|costume\b|veste\b|robe\b|short\b|pantalon\b|jean\b|t[- ]?shirt\b|chemise\b|pull\b|manteau\b|uniforme\b|maillot\b|kimono\b|smoking\b|pyjama\b|surv[eê]tement\b|sweat\b|bikini\b|tenue\b|bottes?\b|baskets?\b|chaussures?\b|cape\b|blouse\b|tablier\b|casque\b|plein(?:e)?\b|haut\b|bas\b|avant\b|arri[eè]re\b|milieu\b|centre\b|diagonale\b|cercle\b|studio\b|int[eé]rieur\b|ext[eé]rieur\b|ville\b|for[eê]t\b|mer\b|oc[eé]an\b|montagne\b|plage\b|d[eé]sert\b|espace\b|orbite\b|france\b|espagne\b|italie\b|allemagne\b|angleterre\b|japon\b|chine\b|cor[eé]e\b|am[eé]rique\b|europe\b|asie\b|afrique\b|[eé]t[eé]\b|hiver\b|automne\b|printemps\b|nuit\b|jour\b|soir[eé]e\b|matin[eé]e\b|[0-9]{3,4}\b|anglais\b|fran[cç]ais\b|japonais\b|un\b|une\b|le\b|la\b|les\b|des\b|du\b|de\b|ce\b|cet\b|cette\b|ces\b|son\b|sa\b|ses\b|mon\b|ma\b|mes\b|ton\b|ta\b|tes\b|leur\b|leurs\b|soi\b|lui\b|elle\b|eux\b|elles\b|qui\b|que\b|quoi\b|dont\b|o[uù]\b|plus\b|moins\b|tant\b|outre\b|effet\b|fait\b|cas\b)([a-zA-ZÀ-ÿ0-9'’\-]+(?:\s+[a-zA-ZÀ-ÿ0-9'’\-]+){0,5}?)(?=\s+(?:qui\s+|avec\s+|sans\s+|dans\s+un|sur\s+fond)|[,.;!?]|$)/i,
+    /(?<=\S)\s+\ben\s+(?!forme\b|formes\b|taille\b|coupe\b|biseau\b|relief\b|gravure\b|train\b|feu\b|flammes?\b|col[eè]re\b|pleurs?\b|larmes?\b|souriant\b|criant\b|courant\b|marchant\b|volant\b|sautant\b|dormant\b|dansant\b|nageant\b|tirant\b|frappant\b|mouvement\b|action\b|marche\b|course\b|vol\b|combat\b|bataille\b|guerre\b|garde\b|posture\b|pose\b|[eé]quilibre\b|l[eé]vitation\b|chute\b|vie\b|paix\b|danger\b|urgence\b|3d\b|2d\b|4k\b|8k\b|16k\b|hd\b|uhd\b|pbr\b|pied\b|entier\b|buste\b|gros\s+plan\b|plan\s+large\b|contre[- ]?plong[eé]e\b|plong[eé]e\b|profil\b|face\b|dos\b|couleurs?\b|noir\s+et\s+blanc\b|ligne\b|direct\b|jeu\b|vrai\b|armure\b|costume\b|veste\b|robe\b|short\b|pantalon\b|jean\b|t[- ]?shirt\b|chemise\b|pull\b|manteau\b|uniforme\b|maillot\b|kimono\b|smoking\b|pyjama\b|surv[eê]tement\b|sweat\b|bikini\b|tenue\b|bottes?\b|baskets?\b|chaussures?\b|cape\b|blouse\b|tablier\b|casque\b|plein(?:e)?\b|haut\b|bas\b|avant\b|arri[eè]re\b|milieu\b|centre\b|diagonale\b|cercle\b|studio\b|int[eé]rieur\b|ext[eé]rieur\b|ville\b|for[eê]t\b|mer\b|oc[eé]an\b|montagne\b|plage\b|d[eé]sert\b|espace\b|orbite\b|france\b|espagne\b|italie\b|allemagne\b|angleterre\b|japon\b|chine\b|cor[eé]e\b|am[eé]rique\b|europe\b|asie\b|afrique\b|[eé]t[eé]\b|hiver\b|automne\b|printemps\b|nuit\b|jour\b|soir[eé]e\b|matin[eé]e\b|[0-9]{3,4}\b|anglais\b|fran[cç]ais\b|japonais\b|un\b|une\b|le\b|la\b|les\b|des\b|du\b|de\b|ce\b|cet\b|cette\b|ces\b|son\b|sa\b|ses\b|mon\b|ma\b|mes\b|ton\b|ta\b|tes\b|leur\b|leurs\b|soi\b|lui\b|elle\b|eux\b|elles\b|qui\b|que\b|quoi\b|dont\b|o[uù]\b|plus\b|moins\b|tant\b|outre\b|effet\b|fait\b|cas\b)([a-zA-ZÀ-ÿ0-9'’\-]+(?:\s+[a-zA-ZÀ-ÿ0-9'’\-]+){0,5}?)(?=\s+(?:qui\s+|avec\s+|sans\s+|dans\s+un|sur\s+fond)|[,.;:!?]|$)/i,
   )
   if (mEn && mEn.index !== undefined) {
     const styleRaw = (mEn[1] || '').trim()

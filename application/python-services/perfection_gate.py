@@ -569,19 +569,35 @@ def juger(glb: str, reference: str, contexte: str = "",
                                     "debris/eclats probables)" % (100 * _fmax)]}
         except Exception:  # noqa: BLE001
             pass
+        # Le juge de vision garde 4 images au plus : la référence + 4 vues en perdait une, la FACE
+        # (15/11/2026). Les 4 angles vont dans UNE planche 2×2, la référence reste à part.
+        _planche = os.path.join(td, "planche_4_angles.png")
+        try:
+            from PIL import Image as _ImP
+            _ims = [_ImP.open(_v).convert("RGB") for _v in vues]
+            _c = max(max(im.size) for im in _ims)
+            _sheet = _ImP.new("RGB", (2 * _c, 2 * _c), (255, 255, 255))
+            for _k, _im in enumerate(_ims):
+                _sheet.paste(_im.resize((_c, _c)), ((_k % 2) * _c, (_k // 2) * _c))
+            _sheet.save(_planche)
+            _images_juge = [reference, _planche]
+        except Exception:  # noqa: BLE001 — sans planche, on garde la face et deux profils, jamais au hasard
+            _images_juge = [reference, vues[1], vues[0], vues[2]]
         votes = []
         for _tour in range(3):
             try:
                 _preambule = (
-                    "Image 1 = REFERENCE. Images 2-5 = un modele 3D "
-                    "reconstruit, 4 angles. Reponds STRICTEMENT en JSON par "
+                    "Image 1 = REFERENCE. Image 2 = une planche 2x2 d'un modele 3D "
+                    "reconstruit, 4 angles (en haut : profil gauche, face ; en bas : "
+                    "profil droit, dos). Reponds STRICTEMENT en JSON par "
                     "OUI/NON factuels (ignore le style de rendu et "
                     "l'eclairage):\n")
                 if forme_seule:
                     _preambule = (
-                        "Image 1 = REFERENCE. Images 2-5 = la GEOMETRIE du "
+                        "Image 1 = REFERENCE. Image 2 = une planche 2x2 de la GEOMETRIE du "
                         "modele 3D, rendue en ARGILE BLANCHE SANS TEXTURE, "
-                        "4 angles. Tu juges UNIQUEMENT LA FORME: silhouette, "
+                        "4 angles (en haut : profil gauche, face ; en bas : profil droit, dos). "
+                        "Tu juges UNIQUEMENT LA FORME: silhouette, "
                         "proportions, membres, volumes. L'absence de couleur, "
                         "de motif, de logo ou de texte imprime est NORMALE a "
                         "cette etape et ne doit JAMAIS compter comme un "
@@ -591,7 +607,7 @@ def juger(glb: str, reference: str, contexte: str = "",
                         "tache. Reponds STRICTEMENT en JSON par OUI/NON "
                         "factuels:\n")
                 v = ask_vlm(
-                    [reference] + vues,
+                    _images_juge,
                     _preambule
                     + "- trous: des perforations/manques DANS la surface du "
                     "sujet (pas le fond) ?\n"

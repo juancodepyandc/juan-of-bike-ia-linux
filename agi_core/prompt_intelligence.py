@@ -787,7 +787,7 @@ def extract_universal_style_clause(raw_text: str) -> dict[str, Any]:
     m_trans = re.search(
         r"\b(?:transform(?:e|er|ee?|es)?|chang(?:e|er|ee?|es)?|converti(?:s|r|e|es)?|adapt(?:e|er|ee?|es)?|met(?:s|tre)|pass(?:e|er)|rend(?:s|re))\s+"
         r"(?P<mid>(?:[\wÀ-ÿ'’_-]+\s+){0,6}?)"
-        r"en\s+(?P<style>[^,.;!?]+?)(?=\s+(?:qui\s+|avec\s+|sans\s+|dans\s+un|sur\s+fond)|[,.;!?]|$)",
+        r"en\s+(?P<style>[^,.;:!?]+?)(?=\s+(?:qui\s+|avec\s+|sans\s+|dans\s+un|sur\s+fond)|[,.;:!?]|$)",
         text,
         flags=re.IGNORECASE,
     )
@@ -816,7 +816,7 @@ def extract_universal_style_clause(raw_text: str) -> dict[str, Any]:
     # 2. Marqueur syntaxique de style libre : "style <X>", "façon <X>", "à la manière de <X>", "comme dans <X>", "version <X>"
     m_style = re.search(
         r"\b(?:dans\s+le\s+style(?:\s+de|\s+d['’])?|en\s+style|style|fa[cç]on|[aà]\s+la\s+mani[eè]re\s+de|comme\s+dans|version|esth[eé]tique|rendu)\s+"
-        r"(?P<style>[^,.;!?]+?)(?=\s+(?:qui\s+|avec\s+|sans\s+|dans\s+un|sur\s+fond)|[,.;!?]|$)",
+        r"(?P<style>[^,.;:!?]+?)(?=\s+(?:qui\s+|avec\s+|sans\s+|dans\s+un|sur\s+fond)|[,.;:!?]|$)",
         text,
         flags=re.IGNORECASE,
     )
@@ -853,7 +853,7 @@ def extract_universal_style_clause(raw_text: str) -> dict[str, Any]:
         r"un\b|une\b|le\b|la\b|les\b|des\b|du\b|de\b|ce\b|cet\b|cette\b|ces\b|son\b|sa\b|ses\b|mon\b|ma\b|mes\b|ton\b|ta\b|tes\b|leur\b|leurs\b|soi\b|lui\b|elle\b|eux\b|elles\b|qui\b|que\b|quoi\b|dont\b|o[uù]\b|plus\b|moins\b|tant\b|outre\b|effet\b|fait\b|cas\b|"
         r"super\s+saiyan\b|ssj[1-4b]?\b|ultra\s+instinct\b|kaioken\b|mode\s+(?:ermite|sage|kurama|baryon|chakra|six\s+chemins|d[eé]mon)\b|gear\s*[2345]\b|bankai\b)"
         r"(?P<style>[a-zA-ZÀ-ÿ0-9'’\-]+(?:\s+[a-zA-ZÀ-ÿ0-9'’\-]+){0,5}?)"
-        r"(?=\s+(?:qui\s+|avec\s+|sans\s+|dans\s+un|sur\s+fond)|[,.;!?]|$)",
+        r"(?=\s+(?:qui\s+|avec\s+|sans\s+|dans\s+un|sur\s+fond)|[,.;:!?]|$)",
         text,
         flags=re.IGNORECASE,
     )

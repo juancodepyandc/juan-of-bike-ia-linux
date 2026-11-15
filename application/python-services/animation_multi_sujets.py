@@ -358,32 +358,76 @@ def composer(entrees: list[dict[str, Any]], sortie: str | Path, nom_animation: s
 
 
 # ── 5. Orchestration ────────────────────────────────────────────────────────────────────────────
+def sujets_du_contrat(contrat: dict | None) -> list[dict[str, Any]] | None:
+    """Les sujets du contrat de demande v2 (lecture_demande.py), au format de ce module ; None sinon."""
+    if not isinstance(contrat, dict) or contrat.get("source") != "llm":
+        return None
+    sujets = []
+    for s in contrat.get("sujets") or []:
+        if not isinstance(s, dict) or not (s.get("nom") or s.get("nature")):
+            continue
+        sujets.append({"nom": s.get("nom") or s.get("nature"), "nature": s.get("nature") or "",
+                       "nature_en": s.get("nature_en") or "", "clause": s.get("clause") or "",
+                       "mouvement": s.get("mouvement") or "", "mouvement_en": s.get("mouvement_en") or "",
+                       "milieu": s.get("milieu") or {}})
+    return sujets or None
+
+
+def _milieu_construit(milieu: dict | None) -> bool:
+    return isinstance(milieu, dict) and milieu.get("matiere") in {"liquide", "gaz"}
+
+
 def animer_sujets(demande: str, personnages: list[dict[str, Any]], dossier: str | Path, modele: str, *,
+                  contrat: dict | None = None,
                   repartir: Callable[[str], dict] | None = None,
                   identifier: Callable[[list, list], list] | None = None,
-                  animer: Callable[..., dict] | None = None) -> dict[str, Any]:
+                  animer: Callable[..., dict] | None = None,
+                  composer_milieu: Callable[..., dict] | None = None) -> dict[str, Any]:
     dossier = Path(dossier)
     dossier.mkdir(parents=True, exist_ok=True)
     personnages = sorted(personnages, key=lambda p: int(p.get("index", 0)))
-    repartition = (repartir or repartir_mouvements)(demande)
+    # Le contrat de demande v2 fait foi quand il existe : une seule lecture de la phrase pour tout le
+    # run (identité, référence, animation, milieu). Sans lui, la répartition est relue ici.
+    sujets_contrat = sujets_du_contrat(contrat)
+    if sujets_contrat:
+        repartition = {"source": "contrat", "sujets": sujets_contrat}
+    else:
+        repartition = (repartir or repartir_mouvements)(demande)
     sujets = repartition.get("sujets") or [{"nom": demande, "mouvement": ""}]
-    lus = (identifier or identifier_personnages)([p.get("reference") for p in personnages], sujets)
+    # Une attribution déjà jugée en amont (juge d'identité contre les vraies images) est reprise telle
+    # quelle ; sinon le modèle de vision reconnaît chaque découpe.
+    if all(isinstance(p.get("sujet"), int) for p in personnages):
+        lus = [{"decoupe": i, "sujet": p["sujet"], "appui": p.get("appui"), "source": "juge_identite"}
+               for i, p in enumerate(personnages)]
+    else:
+        lus = (identifier or identifier_personnages)([p.get("reference") for p in personnages], sujets)
     if animer is None:
         from semantic_animation import animate_existing as animer
     rapport: dict[str, Any] = {"schema": SCHEMA, "demande": demande, "repartition": repartition, "sujets": []}
     entrees = []
     for perso, lu in zip(personnages, lus):
         sujet = sujets[lu["sujet"]] if lu.get("sujet") is not None and lu["sujet"] < len(sujets) else {"nom": "", "mouvement": ""}
-        consigne = f"{sujet['nom']} {sujet['mouvement']}".strip() or demande
+        # La consigne garde la phrase du sujet ENTIÈRE (« Sharko le requin qui nage ») : réduite au nom et
+        # au verbe (« Sharko nage »), ni le moteur de mouvement ni le routeur de milieu ne savaient qu'il
+        # s'agit d'un requin (15/11/2026).
+        consigne = sujet.get("clause") or f"{sujet['nom']} {sujet['mouvement']}".strip() or demande
+        description = f"{sujet['nom']} ({sujet['nature']})" if sujet.get("nature") else (sujet["nom"] or demande)
         squelette = APPUIS.get(lu.get("appui") or "", "auto")
         sortie = dossier / f"personnage_{int(perso.get('index', 0)) + 1}" / "mouvement.glb"
         print(f"PROGRESS:animation:personnage {int(perso.get('index', 0)) + 1}/{len(personnages)} — "
               f"« {consigne[:70]} » ({lu.get('source')}, squelette {squelette})", flush=True)
         etat = {"index": perso.get("index"), "sujet": sujet["nom"], "mouvement": sujet["mouvement"],
+                "mouvement_en": sujet.get("mouvement_en", ""), "milieu": sujet.get("milieu") or {},
                 "attribution": lu.get("source"), "appui": lu.get("appui"), "squelette": squelette}
+        options = {"mode": "animation", "subject": squelette, "source_description": description}
+        if sujet.get("mouvement_en"):
+            options["mouvement_en"] = sujet["mouvement_en"]
         try:
-            res = animer(perso["glb"], str(sortie), consigne, modele, mode="animation", subject=squelette,
-                         source_description=sujet["nom"] or demande)
+            try:
+                res = animer(perso["glb"], str(sortie), consigne, modele, **options)
+            except TypeError:
+                options.pop("mouvement_en", None)          # moteur injecté sans ce paramètre
+                res = animer(perso["glb"], str(sortie), consigne, modele, **options)
         except Exception as exc:  # noqa: BLE001 — ce personnage reste statique, et le rapport le dit
             res = {"ok": False, "error": f"{type(exc).__name__}: {exc}"[:300]}
         anime = bool(res.get("ok") and res.get("path") and Path(str(res["path"])).is_file())
@@ -395,17 +439,38 @@ def animer_sujets(demande: str, personnages: list[dict[str, Any]], dossier: str 
             if b_src is not None and b_anim is not None:
                 recal = recalage(b_src, b_anim)
         etat["recalage"] = recal
-        entrees.append({"glb": glb, "nom": (sujet["nom"] or f"sujet_{len(entrees) + 1}")[:60], "recalage": recal})
+        entrees.append({"glb": glb, "nom": (sujet["nom"] or f"sujet_{len(entrees) + 1}")[:60], "recalage": recal,
+                        "milieu": sujet.get("milieu") or {}})
         rapport["sujets"].append(etat)
-    composition = composer(entrees, dossier / "mouvement_couleurs.glb")
+    sortie_finale = dossier / "mouvement_couleurs.glb"
+    # UN MOUVEMENT SE FAIT DANS UN MILIEU (15/11/2026) : un nageur sans eau n'est pas la demande. Le
+    # milieu lu dans le contrat est construit autour du corps animé, puis jugé (porte du milieu).
+    if any(_milieu_construit(e["milieu"]) for e in entrees):
+        try:
+            if composer_milieu is None:
+                from milieu_scene import composer_avec_milieux as composer_milieu
+            composition = composer_milieu(entrees, sortie_finale)
+        except ImportError as exc:
+            composition = composer(entrees, sortie_finale)
+            composition["milieu"] = {"ok": False, "raison": f"milieu lu mais non construit : module absent ({exc})"}
+        except Exception as exc:  # noqa: BLE001 — sans milieu, la scène est livrée et le refus est dit
+            composition = composer(entrees, sortie_finale)
+            composition["milieu"] = {"ok": False, "raison": f"milieu non construit : {type(exc).__name__}: {exc}"[:300]}
+    else:
+        composition = composer(entrees, sortie_finale)
     rapport["composition"] = composition
     animes = sum(1 for s in rapport["sujets"] if s["anime"])
-    rapport["ok"] = bool(composition.get("ok")) and animes == len(personnages)
+    porte = composition.get("porte") or composition.get("milieu")
+    milieu_ok = (not any(_milieu_construit(e["milieu"]) for e in entrees)) or bool(porte and porte.get("ok"))
+    rapport["milieu_ok"] = milieu_ok
+    rapport["ok"] = bool(composition.get("ok")) and animes == len(personnages) and milieu_ok
     rapport["path"] = composition.get("sortie")
     rapport["anime"] = animes
     if not rapport["ok"]:
-        rapport["error"] = f"{animes}/{len(personnages)} sujet(s) animé(s) ; " + "; ".join(
-            f"{s['sujet'] or s['index']}: {s['erreur']}" for s in rapport["sujets"] if not s["anime"])[:400]
+        raisons = [f"{s['sujet'] or s['index']}: {s['erreur']}" for s in rapport["sujets"] if not s["anime"]]
+        if not milieu_ok:
+            raisons.append("milieu : " + "; ".join((porte or {}).get("raisons", []) or [str((porte or {}).get("raison") or "porte du milieu refusée")]))
+        rapport["error"] = f"{animes}/{len(personnages)} sujet(s) animé(s) ; " + "; ".join(raisons)[:500]
     (dossier / "animation_multi_sujets.json").write_text(json.dumps(rapport, ensure_ascii=False, indent=2),
                                                          encoding="utf-8")
     return rapport
@@ -418,11 +483,17 @@ def main() -> int:
     ap.add_argument("--reference", action="append", default=[], help="découpe de référence, même ordre")
     ap.add_argument("--dossier", required=True)
     ap.add_argument("--modele", required=True)
+    ap.add_argument("--contrat", default=None, help="contrat de demande v2 (lecture_demande.py --sortie)")
+    ap.add_argument("--sujet", action="append", default=[], help="indice du sujet de chaque personnage (juge)")
     a = ap.parse_args()
     refs = a.reference + [None] * (len(a.personnage) - len(a.reference))
     personnages = [{"index": i, "glb": g, "reference": r} for i, (g, r) in enumerate(zip(a.personnage, refs))]
+    if len(a.sujet) == len(personnages):
+        for perso, k in zip(personnages, a.sujet):
+            perso["sujet"] = int(k)
+    contrat = json.loads(Path(a.contrat).read_text(encoding="utf-8")) if a.contrat else None
     try:
-        res = animer_sujets(a.demande, personnages, a.dossier, a.modele)
+        res = animer_sujets(a.demande, personnages, a.dossier, a.modele, contrat=contrat)
     except Exception as exc:  # noqa: BLE001
         res = {"ok": False, "error": f"{type(exc).__name__}: {exc}"[:400]}
     print(json.dumps(res, ensure_ascii=False))

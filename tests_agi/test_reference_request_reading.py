@@ -22,8 +22,30 @@ if str(SERVICES) not in sys.path:
 from lecture_demande import SCHEMA, lire_demande  # noqa: E402
 
 
+def _with_v2_subject(answer: dict, request: str) -> dict:
+    """The v2 contract also lists the subjects; these tests are about the v1 fields, so a minimal
+    valid subject (the whole request as its clause) is added when the fake answer has none."""
+    if isinstance(answer, dict) and "sujets" not in answer and isinstance(answer.get("sujet"), str):
+        answer = dict(answer, sujets=[{"nom": None, "nomme": False, "nature": "objet", "nature_en": "object",
+                                       "clause": request, "mouvement": "", "mouvement_en": "",
+                                       "milieu": {"matiere": None, "relation": None, "justification": ""}}])
+    return answer
+
+
 def answering(payload):
-    return lambda _request: payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)
+    def reply(request: str) -> str:
+        demande = request.split("\n---")[0]
+        if isinstance(payload, str):
+            start, end = payload.find("{"), payload.rfind("}")
+            if start >= 0 and end > start:
+                try:
+                    inner = json.loads(payload[start:end + 1])
+                except ValueError:
+                    return payload
+                return payload[:start] + json.dumps(_with_v2_subject(inner, demande), ensure_ascii=False) + payload[end + 1:]
+            return payload
+        return json.dumps(_with_v2_subject(payload, demande), ensure_ascii=False)
+    return reply
 
 
 class RequestReading(unittest.TestCase):
