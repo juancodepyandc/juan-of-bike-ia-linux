@@ -162,5 +162,39 @@ class Orchestration(unittest.TestCase):
             self.assertEqual(len(doc["scenes"][0]["nodes"]), 2)        # the static one is still in the scene
 
 
+class MergeKeepsEachCharacterInPlace(unittest.TestCase):
+    def test_each_character_is_exported_where_it_stands_in_the_merged_scene(self):
+        import trimesh
+        from PIL import Image
+        from trellis_multi_character import merge_character_glbs
+        with tempfile.TemporaryDirectory() as tmp:
+            infos = []
+            for i, (height, x) in enumerate(((2.0, -0.6), (1.0, 0.6))):
+                box = trimesh.creation.box(extents=(0.5, height, 0.4))
+                uv = np.random.default_rng(i).random((len(box.vertices), 2))
+                texture = Image.fromarray(np.full((16, 16, 3), 60 + 120 * i, np.uint8))
+                box.visual = trimesh.visual.TextureVisuals(
+                    uv=uv, material=trimesh.visual.material.PBRMaterial(baseColorTexture=texture))
+                glb = Path(tmp) / f"char{i}.glb"
+                box.export(glb)
+                crop = Path(tmp) / f"crop{i}.png"
+                texture.save(crop)
+                infos.append({"index": i, "glb_path": str(glb), "ref_path": str(crop),
+                              "h_rel": 1.0 if i == 0 else 0.5, "x_center_rel": x, "y_min_rel": 0.0})
+            res = merge_character_glbs(infos, Path(tmp) / "scene.glb")
+            self.assertTrue(res["ok"])
+            self.assertEqual([Path(p["glb"]).is_file() for p in res["personnages"]], [True, True])
+            self.assertTrue(all(Path(p["reference"]).is_file() for p in res["personnages"]))
+            self.assertFalse(Path(infos[0]["glb_path"]).exists())        # the merge still cleans its inputs
+            boxes = [ams.boite_repos(*glb_io.load(p["glb"])) for p in res["personnages"]]
+            heights = [float(b[1][1] - b[0][1]) for b in boxes]
+            self.assertAlmostEqual(heights[0] / heights[1], 2.0, places=3)              # relative heights as merged
+            self.assertLess(float(boxes[0][1][0]), float(boxes[1][0][0]))                  # side by side, no overlap
+            scene = trimesh.load(str(Path(tmp) / "scene.glb"), force="mesh")
+            lo, hi = scene.bounds                                                          # same place as the scene
+            self.assertTrue(np.allclose(lo, np.minimum(boxes[0][0], boxes[1][0]), atol=1e-3))
+            self.assertTrue(np.allclose(hi, np.maximum(boxes[0][1], boxes[1][1]), atol=1e-3))
+
+
 if __name__ == "__main__":
     unittest.main()

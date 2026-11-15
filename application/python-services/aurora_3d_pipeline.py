@@ -6928,6 +6928,11 @@ def _run_pipeline_core(prompt: str, run_id: str, *,
                             # aucun dossier mouvement/ produit).
                             "tache_service": _tache_service,
                             "final_mesh": str(final_mesh_path),
+                            # un maillage refusé reste animable quand l'animation est activée :
+                            # chaque personnage placé est livré pour l'animer seul (15/11/2026)
+                            "personnages": _livrer_personnages(
+                                output_dir.parent if output_dir.name in {"models", "work"} and output_dir.parent.name == run_id else output_dir,
+                                _PERSONNAGES_PLACES.get(run_id) or [], audit) or None,
                             "audit_trail": audit,
                         }
             except Exception as _pge:  # noqa: BLE001

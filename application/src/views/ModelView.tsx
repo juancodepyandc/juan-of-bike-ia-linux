@@ -572,6 +572,7 @@ async function generateAndVerifySyntheticViews({
   setPhase,
   ensureComfy,
   vramGuard,
+  onViewReady,
 }: {
   plan: ThreeDViewPlan
   intent: ThreeDIntent
@@ -588,6 +589,8 @@ async function generateAndVerifySyntheticViews({
   setPhase: (message: string, progress: number) => void
   ensureComfy: () => Promise<void>
   vramGuard?: { ollamaModelsToEvict: string[]; signal?: AbortSignal }
+  /** each accepted view, as soon as it exists (the loading hologram shows it at once) */
+  onViewReady?: (view: ThreeDViewTag, blob: Blob) => void
 }): Promise<ThreeDViewAssignment[]> {
   const syntheticAssignments = plan.assignments.filter((a) => a.sourceKind === 'synthetic')
   if (syntheticAssignments.length === 0) return plan.assignments
@@ -667,6 +670,7 @@ async function generateAndVerifySyntheticViews({
 
         if (verification.passed || retryCount >= 1) {
           // Accept this view (either passed or we've exhausted retries)
+          try { onViewReady?.(viewLabel, blob) } catch { /* affichage seulement */ }
           const idx = updatedAssignments.findIndex((a) => a.view === viewLabel)
           if (idx >= 0) {
             updatedAssignments[idx] = {
@@ -5210,7 +5214,7 @@ export default function ModelView() {
           const rigSubject = sourceRig(sourceContext, relation)
           let userRequirementsPrompt = composeThreeDRequirements(currentPrompt, effectiveHistory)
           if (editPlan.continuation && sourceContext?.description) userRequirementsPrompt = `Existing source subject (preserve identity and unspecified features; newest changes override):\n${sourceContext.description}\n\n${userRequirementsPrompt}`
-          let workingPrompt = userRequirementsPrompt + (requestedMotion ? '\nAnimation is enabled: produce the requested movement, preserving any requested held posture.' : '\nAnimation is explicitly OFF: render the requested pose/action as a STATIC result. Pose, appearance and scene changes still apply. Do not add temporal animation.')
+          let workingPrompt = userRequirementsPrompt + (requestedMotion ? '\nAnimation is enabled: the requested movement is produced afterwards by the animation on a skeleton; describe the subject itself at rest, before that movement, in a neutral pose.' : '\nAnimation is explicitly OFF: render the requested pose/action as a STATIC result. Pose, appearance and scene changes still apply. Do not add temporal animation.')
           let historyPrompt = currentPrompt
           const intent = await analyzeThreeDIntent({ prompt: workingPrompt, model: visionModel, files: preparedContext, conversationHistory: effectiveHistory.map((message) => ({ role: 'user' as const, content: message.content })) })
           setDetectedIntent(intent)
@@ -5222,7 +5226,12 @@ export default function ModelView() {
           let restState: ThreeDRestState | null = null
           if (requestedMotion && !editPlan.continuation && !primaryPreparedImage) {
             setPhase('Compréhension — sujet au repos, mouvement réservé au squelette...', 6)
-            const reading = await readThreeDRequest(await getWorkspacePath(), currentPrompt)
+            const workspaceForReading = await getWorkspacePath()
+            let reading = await readThreeDRequest(workspaceForReading, currentPrompt)
+            if (reading?.source !== 'llm') {
+              setProgress(`Lecture de la demande indisponible (${short(reading?.raison || 'sans réponse', 80)}) — nouvel essai...`)
+              reading = await readThreeDRequest(workspaceForReading, currentPrompt)
+            }
             restState = restStateFromReading(reading, currentPrompt, isCharacterLike(intent))
             setProgress(restState.mouvement
               ? `Référence au repos : « ${short(restState.sujet, 60)} » — mouvement « ${short(restState.mouvement, 60)} » réservé au squelette`
@@ -5621,6 +5630,17 @@ export default function ModelView() {
               steps: baseSyntheticWorkflow.steps + 6,
             }
 
+            // HOLOGRAMME EN DIRECT (15/11/2026) : chaque vue apparaît dès qu'elle existe ; il restait
+            // vide (« 0 photos ») pendant les ~20 min de génération des quatre vues.
+            const liveRefs: { url: string; role: string }[] = []
+            const liveRole: Partial<Record<ThreeDViewTag, string>> = { front: 'face', right: 'droite', left: 'gauche', back: 'dos' }
+            const pushLiveRef = (view: ThreeDViewTag, url: string) => {
+              const role = liveRole[view] || view
+              const existing = liveRefs.findIndex((ref) => ref.role === role)
+              if (existing >= 0) liveRefs[existing] = { url, role }
+              else liveRefs.push({ url, role })
+              emitGenerationFx('3d', { active: true, refs: [...liveRefs], subjectKind: intent.subjectKind })
+            }
             // Find or generate the front view FIRST for cross-view consistency seeding
             const existingFrontAssignment = referenceViewPlan.assignments.find((a) => a.view === 'front' && a.sourceKind !== 'synthetic')
             const syntheticFrontAssignment = referenceViewPlan.assignments.find((a) => a.view === 'front' && a.sourceKind === 'synthetic')
@@ -5653,6 +5673,7 @@ export default function ModelView() {
                 const frontPath = `${runPaths.references}/${runId}_front_synth_seed.png`
                 await fsWriteBinary(frontPath, Array.from(new Uint8Array(await frontBlob.arrayBuffer())))
                 frontSeedFilename = `${runId}_front_synth_seed.png`
+                pushLiveRef('front', toAssetUrl(frontPath))
 
                 // Mark front as resolved so generateAndVerifySyntheticViews skips it
                 const frontIdx = referenceViewPlan.assignments.findIndex((a) => a.view === 'front')
@@ -5687,6 +5708,7 @@ export default function ModelView() {
               setPhase,
               ensureComfy,
               vramGuard: { ollamaModelsToEvict: Array.from(new Set([visionModel, AUXILIARY_ANALYSIS_MODEL])), signal: controller.signal },
+              onViewReady: (view, blob) => pushLiveRef(view, URL.createObjectURL(blob)),
             })
 
             resolvedViewPlan = { ...referenceViewPlan, assignments: verifiedAssignments }

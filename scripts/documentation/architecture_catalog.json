@@ -16,7 +16,7 @@
   }
  },
  "source_files": 2500,
- "source_lines": 903340,
+ "source_lines": 903422,
  "static_route_declarations": 719,
  "by_repository": {
   "AuroraIA": 2179,
@@ -2275,8 +2275,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/python-services/aurora_3d_pipeline.py",
-   "sha256": "594e09a586df1b5f333f176f17871f048866af8ad9c51d5424a9e2642790b6e8",
-   "lines": 7377,
+   "sha256": "0a2c184018a364beaa06372857dea2d80e9264c147de07a5c9cbc71651991e45",
+   "lines": 7382,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -3825,8 +3825,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/python-services/lecture_demande.py",
-   "sha256": "bcbcfabaacfcf1f2bb48005a1c4e9e12140fd813b6eabebad1cc39a918219749",
-   "lines": 196,
+   "sha256": "e6fd9fbdc7ce1a14355e41cc211abad2c27bb6ea0a674c54067099e48c360d6b",
+   "lines": 201,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -7439,8 +7439,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/python-services/trellis_multi_character.py",
-   "sha256": "ad9893176c17e4babcbb0a3a19b5dc12edf6bf4c0e91f7d8458ab36768101c37",
-   "lines": 463,
+   "sha256": "8c137a1b071f807c1feb0378a561f363152670a9f0a9d0f45bece4f9754ea121",
+   "lines": 477,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -14296,8 +14296,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/threeDIntent.ts",
-   "sha256": "765c148ec4fecc25b734f2afd4b6d795127b47af6437b549cdac7eca0e17cdab",
-   "lines": 2909
+   "sha256": "b72c84fd094a0a337ffda2585e68571f4b757b17af006f7d58597cb2091cdd09",
+   "lines": 2911
   },
   {
    "repo": "AuroraIA",
@@ -15286,8 +15286,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/views/ModelView.tsx",
-   "sha256": "404015cb7cb48cbccbea73acc242a680fd4e37201962911859e41b9a5412c045",
-   "lines": 8409
+   "sha256": "81b083247ff53cf91ea0302544b7012ba7ca3deb31e1a5a7e585e79f6642e065",
+   "lines": 8431
   },
   {
    "repo": "AuroraIA",
@@ -20364,8 +20364,8 @@
   {
    "repo": "AuroraIA",
    "path": "tests_agi/test_animation_multi_sujets.py",
-   "sha256": "1f39ed7e8e5ac74396f64744d675520beda180d4e731defee5bfd09cead09f06",
-   "lines": 166,
+   "sha256": "5ca41f3b05f87d5dff79d3d55eef3277ae1a54cd7c0fd9c7c502cd0e05ab77b6",
+   "lines": 200,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },

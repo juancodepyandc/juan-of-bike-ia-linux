@@ -143,6 +143,8 @@ function uniqueStrings(values: string[]) {
 export function stripSystemPromptBoilerplate(rawPrompt: string): string {
   return (rawPrompt || '')
     .replace(/Animation is explicitly OFF:[^\n]*/gi, '')
+    // the ON sentence is an instruction to the analysers, never part of the subject to draw
+    .replace(/Animation is enabled:[^\n]*/gi, '')
     .replace(/Pose,\s*appearance\s*and\s*scene\s*changes\s*still\s*apply\.?\s*Do\s*not\s*add\s*temporal\s*animation\.?/gi, '')
     .replace(/Intent 3D detecte:[\s\S]*$/i, '')
     .replace(/\n\n+/g, '\n')

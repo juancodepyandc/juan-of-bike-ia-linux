@@ -59,7 +59,12 @@ _CONSIGNE = (
 _cache: dict[tuple[str, str], dict[str, Any]] = {}
 
 
-def _interroger_ollama(demande: str, modele: str, timeout_s: float = 90.0) -> str:
+# Un modèle 27B chargé à froid pendant que FLUX occupe la mémoire a mis 47 s à répondre via le pont
+# (15/11/2026) ; à 90 s par appel, la lecture tombait en « indisponible » au début d'un run chargé.
+DELAI_S = 240.0
+
+
+def _interroger_ollama(demande: str, modele: str, timeout_s: float = DELAI_S) -> str:
     corps = json.dumps({
         "model": modele,
         "stream": False,

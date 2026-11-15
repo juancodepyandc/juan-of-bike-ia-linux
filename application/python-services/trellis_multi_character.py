@@ -402,6 +402,10 @@ def merge_character_glbs(char_infos: list[dict[str, Any]], out_glb_path: str | P
     center = 0.5 * (bmin + bmax)
     extent = max(float((bmax - bmin).max()), 1e-6)
     all_v = (all_v - center) / extent
+    # la même normalisation pour chaque personnage livré seul : v' = (s·v + t − centre) / étendue
+    for place in placements:
+        place["scale"] = float(place["scale"]) / extent
+        place["translation"] = [float((t - c) / extent) for t, c in zip(place["translation"], center)]
 
     pbr_kwargs: dict[str, Any] = {
         "baseColorTexture": comb_base,
@@ -435,6 +439,26 @@ def merge_character_glbs(char_infos: list[dict[str, Any]], out_glb_path: str | P
         except Exception:
             pass
 
+    # Chaque personnage, à sa place, AVANT le nettoyage des fichiers individuels ci-dessous (le
+    # premier essai du 15/11/2026 exportait après : FileNotFoundError, aucun personnage livré).
+    import shutil as _shutil_p
+    personnages = []
+    for place in placements:
+        base = Path(str(out_glb_path))
+        cible = base.with_name(f"{base.stem}_personnage_{place['index'] + 1}.glb")
+        try:
+            exporter_personnage_place(place["source"], cible, place["scale"], place["translation"])
+            ref_src = Path(str(char_infos[place["index"]].get("ref_path") or ""))
+            ref_cible = None
+            if ref_src.is_file():
+                ref_cible = base.with_name(f"{base.stem}_personnage_{place['index'] + 1}_reference{ref_src.suffix}")
+                _shutil_p.copy2(ref_src, ref_cible)
+            personnages.append({"index": place["index"], "glb": str(cible),
+                                "reference": str(ref_cible) if ref_cible else None,
+                                "scale": place["scale"], "translation": place["translation"]})
+        except Exception as exc:  # noqa: BLE001 — la scène fusionnée reste livrée, le manque est dit
+            personnages.append({"index": place["index"], "glb": None, "erreur": repr(exc)[:200]})
+
     for info in char_infos:
         for _tmp_k in ("glb_path", "ref_path"):
             _tp = info.get(_tmp_k)
@@ -443,16 +467,6 @@ def merge_character_glbs(char_infos: list[dict[str, Any]], out_glb_path: str | P
                 if str(_tp).endswith(".glb"):
                     Path(str(_tp)[:-4] + ".ply").unlink(missing_ok=True)
 
-    personnages = []
-    for place in placements:
-        cible = Path(str(out_glb_path)).with_name(f"{Path(str(out_glb_path)).stem}_personnage_{place['index'] + 1}.glb")
-        try:
-            exporter_personnage_place(place["source"], cible, place["scale"], place["translation"])
-            personnages.append({"index": place["index"], "glb": str(cible),
-                                "reference": str(char_infos[place["index"]].get("ref_path") or ""),
-                                "scale": place["scale"], "translation": place["translation"]})
-        except Exception as exc:  # noqa: BLE001 — la scène fusionnée reste livrée, le manque est dit
-            personnages.append({"index": place["index"], "glb": None, "erreur": repr(exc)[:200]})
     return {
         "ok": True,
         "faces": int(len(all_f)),
