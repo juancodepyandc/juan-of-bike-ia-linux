@@ -271,7 +271,8 @@ def construire_monde(programme: dict, graine: int, fabrique) -> dict[str, Any]:
             maisons.append(maison)
     noeud_ville = ville_mod.construire_ville(plan_ville, fabrique=fabrique_legere)
     noeud_campagne, _ = campagne(plan_ville, graine=graine, fabrique=fabrique_legere)
-    jets, pistes = composer.jets_des_fontaines(plan_ville)
+    habite = Noeud("habite", enfants=[noeud_campagne, noeud_ville, *[m["noeud"] for m in maisons]])
+    jets, pistes = composer.emissions_des_objets(habite)
     racine = Noeud("monde", enfants=[noeud_campagne, noeud_ville, *[m["noeud"] for m in maisons], *jets],
                    extras={"maisons_visitables": [m["pieces"] for m in maisons]})
     mesures = composer.mesurer_ville(plan_ville)

@@ -7,12 +7,14 @@ import { parsePythonResult } from '../utils/pythonResult.ts'
 import { namesASubject, readThreeDRequest, requestsAPlace, singleSubjectInMedium, restStateFromReading, restStateVerificationPrompt, type ThreeDRequestReading } from '../services/threeDRequestReading'
 import { materialChannels } from '../utils/materialChannels.ts'
 import { SceneWalkController, type SceneWalkState } from '../components/SceneWalkController'
+import { MatterAnimator } from '../components/MatterAnimator'
+import { readVolumeMeta, registerVolumeSources } from '../services/matterVolume'
 import { recoverModelDelivery } from '../utils/recoverModelDelivery.ts'
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertCircle, BookOpen, Box, Check, Globe, Image as ImageIcon, Layers3, Loader2, Lock, Orbit, Palette, Sparkles, X } from 'lucide-react'
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import { Center, OrbitControls } from '@react-three/drei'
-import { ACESFilmicToneMapping, AnimationClip, AnimationMixer, AxesHelper, Box3, CanvasTexture, Color, DoubleSide, FrontSide, Group, LinearFilter, LinearMipmapLinearFilter, LoopRepeat, Mesh, MeshPhysicalMaterial, MeshStandardMaterial, NearestFilter, Object3D, Raycaster, RepeatWrapping, SkeletonHelper, SkinnedMesh, SRGBColorSpace, Vector2, Vector3 } from 'three'
+import { ACESFilmicToneMapping, AnimationClip, AnimationMixer, AxesHelper, Box3, CanvasTexture, Color, DoubleSide, FrontSide, Group, LinearFilter, LinearMipmapLinearFilter, LoopRepeat, Mesh, MeshPhysicalMaterial, MeshStandardMaterial, NearestFilter, Object3D, Raycaster, RepeatWrapping, ShaderChunk, SkeletonHelper, SkinnedMesh, SRGBColorSpace, Vector2, Vector3 } from 'three'
 import type { Texture } from 'three'
 import ClarificationDialog from '../components/ClarificationDialog.tsx'
 import ReinforcedModelBar from '../components/ReinforcedModelBar.tsx'
@@ -2537,13 +2539,19 @@ function _collectBeltBindings(root: Object3D): BeltScrollBinding[] {
  * read is water that genuinely "ruisselle". Injection is non-fatal: if the
  * material has no base map the binding is skipped and the mesh renders normally.
  */
-type FlowMeta = { schema: string; speed: number; dir: [number, number] }
+// 16/11/2026 : une surface d'eau à UV continues le long de l'écoulement (veine d'un jet, cascade du moteur
+// « monde ») déclare `defilement: 'continu'` (la texture défile sans fondu, couleur ET relief),
+// `vitesse_uv` (vitesse physique en UV/s) et `masque: 'aucun'` (tout le matériau est de l'eau).
+type FlowMeta = { schema: string; speed: number; dir: [number, number]; continuous: boolean; maskOff: boolean; speedUv: number }
 
 type FlowUniforms = {
   uAuroraFlowTime: { value: number }
   uAuroraFlowDir: { value: [number, number] }
   uAuroraFlowSpeed: { value: number }
   uAuroraFlowAmp: { value: number }
+  uAuroraFlowContinuous: { value: number }
+  uAuroraFlowMaskOff: { value: number }
+  uAuroraFlowSpeedUv: { value: number }
 }
 
 type FlowBinding = { uniforms: FlowUniforms }
@@ -2564,18 +2572,31 @@ function _readFlowMeta(material: MeshStandardMaterial | MeshPhysicalMaterial): F
   const dy = Number(dirRaw[1])
   if (!Number.isFinite(dx) || !Number.isFinite(dy)) return null
   const len = Math.hypot(dx, dy) || 1
-  return { schema: schema || 'aurora.flow.v1', speed, dir: [dx / len, dy / len] }
+  const speedUv = Number(c.vitesse_uv)
+  return {
+    schema: schema || 'aurora.flow.v1',
+    speed,
+    dir: [dx / len, dy / len],
+    continuous: c.defilement === 'continu',
+    maskOff: c.masque === 'aucun',
+    speedUv: Number.isFinite(speedUv) ? speedUv : 0,
+  }
 }
 
 function _collectFlowBindings(root: Object3D): FlowBinding[] {
   const bindings: FlowBinding[] = []
+  // Un matériau partagé par des centaines de maillages (l'eau vive des fontaines d'une ville et leurs gouttes,
+  // 16/11/2026) n'est enveloppé qu'UNE fois : envelopper à chaque maillage redéclarait les uniformes des
+  // centaines de fois et le shader ne compilait plus (toute l'eau disparaissait).
+  const vus = new Set<unknown>()
   root.traverse((child) => {
     const mesh = child as Mesh
     if (!mesh.isMesh) return
     const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
     mats.forEach((rawMat) => {
       const mat = rawMat as MeshStandardMaterial | MeshPhysicalMaterial | undefined
-      if (!mat) return
+      if (!mat || vus.has(mat)) return
+      vus.add(mat)
       const meta = _readFlowMeta(mat)
       if (!meta) return
       // Need a base-colour map to flow; without it there is nothing to displace.
@@ -2588,6 +2609,9 @@ function _collectFlowBindings(root: Object3D): FlowBinding[] {
         // Bounded displacement: max |offset| = 0.5*amp UV, small enough to stay
         // inside the atlas island so neighbouring islands never smear in.
         uAuroraFlowAmp: { value: 0.12 },
+        uAuroraFlowContinuous: { value: meta.continuous ? 1 : 0 },
+        uAuroraFlowMaskOff: { value: meta.maskOff ? 1 : 0 },
+        uAuroraFlowSpeedUv: { value: meta.speedUv },
       }
       const prev = mat.onBeforeCompile
       mat.onBeforeCompile = (shader, renderer) => {
@@ -2596,14 +2620,23 @@ function _collectFlowBindings(root: Object3D): FlowBinding[] {
         shader.uniforms.uAuroraFlowDir = uniforms.uAuroraFlowDir
         shader.uniforms.uAuroraFlowSpeed = uniforms.uAuroraFlowSpeed
         shader.uniforms.uAuroraFlowAmp = uniforms.uAuroraFlowAmp
+        shader.uniforms.uAuroraFlowContinuous = uniforms.uAuroraFlowContinuous
+        shader.uniforms.uAuroraFlowMaskOff = uniforms.uAuroraFlowMaskOff
+        shader.uniforms.uAuroraFlowSpeedUv = uniforms.uAuroraFlowSpeedUv
         shader.fragmentShader = shader.fragmentShader
           .replace(
             '#include <common>',
-            'uniform float uAuroraFlowTime;\nuniform vec2 uAuroraFlowDir;\nuniform float uAuroraFlowSpeed;\nuniform float uAuroraFlowAmp;\n#include <common>',
+            'uniform float uAuroraFlowTime;\nuniform vec2 uAuroraFlowDir;\nuniform float uAuroraFlowSpeed;\nuniform float uAuroraFlowAmp;\nuniform float uAuroraFlowContinuous;\nuniform float uAuroraFlowMaskOff;\nuniform float uAuroraFlowSpeedUv;\n#include <common>',
+          )
+          .replace(
+            '#include <normal_fragment_maps>',
+            // le relief de l'eau coule avec sa couleur (défilement continu uniquement)
+            ShaderChunk.normal_fragment_maps.replaceAll('texture2D( normalMap, vNormalMapUv )', 'texture2D( normalMap, vNormalMapUv + _afShift )'),
           )
           .replace(
             '#include <map_fragment>',
             [
+              'vec2 _afShift = vec2(0.0);',
               '#ifdef USE_MAP',
               '  vec4 _afBase = texture2D(map, vMapUv);',
               // Fluid mask derived from the texture itself (no hardcoded hue): a fluid
@@ -2613,7 +2646,7 @@ function _collectFlowBindings(root: Object3D): FlowBinding[] {
               '  float _afMx = max(max(_afBase.r, _afBase.g), _afBase.b);',
               '  float _afMn = min(min(_afBase.r, _afBase.g), _afBase.b);',
               '  float _afSat = _afMx > 0.001 ? (_afMx - _afMn) / _afMx : 0.0;',
-              '  float _afMask = smoothstep(0.28, 0.52, _afSat);',
+              '  float _afMask = mix(smoothstep(0.28, 0.52, _afSat), 1.0, uAuroraFlowMaskOff);',
               // Two-phase flow-map: two samples offset along the flow direction by a
               // BOUNDED, phase-reset displacement (scaled by the mask so stone offset=0),
               // cross-faded so the surface streams continuously without atlas streaking.
@@ -2625,6 +2658,11 @@ function _collectFlowBindings(root: Object3D): FlowBinding[] {
               '  float _afLerp = abs(_afCycle * 2.0 - 1.0);',
               '  vec4 _afFlowed = mix(texture2D(map, _afUv0), texture2D(map, _afUv1), _afLerp);',
               '  vec4 sampledDiffuseColor = mix(_afBase, _afFlowed, _afMask);',
+              // défilement continu : UV le long de l'écoulement, la texture file à la vitesse physique
+              '  if (uAuroraFlowContinuous > 0.5) {',
+              '    _afShift = uAuroraFlowDir * uAuroraFlowTime * uAuroraFlowSpeedUv;',
+              '    sampledDiffuseColor = texture2D(map, vMapUv + _afShift);',
+              '  }',
               '  diffuseColor *= sampledDiffuseColor;',
               '#endif',
             ].join('\n'),
@@ -3035,8 +3073,10 @@ function InteractiveModel({
         } catch {
           // MeshoptDecoder optional if unavailable
         }
-        const applyLoadedModel = (loadedModel: { scene: Object3D; animations?: AnimationClip[]; userData?: unknown }) => {
+        const applyLoadedModel = (loadedModel: { scene: Object3D; animations?: AnimationClip[]; userData?: unknown; parser?: { getDependency: (type: string, index: number) => Promise<unknown> } }) => {
           if (cancelled) return
+          // gaz simulés (aurora.volume.v1) : leurs images sont dans le tampon binaire, lues à la demande
+          registerVolumeSources(loadedModel)
           onAssemblyLoaded?.(_readAssemblyMeta(loadedModel.userData))
           loadedObject = loadedModel.scene
           const initMap = new Map<Object3D, { pos: Vector3; rot: [number, number, number]; scale: Vector3 }>()
@@ -3620,6 +3660,11 @@ function CameraController({ viewer, modelLoaded, modelRoot }: { viewer: ViewerCo
     const fitTimer = setTimeout(() => {
       target.updateMatrixWorld(true)
       const box = new Box3().setFromObject(target)
+      // un gaz simulé (nœud sans maillage) occupe sa boîte pendant la boucle : le cadrage la contient
+      target.traverse((o) => {
+        const gaz = readVolumeMeta(o)
+        if (gaz) box.union(new Box3(new Vector3(...gaz.boite.min), new Vector3(...gaz.boite.max)).applyMatrix4(o.matrixWorld))
+      })
       if (box.isEmpty()) return
       const boxCenter = box.getCenter(new Vector3())
       const boxSize = box.getSize(new Vector3())
@@ -4056,6 +4101,7 @@ function Scene3D({
           onSelectAnchorId={onSelectAnchorId}
         />
       </Suspense>
+      <MatterAnimator modelRoot={internalRoot} />
       {walkMode
         ? <SceneWalkController modelRoot={internalRoot} onState={onWalkState} />
         : <CameraController viewer={viewer} modelLoaded={modelLoaded} modelRoot={internalRoot} />}

@@ -795,6 +795,17 @@ def _eau(t: _Toile, s: _Couches) -> None:
     s.rugosite += 0.02 * rides
 
 
+def _eau_vive(t: _Toile, s: _Couches) -> None:
+    """Eau vive d'une veine ou d'une cascade (16/11/2026) : filets étirés dans le sens de l'écoulement (v) et
+    rides fines, à l'échelle du centimètre — celle d'un jet. La houle d'un lac (1,4 m) sur une tuile de 30 cm
+    n'était qu'une pente : la normale moyenne penchait."""
+    filets = t.bruit(0.012, 0.08, sel="filets", octaves=3, persistance=0.55)
+    rides = t.bruit(0.02, 0.02, sel="rides", octaves=2)
+    s.hauteur += 0.0008 * filets + 0.0004 * rides
+    s.couleur = _ton(s.couleur, 1.0 + 0.16 * filets + 0.05 * rides, (1.0, 1.0, 1.0))
+    s.rugosite += 0.015 * np.abs(rides)
+
+
 def _ecorce(t: _Toile, s: _Couches) -> None:
     sillons = t.bruit(0.02, 0.25, sel="sillons", octaves=3)
     cretes = np.abs(sillons)
@@ -1149,6 +1160,7 @@ RECETTES: dict[str, Callable[[_Toile, _Couches, dict], None]] = {
     "roche": lambda t, s, spec: _roche(t, s),
     "neige": lambda t, s, spec: _neige(t, s),
     "eau": lambda t, s, spec: _eau(t, s),
+    "eau_vive": lambda t, s, spec: _eau_vive(t, s),
     "ecorce": lambda t, s, spec: _ecorce(t, s),
     "feuillage": lambda t, s, spec: _feuilles(t, s, longueur=0.07),
     "facade_enduit": lambda t, s, spec: (_enduit(t, s), _fenetre(t, s, menuiserie="claire")),
@@ -1183,6 +1195,7 @@ RECETTES_FAMILLE: dict[str, Callable[[_Toile, _Couches, dict], None]] = {
     "vegetal": lambda t, s, spec: _feuilles(t, s, longueur=0.08),
     "sol_ext": lambda t, s, spec: _terre(t, s),
     "eau": lambda t, s, spec: _eau(t, s),
+    "eau_vive": lambda t, s, spec: _eau_vive(t, s),
     "facade": lambda t, s, spec: (_enduit(t, s), _fenetre(t, s, menuiserie="claire")),
 }
 

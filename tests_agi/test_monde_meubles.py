@@ -69,7 +69,8 @@ class Catalogue(unittest.TestCase):
         for (c, gr), (o, _) in self.objets.items():
             with self.subTest(categorie=c, graine=gr):
                 mats = o.meta["materiaux"]
-                self.assertEqual(set(o.meta), {"style", "graine", "materiaux"})
+                # un objet qui émet (fontaine) déclare aussi ses bouches (monde.emetteurs.veine)
+                self.assertEqual(set(o.meta) - {"bouches"}, {"style", "graine", "materiaux"})
                 self.assertTrue(set(voc.CATEGORIES[c]["materiaux"]) <= set(mats))
                 for p in o.parties:
                     voc.materiau(p.materiau)

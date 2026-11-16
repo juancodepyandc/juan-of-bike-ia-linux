@@ -314,6 +314,9 @@ class _Atelier:
     rng: np.random.Generator
     pieces: list[tuple[str, str, trimesh.Trimesh]] = field(default_factory=list)
     hauteur_surface: float | None = None      # dessus utilisable (par défaut le haut de l'objet)
+    # bouches d'émission déclarées par le constructeur (repère local brut) : une fontaine jaillit par sa
+    # buse et son eau retombe dans sa vasque (type, position, direction, niveau de réception, rayon du réceptacle)
+    bouches: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def sty(self) -> dict[str, Any]:
@@ -1654,6 +1657,8 @@ def _b_fontaine(a: _Atelier) -> None:
     a("eau", g.cylindre(R - e - 0.005, 0.01, y=h_b - 0.12, sections=sections))
     if H < h_b + 0.35:
         a("structure", g.cylindre(0.08, H - 0.12, y=0.12, sections=12))
+        a.bouches.append({"type": "jet_liquide", "position": [0.0, H, 0.0], "direction": [0.0, 1.0, 0.0],
+                          "niveau": h_b - 0.11, "receptacle": R - e})
         return
     h_col = max(h_b + 0.1, H * 0.62)
     a("structure", g.revolution([(0, 0.12), (R * 0.2, 0.12), (R * 0.12, 0.3), (R * 0.07, h_col - 0.2), (R * 0.1, h_col - 0.08),
@@ -1664,6 +1669,8 @@ def _b_fontaine(a: _Atelier) -> None:
     a("structure", g.cylindre(r2 * 0.26, 0.04, y=h_col - 0.1, sections=16))
     a("eau", g.cylindre(r2 - 0.045, 0.008, y=h_col + 0.06, sections=sections))
     a("structure", g.revolution([(0, h_col), (0.07, h_col), (0.05, H - 0.15), (0.08, H - 0.1), (0.0, H)], sections=12))
+    a.bouches.append({"type": "jet_liquide", "position": [0.0, H, 0.0], "direction": [0.0, 1.0, 0.0],
+                      "niveau": h_col + 0.068, "receptacle": r2 - 0.045})
 
 
 def _b_table_pique_nique(a: _Atelier) -> None:
@@ -2077,6 +2084,21 @@ def _ajuster(pieces: list[tuple[str, str, trimesh.Trimesh]], L: float, P: float,
     return sortie, etendue, facteurs
 
 
+def _bouches_ajustees(atelier: _Atelier, facteurs: np.ndarray) -> list[dict[str, Any]]:
+    """Les bouches suivent la loi d'ajustement des pièces (même pivot, mêmes facteurs par axe)."""
+    tous = np.vstack([np.asarray(m.vertices) for _, _, m in atelier.pieces])
+    bas, haut = tous.min(axis=0), tous.max(axis=0)
+    pivot = np.array([(bas[0] + haut[0]) / 2, bas[1], (bas[2] + haut[2]) / 2])
+    sortie = []
+    for b in atelier.bouches:
+        d = np.asarray(b["direction"], dtype=np.float64) * facteurs
+        sortie.append({**b, "position": [float(v) for v in (np.asarray(b["position"]) - pivot) * facteurs],
+                       "direction": [float(v) for v in d / (np.linalg.norm(d) or 1.0)],
+                       "niveau": float((b["niveau"] - pivot[1]) * facteurs[1]),
+                       "receptacle": float(b["receptacle"] * min(facteurs[0], facteurs[2]))})
+    return sortie
+
+
 @dataclass
 class Brouillon:
     """Résultat brut d'un constructeur avant ajustement (pour les tests de fidélité)."""
@@ -2112,11 +2134,13 @@ def _construire(categorie: str, largeur: float | None, profondeur: float | None,
         hs = H if atelier.hauteur_surface is not None else float(ext[1])
         surfaces.append(Surface(hauteur=hs, polygone=[(-ext[0] / 2, -ext[2] / 2), (ext[0] / 2, -ext[2] / 2),
                                                       (ext[0] / 2, ext[2] / 2), (-ext[0] / 2, ext[2] / 2)]))
+    meta = {"style": style_r, "graine": int(graine), "materiaux": dict(mats)}
+    if atelier.bouches:
+        meta["bouches"] = _bouches_ajustees(atelier, facteurs)
     objet = Objet(nom=categorie, categorie=categorie, parties=parties, largeur=float(ext[0]),
                   profondeur=float(ext[2]), hauteur=float(ext[1]), degagement=float(cat["degagement"]),
                   degagement_cotes=float(cat["degagement_cotes"]), surfaces=surfaces, mural=bool(cat["mural"]),
-                  plafond=bool(cat["plafond"]), sol_partage=bool(cat["sol_partage"]),
-                  meta={"style": style_r, "graine": int(graine), "materiaux": dict(mats)})
+                  plafond=bool(cat["plafond"]), sol_partage=bool(cat["sol_partage"]), meta=meta)
     return objet, Brouillon(atelier, etendue, facteurs)
 
 

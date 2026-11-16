@@ -16,6 +16,8 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+import numpy as np
+
 from monde import export_gltf, porte
 from monde import rendu as rendu_f3d
 from monde.ir import Noeud, Objet, Scene
@@ -176,7 +178,7 @@ def construire_ville(programme: dict, graine: int, fabrique) -> dict[str, Any]:
         riviere=bool(v.get("riviere")), arbres_alignement=bool(v.get("arbres_alignement", True)),
         voitures=bool(v.get("voitures", True)), graine=graine)
     noeud = ville_mod.construire_ville(plan, fabrique=fabrique)
-    jets, pistes = jets_des_fontaines(plan)
+    jets, pistes = emissions_des_objets(noeud)
     noeud.enfants.extend(jets)
     return {"scene": Scene(noeud), "mesures": mesurer_ville(plan), "plan": plan, "depart": depart_ville(plan),
             "pistes": pistes}
@@ -197,17 +199,34 @@ def depart_ville(plan) -> dict[str, Any] | None:
     return {"x": round(p.x, 3), "y": 0.0, "z": round(p.y, 3), "direction": direction, "lieu": "trottoir central"}
 
 
-def jets_des_fontaines(plan) -> tuple[list, dict[str, dict]]:
-    """Chaque fontaine de la ville jaillit : un jet d'eau balistique au-dessus de sa vasque (monde animé)."""
+def emissions_des_objets(racine: Noeud) -> tuple[list, dict[str, dict]]:
+    """Les objets qui déclarent une bouche (`meta.bouches` : une fontaine et sa buse) émettent, posés dans le
+    monde par la pose de leur instance : une veine d'eau continue qui jaillit de la buse et retombe en
+    couronne de gouttes dans la vasque (`monde.emetteurs.veine`). 16/11/2026 : remplace les jets en billes
+    posés « à 75 % de la hauteur » sans connaître la fontaine."""
     from monde import emetteurs
     noeuds, pistes = [], {}
-    for k, pl in enumerate(p for p in plan.mobilier if p.categorie == "fontaine"):
-        hauteur = float((pl.options or {}).get("hauteur") or 1.2)
-        noeud, p, _ = emetteurs.construire(emetteurs.Emission(
-            "jet_liquide", origine=(pl.x, pl.y + 0.75 * hauteur, pl.z), direction=(0.0, 1.0, 0.0),
-            echelle=max(0.6, hauteur / 1.4), nom=f"jet_fontaine_{k}", graine=k + 7))
-        noeuds.append(noeud)
-        pistes.update(p)
+
+    def visiter(noeud: Noeud) -> None:
+        for inst in noeud.instances:
+            for b in (inst.objet.meta or {}).get("bouches") or []:
+                loi = emetteurs.LOIS.get(b.get("type"))
+                if loi is None or not loi.rayon_buse:
+                    continue
+                m = inst.pose.matrice()
+                origine = (m @ np.array([*b["position"], 1.0]))[:3]
+                direction = m[:3, :3] @ np.asarray(b["direction"], dtype=np.float64)
+                k = len(noeuds)
+                veine, p, _ = emetteurs.veine(emetteurs.Emission(
+                    b["type"], origine=tuple(float(v) for v in origine), direction=tuple(float(v) for v in direction),
+                    nom=f"jet_{inst.objet.categorie}_{k}", graine=k + 7),
+                    niveau=float(inst.pose.y + b["niveau"]), receptacle=b.get("receptacle"))
+                noeuds.append(veine)
+                pistes.update(p)
+        for enfant in noeud.enfants:
+            visiter(enfant)
+
+    visiter(racine)
     return noeuds, pistes
 
 

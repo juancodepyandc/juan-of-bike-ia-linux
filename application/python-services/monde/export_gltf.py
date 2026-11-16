@@ -66,11 +66,31 @@ def _extras_surs(extras: dict) -> dict:
     return {CLES_RESERVEES.get(k, k): v for k, v in extras.items()}
 
 
-def _matrices_en_trs(arbre: dict, extras_par_nom: dict[str, dict] | None = None) -> None:
+def _extras_materiaux(arbre: dict, extras_par_materiau: dict[str, dict] | None) -> None:
+    """Extras d'un matériau par son nom (écoulement d'une eau vive : `aurora_flow`, lu par le viewer)."""
+    for materiau in arbre.get("materials", []):
+        extras = (extras_par_materiau or {}).get(materiau.get("name", ""))
+        if extras:
+            materiau["extras"] = json.loads(json.dumps(extras, ensure_ascii=False, default=str))
+
+
+def ecoulements(noeud: Noeud) -> dict[str, dict]:
+    """Écoulements déclarés par les nœuds (`extras.ecoulement_materiaux` : matériau → aurora.flow.v1)."""
+    sortie: dict[str, dict] = {}
+    for cle, spec in ((noeud.extras or {}).get("ecoulement_materiaux") or {}).items():
+        sortie[cle] = {"aurora_flow": spec}
+    for enfant in noeud.enfants:
+        sortie.update(ecoulements(enfant))
+    return sortie
+
+
+def _matrices_en_trs(arbre: dict, extras_par_nom: dict[str, dict] | None = None,
+                     extras_par_materiau: dict[str, dict] | None = None) -> None:
     """glTF n'anime que les nœuds en translation/rotation/échelle (jamais un nœud à `matrix`) : chaque
     matrice est décomposée, pour que la scène reste animable objet par objet. Les extras des nœuds
     (catégorie, pivot et angle d'ouverture d'une porte…) sont écrits ici : trimesh ne les exporte pas
     (0 nœud sur 223 les portait, maison du 15/11/2026) ; three.js les lit dans `userData`."""
+    _extras_materiaux(arbre, extras_par_materiau)
     for noeud in arbre.get("nodes", []):
         extras = (extras_par_nom or {}).get(noeud.get("name", ""))
         if extras:
@@ -151,8 +171,9 @@ def exporter(scene: Scene, chemin: str | Path, *, resolution: int = 512, rendu: 
     visiter(scene.racine, ts.graph.base_frame)
     if scene.extras:
         ts.metadata["extras"] = json.loads(json.dumps(scene.extras, ensure_ascii=False, default=str))
+    par_materiau = ecoulements(scene.racine)
     donnees = ts.export(file_type="glb", include_normals=True,
-                        tree_postprocessor=lambda arbre: _matrices_en_trs(arbre, extras_par_nom))
+                        tree_postprocessor=lambda arbre: _matrices_en_trs(arbre, extras_par_nom, par_materiau))
     chemin.write_bytes(donnees)
     stats["materiaux"] = sorted(stats["materiaux"])
     stats["octets"] = len(donnees)

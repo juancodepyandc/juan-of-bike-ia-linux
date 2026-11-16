@@ -3701,7 +3701,13 @@ def run_pipeline(prompt: str, run_id: str, **options) -> dict:
         _modele = _livraison.get("modele_couleurs")
         if _emissions and _modele and Path(_modele).is_file() and not (result or {}).get("is_scene"):
             _sortie = Path(_modele).with_name("emission_couleurs.glb")
-            _em = _ajouter_emissions(_modele, _sortie, _emissions)
+            _racine_run = Path(_modele).parent.parent
+            # 16/11/2026 : la référence dit où est la bouche et où part la matière ; un gaz est simulé
+            # (Navier-Stokes) et vérifié par f3d (apercus/, journal/verifications/)
+            _em = _ajouter_emissions(_modele, _sortie, _emissions,
+                                     reference=_livraison.get("reference_face") or result.get("front_reference"),
+                                     dossier_apercus=_racine_run / "apercus",
+                                     dossier_verifications=_racine_run / "journal" / "verifications")
             result.setdefault("audit_trail", []).append({"stage": "emissions", **{k: v for k, v in _em.items() if k != "glb"}})
             if _em.get("ok"):
                 _livraison["emission_couleurs"] = str(_sortie)

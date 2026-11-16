@@ -79,6 +79,8 @@ MATERIAUX: dict[str, dict[str, Any]] = {
     "roche": _m("roche", "pierre", 3.0, 0.0, 0.85, "#7d7a74", True),
     "neige": _m("neige", "sol_ext", 3.0, 0.0, 0.6, "#f2f5f8", False),
     "eau": _m("surface d'eau", "eau", 4.0, 0.0, 0.05, "#2e5f77", False, alpha=0.75),
+    # veine d'un jet, cascade : eau aérée, claire, qui défile le long de l'écoulement (monde.emetteurs.veine)
+    "eau_vive": _m("eau vive (jet, cascade, veine qui coule)", "eau", 0.3, 0.0, 0.03, "#cfe4ee", False, alpha=0.82),
     "ecorce": _m("écorce", "vegetal", 0.6, 0.0, 0.9, "#5a4634", False),
     "feuillage": _m("feuillage d'arbre", "vegetal", 1.0, 0.0, 0.7, "#3f6b2e", True),
     "facade_enduit": _m("façade en enduit avec fenêtres", "facade", 3.0, 0.0, 0.85, "#e3d9c6", True),
